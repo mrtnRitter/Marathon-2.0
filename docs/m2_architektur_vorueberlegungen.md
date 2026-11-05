@@ -1,223 +1,264 @@
-# m2 – Vorüberlegungen zur Architektur
+# Marathon 2.0 – Architekturkonzept
 
-**Protokoll** · 29.10.2026 · Martin, CodeZilla (Beratung)
-**Status:** Vorüberlegung. Kein Pflichtenheft, kein Code, noch keine endgültigen Entscheidungen.
+**Stand:** 05.11.2026 · Martin, CodeZilla
+**Status:** Kernkonzept (Gerüst). Kein Pflichtenheft, kein Code. Details folgen schrittweise (siehe Abschnitt 11).
 
 ---
 
-## 1. Ausgangslage
+## 1. Ziel und Rahmen
 
-- **Marathon 1.x** (`PROGRESS-MAM/Marathon`, v1.17/1.18): Python-Konsolenprogramm (Windows) mit fest verdrahteter Abfolge Restore → Transcode → QC für EditShare/Veritone. Den Zustand speichert es in einer einzigen JSON-Datei, die Jobs liegen als Dateien in Ordnern auf dem Netzlaufwerk (`offen/` → `laufend/<worker>/`). Die Worker melden sich über Report- und Heartbeat-Dateien zurück.
-- **m2 (Marathon 2.0):** harter Schnitt, neues Repo, es wird nichts übernommen.
-- **Ziel:** eine Workflow-Engine nach dem Vorbild von FFAStrans. Sie läuft als Webseite im lokalen Netz und kann optional öffentlich erreichbar sein. Login und Benutzerverwaltung kommen später über einen übergeordneten Server.
-- **Module:** restore, transcode, qc, Dateien bewegen, es-searcher und später weitere. Heute geht es nur um das Framework.
-- **Beobachtbarkeit auf drei Ebenen:** Clip (jeden Clip nachverfolgen), Modul (was macht es, was hat es gemacht) und Workflow (Gesamtstatus).
+- **Workflow-Engine als Webanwendung** im lokalen Netz, optional öffentlich erreichbar.
+- **Ein Server** liefert die Webseite aus, steuert die Workflows und hält die Datenbank.
+- **Worker-Rechner** bekommen einen kleinen installierten **Worker-Client**, der mit dem Server spricht und sich selbst aktualisiert.
+- **Node-Editor im Browser** zum Bauen der Workflows.
+- **Bedienung und Oberfläche nach Vorbild FileFlows** (siehe Quellen).
+- **Eigener, schlanker Kern** aus fertigen Bausteinen; Neubau ohne Übernahme von Code.
+- **Login und Benutzerverwaltung** kommen später über einen übergeordneten Server; jetzt nur eine Andockstelle vorsehen.
+- **Namen:** „m2“ ist nur die interne Bezeichnung. Im Code heißt alles `marathon`, Startversion **2.0.0**.
 
-## 2. Was wir aus Marathon 1 mitnehmen (Erfahrungen, kein Code)
+## 2. Kernidee
 
-| Hat sich bewährt → wieder vorsehen | Hat Grenzen gezeigt → in m2 anders lösen |
+> Es gibt eine **Liste von Assets**. Die Assets durchlaufen einen **Workflow** aus **Modulen**.
+> Damit ein Asset ein Modul durchläuft, veröffentlicht der Server einen **Job**. **Worker** holen sich Jobs, verarbeiten sie und melden das Ergebnis.
+> Mit jedem Ergebnis ändert sich der **Status** des Assets auf der Liste, bis es das Ende des Workflows erreicht.
+
+Was ein Asset inhaltlich ist, spielt für den Kern keine Rolle. Ein Asset ist ein Listeneintrag mit Kennung, Name und frei belegbaren Metadaten. Erst die Module wissen, was sie damit tun.
+
+```mermaid
+flowchart LR
+  L[Asset-Liste] -->|Asset steht an einem Modul an| S[Server / Engine]
+  S -->|veröffentlicht| J[Job]
+  W[Worker] -->|holt ab| J
+  W -->|meldet Fortschritt und Ergebnis| S
+  S -->|setzt Status und nächstes Modul| L
+```
+
+## 3. Begriffe
+
+| Begriff | Bedeutung |
 |---|---|
-| Pull-Prinzip: Worker holen sich ihre Arbeit selbst | Zustand in einer JSON-Datei → stattdessen eine Datenbank |
-| Heartbeat, Versuchszähler, manuelles Wiederfreigeben (`retry-*`) | Ordner als Warteschlange → Sperren, Atomarität und Parallelität sind schwierig |
-| Sammeljobs (Restore je Band) mit Teilberichten während der Laufzeit | Fest verdrahtete Stufen → stattdessen frei kombinierbare Module |
-| Versionierte Schnittstellen (`schema_version`) | Konsole als einzige Oberfläche → stattdessen Web-UI mit Live-Status |
-| Prioliste | Auswertungen nur als Berichtsdateien → stattdessen Abfragen auf Clip-, Modul- und Workflow-Ebene |
+| **Workflow** | Versionierte Definition: Module und ihre Verbindungen. Jeder Workflow hat genau eine Asset-Liste. |
+| **Modultyp** | Ein Baustein aus dem Katalog (z. B. „Dateien bewegen“). Beschreibt Eingang, Ausgänge, Einstellungen und benötigte Fähigkeiten. |
+| **Modul** | Ein im Workflow platzierter Modultyp mit eigenen Einstellungen. |
+| **Ausgang** | Benannter Ausgang eines Moduls (mindestens *Erfolg* und *Fehler*). Eine Verbindung führt vom Ausgang zum nächsten Modul. |
+| **Asset** | Ein Eintrag auf der Liste eines Workflows. Hat einen Status, eine Position (aktuelles Modul) und eine Historie. |
+| **Job** | Ein Arbeitsauftrag: ein Modul für ein oder mehrere Assets (Sammeljob). Hat Versuche, Fortschritt und ein Ergebnis je Asset. |
+| **Worker** | Ein Rechner mit installiertem Worker-Client. Hat Fähigkeiten, eine maximale Zahl paralleler Jobs, einen Status und eine Client-Version. |
+| **Historie** | Jeder Statuswechsel, jede Fehler- und Erfolgsmeldung wird als Eintrag angehängt und nie verändert. |
 
-Die Fachbibliotheken (TOOLBOX, ES-Search, ES-Restore/ES-ARK-API, AQC, Transcoder) gehören nicht zum Marathon-Code. Ob sie später in m2-Modulen verwendet werden, ist noch offen (siehe Abschnitt 6).
+## 4. Der Kreislauf (Gerüst der Engine)
 
-## 3. Frage 1: Gibt es so ein Framework schon? Lässt sich ein bestehendes umbauen?
+1. **Asset kommt auf die Liste** (manuell, per Import oder über ein Quell-Modul – siehe 11).
+2. **Asset steht an einem Modul an.** Der Server veröffentlicht dafür einen Job. Bei Sammeljobs sammelt das Modul zuerst mehrere Assets nach einer Regel (z. B. gleicher Schlüssel) und veröffentlicht dann einen Job.
+3. **Worker holt Job ab.** Der Worker fragt nach Arbeit, die zu seinen Fähigkeiten passt. Der Server teilt den passenden Job mit der höchsten Priorität zu.
+4. **Worker verarbeitet** und meldet laufend Fortschritt, Log-Zeilen und – bei Sammeljobs – Teilergebnisse je Asset.
+5. **Server wertet das Ergebnis je Asset aus:** Der gemeldete Ausgang bestimmt das nächste Modul.
+6. **Ende:** Führt kein Ausgang weiter, ist das Asset bei *Erfolg* erledigt, bei *Fehler* fehlgeschlagen.
 
-**Kurzantwort:** Kein freies Open-Source-Produkt (FOSS) deckt die ganze Kombination ab: visueller Web-Editor, verteilte Worker, Verfolgung einzelner Clips durch einen langlebigen Workflow und Sammeljobs. Es gibt aber gute Bausteine und eine Engine, die als Basis ernsthaft in Frage käme.
+**Grundregeln**
 
-### 3.1 Fertige Systeme
+- **Der Server entscheidet, der Worker führt aus.** Der Worker kennt keinen Workflow, nur seinen Job.
+- **Abholen statt Zuschieben:** Worker bauen nur ausgehende Verbindungen auf.
+- **Zuteilung mit Ablaufzeit:** Ein zugeteilter Job läuft ab, wenn der Worker sich nicht mehr meldet. Dann geht der Job zurück in die Warteschlange (Versuchszähler +1).
+- **Wiederholen:** Jedes Modul hat eine maximale Zahl an Versuchen. Danach gilt der Ausgang *Fehler*. Fehlgeschlagene Assets lassen sich in der Oberfläche manuell wieder freigeben.
+- **Prioritäten:** Reihenfolge auf der Liste und Priorität je Workflow; einzelne Assets lassen sich nach oben schieben.
+- **Versionen:** Ein Asset bleibt auf der Workflow-Version, mit der es gestartet ist.
 
-| Kandidat | Was passt | Was fehlt / Risiko | Lizenz | Einschätzung |
-|---|---|---|---|---|
-| **FFAStrans** | Unser Vorbild. Portabel vom SMB-Share, gleichberechtigte Farm-Rechner, Weboberfläche und REST-API | Editor ist eine Windows-Anwendung, nicht in unserem Sinn erweiterbar, kein offener Quellcode | Freeware | Vorbild für die Konzepte |
-| **FileFlows** | Funktional am nächsten dran: Web-Flow-Editor, Server mit verteilten Nodes, Verfolgung pro Datei | Proprietär, Lizenzstufen, keine Anbindung an ES/Ark | proprietär | Nur als Vorlage für Bedienung und Oberfläche |
-| **Tdarr** | Server mit Nodes, Flows, Bibliotheks-Tracking | Proprietär (EULA verbietet Weitergabe und Reverse Engineering) | proprietär | Nur als Vorlage für Bedienung und Oberfläche |
-| **Windmill** | Visueller Flow-Editor, Python-Skripte als Schritte, Worker auch unter Windows ohne Docker, Routing per Tags | Denkt in einzelnen Läufen, nicht in Clips, die durch eine langlebige Pipeline wandern. Sammeljobs sind umständlich, die Oberfläche lässt sich kaum auf Medien zuschneiden. Erweiterte Worker-Gruppen sind kostenpflichtig | gemischt: AGPLv3 / Apache-2.0 / eigene Bedingungen | Einzige ernsthafte Basis-Option. Ein kurzer Test (Spike) ist möglich |
-| **Kestra** | Apache-2.0, Windows-Remote-Worker dokumentiert, Topologie-Ansicht | YAML-zentriert, Java, Worker Groups nur in der Enterprise-Version | Apache-2.0 | Eher nicht |
-| **n8n** | Bester Canvas-Editor | Keine OSI-Lizenz, Schwerpunkt API-Automatisierung, Worker auf Node.js-Basis | Sustainable Use License | Nein |
-| **Prefect / Airflow** | Python, ausgereift | Kein visueller Editor (Workflows werden im Code geschrieben), die UI dient nur der Überwachung | Apache-2.0 | Nein |
-| **Apache NiFi** | Herkunftsnachweis (Provenance) pro FlowFile – genau das, was wir pro Clip wollen | Schwergewichtig (Java), ausgelegt auf Datenströme statt auf lange externe Verarbeitung | Apache-2.0 | Vorbild für das Konzept der Clip-Historie |
-| **OpenMPF** | Pipelines, Weboberfläche, Skalierung über Nodes | Auf Medienanalyse (Erkennung/Extraktion) ausgerichtet | Apache-2.0 | Nein |
+## 5. Zustände
 
-### 3.2 Bausteine für einen eigenen Kern
+### 5.1 Asset
 
-| Zweck | Empfehlung | Hinweis |
+Der Status eines Assets hat zwei Ebenen: den **Gesamtstatus** auf der Liste und den **Schrittstatus** am aktuellen Modul.
+
+| Gesamtstatus | Bedeutung | Sicht „wurde / wird / soll“ |
 |---|---|---|
-| Node-Editor im Browser | **React Flow (xyflow)**, MIT | Aktiv gepflegt, gut anpassbar |
-| Alternative Editoren | Rete.js (überwiegend MIT), Drawflow (MIT) | Bei Rete einzelne Plugins unter CC-BY-NC-SA meiden; Drawflow ist klein und wird wenig weiterentwickelt |
-| Warteschlange/Ausführung | PostgreSQL als Queue (selbst gebaut) **oder** **Hatchet** (MIT, Python-SDK, eigene UI) | Hatchet bei Bedarf als Ausführungsschicht prüfen |
+| **Ausstehend** | Auf der Liste, Workflow noch nicht begonnen | soll verarbeitet werden |
+| **In Arbeit** | Im Workflow unterwegs; Schrittstatus *wartet* (Job offen oder Sammeln) oder *läuft* (Job zugeteilt) | wird verarbeitet |
+| **Erledigt** | Ende des Workflows über *Erfolg* erreicht | wurde verarbeitet |
+| **Fehlgeschlagen** | Fehler ohne weiterführenden Fehlerpfad; wartet auf Eingriff | wurde verarbeitet (mit Fehler) |
+| **Angehalten** | Manuell zurückgestellt | – |
 
-### 3.3 Empfehlung
+```mermaid
+stateDiagram-v2
+  state "Ausstehend" as A
+  state "In Arbeit" as B
+  state "Erledigt" as C
+  state "Fehlgeschlagen" as D
+  state "Angehalten" as E
+  [*] --> A
+  A --> B: tritt ins erste Modul ein
+  B --> B: nächstes Modul
+  B --> C: Ende über Erfolg
+  B --> D: Fehler ohne Fehlerpfad
+  D --> B: manuell wieder freigegeben
+  A --> E: anhalten
+  B --> E: anhalten
+  E --> A: freigeben
+```
 
-**Ein eigener, schlanker Kern aus fertigen Bausteinen statt einer umgebauten Fremd-Engine.**
-Der eigentliche Nutzen von m2 liegt im Clip als verfolgbarer Einheit, in Sammeljobs, in medienspezifischen Ansichten und in Workern mit Fähigkeiten wie Bandzugriff, GPU oder Share-Zugriff. Genau das bilden generische Engines nicht ab. Wer eine solche Engine umbaut, arbeitet dauerhaft gegen ihr Datenmodell.
-Optional lässt sich das mit einem Windmill-Test von 1–2 Tagen bestätigen oder widerlegen.
+### 5.2 Job
 
-## 4. Frage 2: Worker über die Webseite einbinden, ganz ohne Installation?
+`offen` → `zugeteilt` (läuft) → `erfolgreich` | `fehlgeschlagen` | `abgebrochen`.
+Läuft die Zuteilung ab, geht der Job zurück auf `offen`.
 
-**Kurzantwort:**
-- Rechner über die Webseite **einbinden, verwalten und ihnen Aufgaben zuteilen: Ja.**
-- Rechenlast **im Browser-Tab ohne jede Installation** verteilen: technisch nur begrenzt möglich, **für die m2-Module praktisch nein.**
+### 5.3 Worker
 
-### 4.1 Was der Browser darf
+`neu` (hat sich gemeldet, noch nicht freigegeben) → `bereit` ⇄ `beschäftigt`; dazu `offline` (keine Meldung), `gesperrt` (manuell) und `Update` (aktualisiert sich gerade).
 
-| Ressource | Was der Browser kann | Grenze für m2 |
-|---|---|---|
-| **CPU** | Web Workers und WebAssembly, mehrere Threads (SharedArrayBuffer nur mit Cross-Origin-Isolation) | Kann keine nativen Programme starten (ffmpeg, Prüftools, Ark-Client). WebAssembly-Fassungen wie ffmpeg.wasm sind deutlich langsamer als nativ |
-| **GPU** | WebGPU (aktuelle Versionen von Chrome, Edge, Firefox und Safari) für Berechnungen; WebCodecs für hardwarebeschleunigtes De-/Encoding | Nur Codecs, die Browser und Betriebssystem anbieten (typisch H.264/HEVC/VP9/AV1, je nach Gerät unterschiedlich). Archiv- und Mezzanine-Formate wie ProRes, DNxHD, JPEG 2000 oder DPX gehören nicht dazu. Keine direkte Steuerung von NVENC & Co. |
-| **Arbeitsspeicher** | Pro Tab begrenzt; WebAssembly üblicherweise bis 4 GB, mit Memory64 mehr (Chrome/Firefox, nicht Safari) | Große Mediendateien lassen sich nur gestückelt verarbeiten |
-| **Lokaler Speicher** | Origin Private File System: ein abgeschotteter Speicher mit Kontingent | Kein Zugriff auf normale Ordner, die Daten liegen nur browserintern |
-| **Ordner / Netzlaufwerke** | File System Access (`showDirectoryPicker`) – nur Chromium, nur nach Klick und Freigabe durch den Nutzer | Kein SMB, keine UNC-Pfade, keine Pfadvorgabe durch den Server. Ob Netzlaufwerke zuverlässig funktionieren, ist nicht garantiert. Firefox und Safari bieten die Funktion nicht |
-| **Netzwerk** | HTTP(S), WebSocket, WebRTC, nur mit CORS-Freigabe der Gegenseite | Keine freien Netzwerkverbindungen; Direct Sockets ist nur für installierte, isolierte Web-Apps vorgesehen, also wieder eine Installation |
-| **Dauerbetrieb** | Läuft, solange der Tab offen ist | Drosselung im Hintergrund, Energiesparmodus, Browser-Updates, versehentlich geschlossene Tabs |
-| **Voraussetzung** | WebGPU, File System Access und Ähnliches brauchen HTTPS | Auch im LAN ist ein Zertifikat nötig |
-
-**Fazit:** Browser-Worker eignen sich höchstens für leichte, abgeschlossene Aufgaben auf hochgeladenen Daten, etwa Prüfsummen, Vorschaubilder oder einfache Analysen von Proxys. Restore (Band/Ark), Transcode von Archivformaten, QC mit Prüftools und das Verschieben von Dateien auf Shares brauchen einen nativen Prozess auf dem Rechner.
-
-### 4.2 „Fast ohne Installation“ – realistische Wege
-
-| Weg | Beschreibung | Aufwand am Rechner |
-|---|---|---|
-| **A: Portabler Agent vom Share** (FFAStrans-Prinzip) | Der Agent liegt einmal auf dem Netzlaufwerk und wird von jedem Rechner von dort gestartet (Autostart oder Dienst) | Kein Installer, nur einmal den Start einrichten |
-| **B: Agent einmal installieren, danach alles über die Webseite** | Kopplung per Code/Token. Freigeben, Sperren, Fähigkeiten, Gruppen und Parallelität stellt man in der Web-UI ein. Module und Updates verteilt der Server | Einmalig |
-| **C: Container** | Gleicher Agent als Docker-Image für Linux-Rechner | Einmalig, wenn Docker vorhanden ist |
-
-**Empfehlung:** B als Grundmodell, mit A als Verteilweg für Windows. Browser-Worker höchstens später als Nische.
-
-### 4.3 So sähe die Einbindung über die Webseite aus
-
-1. Der Agent startet und meldet sich beim Server. In der Web-UI erscheint er als „neu“.
-2. In der Web-UI: freigeben, benennen, Gruppen/Tags vergeben, maximale Zahl paralleler Aufgaben und Pfad-Zuordnungen festlegen.
-3. Der Server teilt Aufgaben passend zu den Fähigkeiten zu, der Agent holt sie ab.
-4. Der Agent baut nur **ausgehende** Verbindungen auf. Das ist wichtig für Firewalls und den späteren öffentlichen Zugang.
-
-## 5. Architektur-Skizze (Vorschlag)
+## 6. Komponenten
 
 ```mermaid
 flowchart LR
   subgraph Browser
-    UI[Web-UI<br/>Editor und Überwachung]
+    UI[Weboberfläche<br/>Dashboard · Workflow · Assets · Worker]
   end
-  subgraph Server[m2-Server]
-    API[API] --> ORCH[Orchestrator / Scheduler]
-    ORCH --> DB[(Datenbank<br/>Zustand und Event-Log)]
+  subgraph Server[Marathon-Server]
+    API[API] --> ENG[Engine<br/>Jobs veröffentlichen, Ergebnisse auswerten]
+    ENG --> DB[(Datenbank)]
     API --> DB
+    API --> REL[Rollout<br/>Client-Versionen und Module]
   end
   AUTH[Übergeordneter Server<br/>Login – später] -.-> API
-  UI <-->|HTTPS / WebSocket| API
-  A1[m2-Agent Rechner 1<br/>z. B. restore] -->|holt Aufgaben, meldet Ergebnisse| API
-  A2[m2-Agent Rechner 2<br/>z. B. transcode, qc] -->|holt Aufgaben, meldet Ergebnisse| API
-  A1 --- S[(Netzlaufwerke / Medien)]
-  A2 --- S
+  UI <-->|HTTPS, Live-Status| API
+  C1[Worker-Client<br/>Rechner 1] -->|holt Jobs, meldet Status, holt Updates| API
+  C2[Worker-Client<br/>Rechner 2] -->|holt Jobs, meldet Status, holt Updates| API
 ```
 
-**Komponenten**
+### 6.1 Marathon-Server
 
-- **m2-Server:** Web-UI, API, Orchestrator/Scheduler, Datenbank mit Event-Log. Eine zentrale Instanz.
-- **m2-Agent:** läuft auf jedem Worker-Rechner und führt die Module aus.
-- **Module:** Plugins mit Manifest. Der Server kennt nur das Manifest, ausgeführt wird im Agent.
-- **Medien:** bleiben auf den Shares. m2 verwaltet nur Referenzen (Speicherort und relativer Pfad), die Pfad-Zuordnung erfolgt je Worker.
-- **Später:** übergeordneter Server für Login vor m2 (Reverse Proxy oder Token). Eine Andockstelle ist vorgesehen, gebaut wird sie noch nicht.
+- Liefert die Weboberfläche aus und stellt die API bereit.
+- **Engine:** veröffentlicht Jobs, teilt sie zu, wertet Ergebnisse aus, schreibt Status und Historie.
+- **Rollout:** hält freigegebene Client-Versionen und Module bereit.
+- Live-Status an die Oberfläche (Server-Sent Events oder WebSocket).
 
-### 5.1 Kernbegriffe
+### 6.2 Worker-Client
 
-| Begriff | Bedeutung |
+- Meldet sich beim Server an und erscheint in der Oberfläche als *neu*. Freigeben, benennen, Fähigkeiten und Parallelität setzen erfolgt in der Oberfläche.
+- Sendet regelmäßig ein Lebenszeichen mit Status, laufenden Jobs und Client-Version.
+- Holt Jobs, führt das Modul aus, meldet Fortschritt, Log und Ergebnis.
+
+### 6.3 Auto-Update (von Anfang an)
+
+- **Rollout geht vom Server aus:** In der Oberfläche wird eine Client-Version für alle oder ausgewählte Worker freigegeben.
+- Der Client erfährt über das Lebenszeichen, dass eine neue Version für ihn bereitsteht.
+- Ablauf im Client: Paket laden → Prüfsumme prüfen → keine neuen Jobs annehmen → laufende Jobs beenden lassen → tauschen → neu starten → neue Version melden.
+- **Rückfall:** Startet die neue Version nicht sauber, kehrt der Client zur vorherigen Version zurück und meldet den Fehler.
+- **Aufbau:** ein kleiner Starter, der sich selten ändert, und die eigentliche Client-Laufzeit, die der Starter austauscht.
+- **Versionen:** Server und Client tragen dieselbe Versionsnummer (Start 2.0.0).
+- Module werden über denselben Weg verteilt.
+
+## 7. Datenhaltung
+
+**Inhalt der Datenbank**
+
+- Workflows mit Versionen, Modulen, Einstellungen und Verbindungen
+- Assets mit Gesamtstatus, Schrittstatus, Position und Metadaten
+- Jobs mit Versuchen, Worker, Fortschritt und Ergebnis je Asset
+- Historie: Statuswechsel, Fehler- und Erfolgsmeldungen, Logs
+- Worker und Client-Versionen
+
+**Prinzip:** Der aktuelle Zustand wird direkt gespeichert. Jede Änderung schreibt in derselben Transaktion einen Eintrag in die Historie. So ist der Zustand schnell abfragbar und die Historie trotzdem vollständig.
+
+**Eine Datenbank oder eine je Workflow?**
+
+| | Eine Datenbank für alles | Zentrale DB + eine DB je Workflow |
+|---|---|---|
+| Statuswechsel von Asset und Job | in einer Transaktion, immer konsistent | über Datenbankgrenzen, nicht atomar |
+| Zuteilung über alle Workflows (Prioritäten) | eine Abfrage | alle Workflow-DBs durchsuchen |
+| Dashboard über alle Workflows | eine Abfrage | Zusammenführen nötig |
+| Workflow archivieren oder löschen | per Abfrage bzw. Aufräumregel | Datei verschieben bzw. löschen |
+| Schema-Änderungen und Sicherung | einmal | je Datenbank |
+
+**Empfehlung:** eine Datenbank für alles. Große Historien lassen sich über Aufbewahrungsregeln je Workflow begrenzen.
+
+**Datenbanksystem (offen):** SQLite reicht als Start, weil nur der Server auf die Datenbank zugreift, nichts zusätzlich installiert werden muss und die Sicherung eine Dateikopie ist. Der Zugriff wird so gekapselt, dass ein späterer Wechsel zu PostgreSQL möglich bleibt. Entscheidung zusammen mit der Größenordnung (siehe 11).
+
+## 8. Oberfläche (Vorbild FileFlows)
+
+**Navigation:** feste Seitenleiste mit gleichrangigen Einträgen **Dashboard**, **Workflows**, **Assets**, dazu **Worker** und **Einstellungen**. Innerhalb eines Workflows wechseln Reiter mit einem Klick zwischen **Module** und **Assets**. Jede Dashboard-Zeile springt direkt in beide Ansichten. Die Asset-Ansicht ist auch global erreichbar (mit Filter nach Workflow).
+
+### 8.1 Dashboard
+
+- Eine Kachel oder Zeile je Workflow mit den allgemeinen Workflow-Daten.
+- Welche Daten das sind, wird noch festgelegt (z. B. aktiv/pausiert, Anzahl Assets je Gesamtstatus, Fehler, Durchsatz).
+
+### 8.2 Workflow-Ansicht (Module)
+
+- Der Workflow als Graph auf einer Arbeitsfläche, mit zwei Modi:
+  - **Überwachen:** Jedes Modul zeigt live seine Zähler (wartet, läuft, erledigt, fehlgeschlagen).
+  - **Bearbeiten:** Modultypen aus der Seitenleiste auf die Fläche ziehen, Ausgänge mit Eingängen verbinden. Ausgänge sind beschriftet und zeigen beim Überfahren ihre Bedeutung. Doppelklick öffnet die Einstellungen; das Formular entsteht aus der Beschreibung des Modultyps.
+- **Klick auf ein Modul** öffnet die Modulsicht: Jobs, betroffene Assets, beteiligte Worker, Logs.
+
+### 8.3 Asset-Ansicht
+
+- Liste aller Assets des Workflows mit Reitern je Gesamtstatus: *Ausstehend*, *In Arbeit*, *Erledigt*, *Fehlgeschlagen*, *Angehalten*.
+- Je Asset sichtbar: Name, Gesamtstatus, aktuelles Modul, Schrittstatus, letzte Änderung.
+- Aktionen: ansehen, nach oben schieben, erneut verarbeiten, abbrechen, anhalten/freigeben, entfernen.
+
+### 8.4 Asset-Detail
+
+- Kopfdaten und Metadaten.
+- Zeitstrahl über alle durchlaufenen Module mit Jobs, Versuchen, Workern, Dauer.
+- Fehler- und Erfolgsmeldungen, Log (bei laufendem Job live).
+
+### 8.5 Worker
+
+- Liste aller Worker mit Status, Fähigkeiten, Parallelität, laufenden Jobs und Client-Version.
+- Neue Worker freigeben oder sperren; Client-Version ausrollen.
+
+## 9. Installation und Abhängigkeiten
+
+- **Alles lokal:** Sämtliche Pakete werden im Projektordner installiert, nicht global. Zur Laufzeit wird nichts aus dem Internet nachgeladen (auch keine Frontend-Bibliotheken über CDN).
+- **Gepinnte Requirements** getrennt für Server und Worker-Client.
+- **`build.py`** als einziger Einstieg: legt die lokale Python-Umgebung an, installiert die Requirements, legt die Frontend-Bibliotheken lokal ab und erzeugt das Client-Paket für den Rollout.
+
+## 10. Technische Richtung (vorläufig)
+
+| Bereich | Tendenz |
 |---|---|
-| **Workflow** | Versionierte Definition: ein Graph aus Knoten und Verbindungen |
-| **Knoten** | Eine Modul-Instanz mit Parametern im Workflow |
-| **Clip** | Die Einheit, die durch den Workflow wandert, mit Metadaten und Dateireferenzen |
-| **Task** | Die Ausführung eines Knotens für einen oder mehrere Clips (Batch) auf einem Worker, inklusive Versuchen |
-| **Event** | Jede Zustandsänderung; Events werden nur angehängt, nie verändert |
-| **Worker** | Ein Agent mit Fähigkeiten, Status und Heartbeat |
+| Server | Python, z. B. FastAPI |
+| Datenbank | eine Datenbank; SQLite als Start, PostgreSQL möglich (siehe 7) |
+| Oberfläche | Web-App mit Node-Editor-Bibliothek, z. B. React Flow (MIT) |
+| Worker-Client | Python, mit Starter und austauschbarer Laufzeit |
+| Transport | HTTPS; Live-Status über Server-Sent Events oder WebSocket |
+| Login | nur Andockstelle |
 
-### 5.2 Drei Sichten aus einem Datenbestand
+## 11. Nächste Schritte – Detaillierung
 
-| Sicht | Beantwortet | Grundlage |
-|---|---|---|
-| **Workflow** | Wie viele Clips sind in welchem Knoten und Zustand? Wie hoch sind Durchsatz, Fehlerquote und Auslastung der Worker? | Zusammenfassung des aktuellen Zustands |
-| **Modul / Knoten** | Was wartet, läuft, ist fertig oder fehlgeschlagen? Was steht in den Logs, welche Worker arbeiten daran? | Tasks des Knotens |
-| **Clip** | Wie verlief der Weg durch alle Knoten (Zeitstrahl)? Welche Versuche, Worker, Dateien und Logs gab es? | Events des Clips |
+Reihenfolge vom Kern nach außen. Jeder Block klärt seine offenen Punkte und endet mit einer Entscheidung.
 
-Grundprinzip: Das **Event-Log ist die Quelle der Wahrheit**, der aktuelle Zustand wird daraus abgeleitet (vergleichbar mit der Provenance in NiFi). Damit entsteht die Clip-Historie automatisch, ohne Zusatzaufwand.
+1. **Datenmodell und Zustände**
+   - Größenordnung: Assets je Workflow, Anzahl Worker, Aufbewahrungsdauer der Historie
+   - Datenbanksystem festlegen
+2. **Engine-Regeln**
+   - Wie kommen Assets auf die Liste: manuell, Import, Quell-Modul?
+   - Wo laufen Steuer- und Quell-Module (Bedingung, Sammeln, Suche): im Server oder als Job? Vorschlag: der Server bringt einen eingebauten Worker mit, dann gibt es nur einen Mechanismus.
+   - Sammeljobs, Prioritäten, Abbrechen
+3. **Server–Client-Protokoll und Auto-Update**
+   - Betriebssysteme der Worker (nur Windows oder auch Linux)
+   - Client als Dienst oder per Autostart, IT-Vorgaben
+   - Rollout-Strategie und Versionsverträglichkeit Server/Client
+4. **Modulvertrag und Modulverteilung**
+   - Beschreibung eines Modultyps, Aufruf, Rückmeldungen, Ausgänge
+5. **Oberfläche**
+   - Kennzahlen des Dashboards, Spalten und Filter der Asset-Ansicht
+6. **Build und Installation**
+   - Node-Editor-Bibliothek festlegen; braucht sie ein JavaScript-Build-Werkzeug, wird es ebenfalls lokal installiert
 
-### 5.3 Ausführung
+**Später (bewusst geparkt)**
 
-- **Pull mit Lease:** Der Agent fragt nach Arbeit, die zu seinen Fähigkeiten passt. Der Server vergibt einen Task mit Ablaufzeit, der Heartbeat verlängert sie. Fällt der Agent aus, kommt der Task zurück in die Warteschlange.
-- **Routing** über Fähigkeiten und Tags (z. B. `tape`, `gpu`, `share:defa`).
-- **Fehlerpfade:** Jeder Knoten hat mehrere Ausgänge (Erfolg, Fehler, ggf. weitere). Dazu kommen Retry-Regeln je Knoten und eine manuelle Wiederfreigabe in der UI.
-- **Sammeln/Verteilen** als eingebaute Steuerelemente, z. B. Clips nach Band sammeln, Restore als Batch, danach wieder einzeln weiter.
-- **Prioritäten und Kontingente** je Workflow und Knoten.
-- **Workflow-Versionen:** Laufende Clips bleiben auf der Version, mit der sie gestartet sind.
-- **Live-Status** in der UI über WebSocket oder Server-Sent Events.
-
-### 5.4 Modul-Vertrag (Grundidee)
-
-- **Manifest:** Name, Version, Ein- und Ausgänge, Parameter-Schema (daraus erzeugt die UI das Formular), benötigte Fähigkeiten, Batch ja/nein, Parallelität.
-- **Laufzeit:** Eingabe sind Clip(s) und Parameter. Das Modul liefert Fortschritt, Logs und ein Ergebnis je Clip (bei Batch auch Teilergebnisse während der Laufzeit).
-- **Modularten:**
-  - Quelle/Auslöser: es-searcher, Watchfolder, manuell
-  - Verarbeitung: restore, transcode, qc
-  - Aktion: Dateien bewegen, Metadaten setzen
-  - Steuerung: Bedingung, Sammeln, Verteilen, Warten/Freigabe
-
-### 5.5 Technische Richtung (vorläufig)
-
-| Bereich | Tendenz | Grund |
-|---|---|---|
-| Backend | Python (z. B. FastAPI) | Vorhandenes Python-Know-how, Fachbibliotheken sind in Python |
-| Datenbank | PostgreSQL (SQLite nur für einen Prototyp) | Robuste Warteschlange (`SKIP LOCKED`), JSON-Felder, Benachrichtigungen |
-| Frontend | Web-App mit React Flow als Editor | Siehe 3.2 |
-| Agent | Python, als portables Paket | Module in Python, Verteilweg A/B |
-| Transport | HTTPS von Anfang an | Browserfunktionen, späterer öffentlicher Zugang |
-| Login | Nur eine Andockstelle vorsehen | Kommt später vom übergeordneten Server |
-
-### 5.6 Dateiablage im Dateisystem (Marschrichtung)
-
-- **Ein Ordner je Job:** Alle Mediendateien eines Jobs liegen gemeinsam in einem Ordner (z. B. benannt nach dem Jobnamen), nicht verteilt auf Stufenordner.
-- **Möglichst flach:** Am besten alles in einer Ebene, ohne Unterordner. Welche Datei zu welchem Clip und zu welcher Stufe gehört, steht in der Datenbank, nicht in der Ordnerstruktur.
-- **Beispiel Restore → Transcode → Delivery → Cleanup:** Restored File und Transcoded File liegen im selben Jobordner. Jobdateien (falls vorhanden) liegen ebenfalls dort.
-- **Cleanup:** Nach erfolgreicher Delivery löscht das Cleanup-Modul den ganzen Jobordner samt Inhalt. Es braucht keine Einzeldatei-Logik.
-- **Offen für die Detailplanung:** Namensschema der Dateien (Kollisionen in einer Ebene vermeiden), Ablageort des Jobordners je Share, Verhalten bei fehlgeschlagener Delivery.
-
-## 6. Offene Architekturfragen (nächste Sitzung)
-
-1. **Workflow-Modell:** langlebige Pipeline, in die laufend Clips einlaufen (Marathon-Stil), oder ein Job je Datei (FFAStrans-Stil)? Oder beides?
-2. **Worker-Betriebssysteme:** nur Windows oder auch Linux/Container?
-3. **Wo laufen Quell-Module** wie der es-searcher: auf dem Server oder in einem Agent?
-4. **Speicher:** ein Share oder mehrere Standorte? Wie werden Pfade zwischen Windows und Linux zugeordnet?
-5. **Größenordnung:** Clips je Workflow, Anzahl der Worker, Aufbewahrungsdauer der Historie.
-6. **Verteilung des Agents:** portabel vom Share oder Installation als Dienst? Gibt es IT-Vorgaben?
-7. **Rolle des übergeordneten Servers:** nur Login oder auch mehrere m2-Instanzen bzw. Mandanten?
-8. **Windmill-Test** durchführen: ja oder nein?
-9. **Fachbibliotheken** (TOOLBOX, ES-Search, ES-Restore, AQC, Transcoder) in Modulen weiterverwenden?
-
-## 7. Stand heute
-
-- **Festgelegt:** Name m2, neues Repo, harter Schnitt. Benutzerverwaltung und Login vorerst nicht.
-- **Tendenz (noch nicht entschieden):** eigener Kern aus fertigen Bausteinen; Agent statt Browser-Worker; ereignisbasierte Clip-Verfolgung.
+- Dateiablage: Marschrichtung ein flacher Arbeitsordner je Job, den ein Cleanup-Modul am Ende löscht
+- Speicherorte und Pfadzuordnung je Worker
+- Fachbibliotheken (TOOLBOX, ES-Search, ES-ARK-API, AQC, Transcoder) in Modulen
+- Übergeordneter Server: nur Login oder auch mehrere Instanzen/Mandanten
+- Öffentlicher Zugang (Zertifikat, Absicherung)
 
 ## Quellen
 
-- FFAStrans Architektur: https://www.ffastrans.com/wiki/doku.php?id=gui%3Aarchitecture
-- FFAStrans Weboberfläche: https://www.ffastrans.com/wiki/doku.php?id=webinterface%3Awebinterface
-- FileFlows Preise/Lizenz: https://fileflows.com/pricing
-- Tdarr (EULA): https://github.com/HaveAGitGat/Tdarr
-- Windmill Lizenz: https://github.com/windmill-labs/windmill/blob/main/LICENSE
-- Windmill Worker-Gruppen: https://www.windmill.dev/docs/core_concepts/worker_groups
-- Kestra Worker Groups: https://kestra.io/docs/enterprise/scalability/worker-group
-- n8n Lizenz-FAQ: https://docs.n8n.io/n8n-community-license/community-license/license-faq
-- Prefect Workers: https://docs.prefect.io/v3/concepts/workers
-- Apache NiFi in Depth (Provenance): https://nifi.apache.org/docs/nifi-docs/html/nifi-in-depth.html
-- OpenMPF: https://github.com/openmpf/openmpf
+- FileFlows Dashboard: https://fileflows.com/docs/webconsole/dashboard
+- FileFlows Files (Statusgruppen, Aktionen): https://fileflows.com/docs/webconsole/files
+- FileFlows Flows: https://fileflows.com/docs/webconsole/flows
+- FileFlows Flow-Editor: https://fileflows.com/docs/webconsole/flows/editor
+- FileFlows Worker-Rechner (dort „Agents“): https://fileflows.com/docs/webconsole/agents
+- FileFlows Updates: https://fileflows.com/docs/webconsole/config/settings/updates
 - React Flow (xyflow): https://github.com/xyflow/xyflow
-- Rete.js Lizenzen: https://retejs.org/docs/licensing/
-- Hatchet: https://docs.hatchet.run/v1
-- MDN WebGPU: https://developer.mozilla.org/en-US/docs/Web/API/WebGPU_API
-- MDN WebCodecs: https://developer.mozilla.org/en-US/docs/Web/API/WebCodecs_API
-- MDN showDirectoryPicker: https://developer.mozilla.org/en-US/docs/Web/API/Window/showDirectoryPicker
-- Cross-Origin-Isolation: https://web.dev/articles/cross-origin-isolation-guide
-- Wasm Memory64: https://caniuse.com/wf-wasm-memory64
