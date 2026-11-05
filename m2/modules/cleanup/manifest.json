@@ -1,0 +1,11 @@
+{
+  "name": "cleanup",
+  "version": "1.0.0",
+  "kind": "action",
+  "inputs": ["in"],
+  "outputs": ["success", "error"],
+  "params_schema": {"type": "object", "properties": {}, "additionalProperties": false},
+  "capabilities": [],
+  "batch": false,
+  "concurrency": 1
+}
