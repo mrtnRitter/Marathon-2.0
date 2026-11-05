@@ -1,7 +1,7 @@
 # Marathon 2.0 – Architekturkonzept
 
 **Stand:** 05.11.2026 · Martin, CodeZilla
-**Status:** Kernkonzept (Gerüst). Kein Pflichtenheft, kein Code. Details folgen schrittweise (siehe Abschnitt 11).
+**Status:** Kernkonzept (Gerüst) und Startumfang. Kein Pflichtenheft, kein Code. Startumfang siehe Abschnitt 11, Ausbau siehe Abschnitt 12.
 
 ---
 
@@ -15,6 +15,15 @@
 - **Eigener, schlanker Kern** aus fertigen Bausteinen; Neubau ohne Übernahme von Code.
 - **Login und Benutzerverwaltung** kommen später über einen übergeordneten Server; jetzt nur eine Andockstelle vorsehen.
 - **Namen:** „m2“ ist nur die interne Bezeichnung. Im Code heißt alles `marathon`, Startversion **2.0.0**.
+- **Vorgehen:** Schnell einen lauffähigen Prototyp und eine erste lauffähige Version bauen, aber von Anfang an so angelegt, dass sie leicht skaliert. Danach Stück für Stück erweitern.
+
+**Leitplanken für Skalierbarkeit**
+
+- Der Server hält keinen Zustand im Arbeitsspeicher; alles steht in der Datenbank. So können später mehrere Server-Prozesse parallel laufen.
+- Server, Worker-Client und Oberfläche sprechen nur über klar definierte, versionierte Schnittstellen.
+- Änderungen am Datenbankaufbau nur über Migrationen.
+- Neue Modultypen kommen ohne Änderung am Kern dazu.
+- Einstellungen stehen in Konfigurationsdateien, nicht im Code.
 
 ## 2. Kernidee
 
@@ -48,7 +57,7 @@ flowchart LR
 
 ## 4. Der Kreislauf (Gerüst der Engine)
 
-1. **Asset kommt auf die Liste** (manuell, per Import oder über ein Quell-Modul – siehe 11).
+1. **Asset kommt auf die Liste** (manuell, per Import oder über ein Quell-Modul – siehe 12).
 2. **Asset steht an einem Modul an.** Der Server veröffentlicht dafür einen Job. Bei Sammeljobs sammelt das Modul zuerst mehrere Assets nach einer Regel (z. B. gleicher Schlüssel) und veröffentlicht dann einen Job.
 3. **Worker holt Job ab.** Der Worker fragt nach Arbeit, die zu seinen Fähigkeiten passt. Der Server teilt den passenden Job mit der höchsten Priorität zu.
 4. **Worker verarbeitet** und meldet laufend Fortschritt, Log-Zeilen und – bei Sammeljobs – Teilergebnisse je Asset.
@@ -156,21 +165,24 @@ flowchart LR
 
 **Prinzip:** Der aktuelle Zustand wird direkt gespeichert. Jede Änderung schreibt in derselben Transaktion einen Eintrag in die Historie. So ist der Zustand schnell abfragbar und die Historie trotzdem vollständig.
 
-**Eine Datenbank oder eine je Workflow?**
+**Festgelegt:** eine Datenbank für alles, mit einer Aufräumregel für alte Daten (Details in Block 1, Abschnitt 12).
 
-| | Eine Datenbank für alles | Zentrale DB + eine DB je Workflow |
-|---|---|---|
-| Statuswechsel von Asset und Job | in einer Transaktion, immer konsistent | über Datenbankgrenzen, nicht atomar |
-| Zuteilung über alle Workflows (Prioritäten) | eine Abfrage | alle Workflow-DBs durchsuchen |
-| Dashboard über alle Workflows | eine Abfrage | Zusammenführen nötig |
-| Workflow archivieren oder löschen | per Abfrage bzw. Aufräumregel | Datei verschieben bzw. löschen |
-| Schema-Änderungen und Sicherung | einmal | je Datenbank |
+**Datenbanksystem: PostgreSQL** von Anfang an:
 
-**Empfehlung:** eine Datenbank für alles. Große Historien lassen sich über Aufbewahrungsregeln je Workflow begrenzen.
-
-**Datenbanksystem (offen):** SQLite reicht als Start, weil nur der Server auf die Datenbank zugreift, nichts zusätzlich installiert werden muss und die Sicherung eine Dateikopie ist. Der Zugriff wird so gekapselt, dass ein späterer Wechsel zu PostgreSQL möglich bleibt. Entscheidung zusammen mit der Größenordnung (siehe 11).
+- viele gleichzeitige Schreibzugriffe (Lebenszeichen, Fortschritt, Logs vieler Worker)
+- frei belegbare Asset-Metadaten speicher- und durchsuchbar
+- Benachrichtigung bei Änderungen für den Live-Status
+- Aufräumen großer Historien blockweise
+- mehrere Server-Prozesse gleichzeitig möglich
 
 ## 8. Oberfläche (Vorbild FileFlows)
+
+**Gestaltung**
+
+- **Nur Dark Theme.** Ein helles Theme gibt es vorerst nicht.
+- **Schrift:** eine moderne Monospace-Schrift für die gesamte Oberfläche. Der Look darf technisch-nerdig sein. Vorschlag: JetBrains Mono (freie Lizenz OFL).
+- Farben und Schrift sind zentral festgelegt; jeder Gesamtstatus hat überall dieselbe Farbe.
+- Schriftdateien werden lokal ausgeliefert.
 
 **Navigation:** feste Seitenleiste mit gleichrangigen Einträgen **Dashboard**, **Workflows**, **Assets**, dazu **Worker** und **Einstellungen**. Innerhalb eines Workflows wechseln Reiter mit einem Klick zwischen **Module** und **Assets**. Jede Dashboard-Zeile springt direkt in beide Ansichten. Die Asset-Ansicht ist auch global erreichbar (mit Filter nach Workflow).
 
@@ -207,26 +219,74 @@ flowchart LR
 
 - **Alles lokal:** Sämtliche Pakete werden im Projektordner installiert, nicht global. Zur Laufzeit wird nichts aus dem Internet nachgeladen (auch keine Frontend-Bibliotheken über CDN).
 - **Gepinnte Requirements** getrennt für Server und Worker-Client.
-- **`build.py`** als einziger Einstieg: legt die lokale Python-Umgebung an, installiert die Requirements, legt die Frontend-Bibliotheken lokal ab und erzeugt das Client-Paket für den Rollout.
+- **`build.py`** als einziger Einstieg: legt die lokale Python-Umgebung an, installiert die Requirements, legt die Frontend-Bibliotheken und Schriftdateien lokal ab und erzeugt das Client-Paket für den Rollout.
+- **PostgreSQL lokal:** `build.py` legt die offiziellen PostgreSQL-Programmdateien und den Datenordner im Projektordner ab; kein Systeminstaller.
+- **Node.js lokal:** wird für React Flow nur beim Bauen der Oberfläche gebraucht und ebenfalls im Projektordner installiert; der Server liefert danach nur fertige Dateien aus.
 
 ## 10. Technische Richtung (vorläufig)
 
 | Bereich | Tendenz |
 |---|---|
 | Server | Python, z. B. FastAPI |
-| Datenbank | eine Datenbank; SQLite als Start, PostgreSQL möglich (siehe 7) |
-| Oberfläche | Web-App mit Node-Editor-Bibliothek, z. B. React Flow (MIT) |
+| Datenbank | PostgreSQL, eine Datenbank für alles, lokal installiert |
+| Oberfläche | Web-App mit React Flow (MIT) als Node-Editor; Dark Theme, Monospace-Schrift |
 | Worker-Client | Python, mit Starter und austauschbarer Laufzeit |
 | Transport | HTTPS; Live-Status über Server-Sent Events oder WebSocket |
 | Login | nur Andockstelle |
 
-## 11. Nächste Schritte – Detaillierung
+## 11. Startumfang (erster lauffähiger Stand)
 
-Reihenfolge vom Kern nach außen. Jeder Block klärt seine offenen Punkte und endet mit einer Entscheidung.
+Ziel: Der Kreislauf läuft einmal komplett durch – Asset auf die Liste, Job veröffentlichen, Worker verarbeitet, Status ändert sich. Auto-Update ist von Anfang an dabei.
+
+| # | Komponente | Aufgabe |
+|---|---|---|
+| **Server** | | |
+| 1 | Datenbank-Schicht | PostgreSQL, Tabellen für Workflows, Versionen, Assets, Jobs, Historie, Worker und Client-Versionen; Migrationen |
+| 2 | API | Getrennte Bereiche für Oberfläche und Worker-Client |
+| 3 | Engine | Jobs veröffentlichen und zuteilen, Ergebnisse auswerten, Status und Historie schreiben |
+| 4 | Modulkatalog | Lädt die Beschreibungen der Modultypen |
+| 5 | Rollout | Bewahrt Client-Pakete auf, gibt Versionen je Worker frei, liefert Pakete aus |
+| 6 | Live-Kanal | Schickt Statusänderungen sofort an den Browser |
+| 7 | Andockstelle Login | Vorerst ohne Funktion |
+| **Oberfläche** | | |
+| 8 | Rahmen mit Seitenleiste | Dashboard, Workflows, Assets, Worker; Dark Theme, Monospace-Schrift |
+| 9 | Dashboard | Minimal: Name, aktiv/pausiert, Anzahl Assets je Gesamtstatus |
+| 10 | Workflow-Ansicht | Node-Editor und Überwachen, Einstellungsformular je Modul |
+| 11 | Asset-Ansicht und Asset-Detail | Liste mit Status-Reitern, Zeitstrahl, Meldungen, Log |
+| 12 | Worker-Seite | Freigeben, sperren, Client-Version ausrollen |
+| 13 | Assets hinzufügen | Manuell oder als einfacher Listenimport |
+| **Worker-Client** | | |
+| 14 | Starter | Startet die Client-Laufzeit, tauscht sie beim Update aus, Rückfall bei Fehlern |
+| 15 | Client-Laufzeit | Anmelden, Lebenszeichen, Job holen, Modul ausführen, Fortschritt und Ergebnis melden |
+| **Gemeinsam** | | |
+| 16 | Gemeinsame Grundlage | Versionsnummer 2.0.0 und Datenformate zwischen Server und Client |
+| 17 | Modul-Schnittstelle und Testmodul | Testmodul „Warten“ mit einstellbarer Dauer und wählbarem Ausgang |
+| **Build** | | |
+| 18 | `build.py` und Requirements | Siehe Abschnitt 9 |
+
+**Ordnerstruktur im Repo**
+
+```
+marathon/
+  common/      # Version, Datenformate
+  server/      # API, Engine, Datenbank, Rollout, Oberfläche
+  client/      # Starter, Client-Laufzeit
+  modules/     # Modul-Schnittstelle, Testmodul
+build.py
+requirements/  # server.txt, client.txt
+```
+
+**Nicht im Startumfang:** Ausführung der Aufräumregel (Tabellen sind dafür angelegt), echte Fachmodule, Quell-Module, Login, öffentlicher Zugang, Dateiablage.
+
+**Vor dem Start zu klären:** Betriebssystem von Server und Workern.
+
+## 12. Ausbau – Detaillierung Stück für Stück
+
+Reihenfolge vom Kern nach außen. Jeder Block klärt seine offenen Punkte, endet mit einer Entscheidung und fließt als Erweiterung in die laufende Version ein.
 
 1. **Datenmodell und Zustände**
    - Größenordnung: Assets je Workflow, Anzahl Worker, Aufbewahrungsdauer der Historie
-   - Datenbanksystem festlegen
+   - Aufräumregel: was wird wann entfernt
 2. **Engine-Regeln**
    - Wie kommen Assets auf die Liste: manuell, Import, Quell-Modul?
    - Wo laufen Steuer- und Quell-Module (Bedingung, Sammeln, Suche): im Server oder als Job? Vorschlag: der Server bringt einen eingebauten Worker mit, dann gibt es nur einen Mechanismus.
@@ -239,8 +299,6 @@ Reihenfolge vom Kern nach außen. Jeder Block klärt seine offenen Punkte und en
    - Beschreibung eines Modultyps, Aufruf, Rückmeldungen, Ausgänge
 5. **Oberfläche**
    - Kennzahlen des Dashboards, Spalten und Filter der Asset-Ansicht
-6. **Build und Installation**
-   - Node-Editor-Bibliothek festlegen; braucht sie ein JavaScript-Build-Werkzeug, wird es ebenfalls lokal installiert
 
 **Später (bewusst geparkt)**
 
