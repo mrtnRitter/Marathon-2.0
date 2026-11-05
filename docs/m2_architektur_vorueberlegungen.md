@@ -59,10 +59,7 @@ flowchart LR
 
 - **Der Server entscheidet, der Worker führt aus.** Der Worker kennt keinen Workflow, nur seinen Job.
 - **Abholen statt Zuschieben:** Worker bauen nur ausgehende Verbindungen auf.
-- **Zuteilung mit Ablaufzeit:** Ein zugeteilter Job läuft ab, wenn der Worker sich nicht mehr meldet. Dann geht der Job zurück in die Warteschlange (Versuchszähler +1).
-- **Wiederholen:** Jedes Modul hat eine maximale Zahl an Versuchen. Danach gilt der Ausgang *Fehler*. Fehlgeschlagene Assets lassen sich in der Oberfläche manuell wieder freigeben.
 - **Prioritäten:** Reihenfolge auf der Liste und Priorität je Workflow; einzelne Assets lassen sich nach oben schieben.
-- **Versionen:** Ein Asset bleibt auf der Workflow-Version, mit der es gestartet ist.
 
 ## 5. Zustände
 
