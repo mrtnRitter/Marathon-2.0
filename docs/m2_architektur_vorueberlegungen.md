@@ -15,6 +15,7 @@
 - **Eigener, schlanker Kern** aus fertigen Bausteinen; Neubau ohne Übernahme von Code.
 - **Login und Benutzerverwaltung** kommen später über einen übergeordneten Server; jetzt nur eine Andockstelle vorsehen.
 - **Namen:** „m2“ ist nur die interne Bezeichnung. Im Code heißt alles `marathon`, Startversion **2.0.0**.
+- **Betriebssystem:** Start auf Windows 11 (Server und Worker), später Linux. Der Code ist von Anfang an plattformunabhängig.
 - **Vorgehen:** Schnell einen lauffähigen Prototyp und eine erste lauffähige Version bauen, aber von Anfang an so angelegt, dass sie leicht skaliert. Danach Stück für Stück erweitern.
 
 **Leitplanken für Skalierbarkeit**
@@ -232,6 +233,7 @@ flowchart LR
 | Oberfläche | Web-App mit React Flow (MIT) als Node-Editor; Dark Theme, Monospace-Schrift |
 | Worker-Client | Python, mit Starter und austauschbarer Laufzeit |
 | Transport | HTTPS; Live-Status über Server-Sent Events oder WebSocket |
+| Betriebssystem | Windows 11, später Linux |
 | Login | nur Andockstelle |
 
 ## 11. Startumfang (erster lauffähiger Stand)
@@ -278,8 +280,6 @@ requirements/  # server.txt, client.txt
 
 **Nicht im Startumfang:** Ausführung der Aufräumregel (Tabellen sind dafür angelegt), echte Fachmodule, Quell-Module, Login, öffentlicher Zugang, Dateiablage.
 
-**Vor dem Start zu klären:** Betriebssystem von Server und Workern.
-
 ## 12. Ausbau – Detaillierung Stück für Stück
 
 Reihenfolge vom Kern nach außen. Jeder Block klärt seine offenen Punkte, endet mit einer Entscheidung und fließt als Erweiterung in die laufende Version ein.
@@ -292,7 +292,6 @@ Reihenfolge vom Kern nach außen. Jeder Block klärt seine offenen Punkte, endet
    - Wo laufen Steuer- und Quell-Module (Bedingung, Sammeln, Suche): im Server oder als Job? Vorschlag: der Server bringt einen eingebauten Worker mit, dann gibt es nur einen Mechanismus.
    - Sammeljobs, Prioritäten, Abbrechen
 3. **Server–Client-Protokoll und Auto-Update**
-   - Betriebssysteme der Worker (nur Windows oder auch Linux)
    - Client als Dienst oder per Autostart, IT-Vorgaben
    - Rollout-Strategie und Versionsverträglichkeit Server/Client
 4. **Modulvertrag und Modulverteilung**
@@ -303,6 +302,7 @@ Reihenfolge vom Kern nach außen. Jeder Block klärt seine offenen Punkte, endet
 **Später (bewusst geparkt)**
 
 - Dateiablage: Marschrichtung ein flacher Arbeitsordner je Job, den ein Cleanup-Modul am Ende löscht
+- Umstieg auf Linux
 - Speicherorte und Pfadzuordnung je Worker
 - Fachbibliotheken (TOOLBOX, ES-Search, ES-ARK-API, AQC, Transcoder) in Modulen
 - Übergeordneter Server: nur Login oder auch mehrere Instanzen/Mandanten
