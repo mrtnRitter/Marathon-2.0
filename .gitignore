@@ -4,3 +4,4 @@
 .data
 ui/node_modules
 marathon/server/static
+dist
