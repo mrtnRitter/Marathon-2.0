@@ -237,7 +237,8 @@ def _build_ui(paths, node, npm_cli, run=None):
     static = paths["ui_static"]
     if build_stamp.is_file() and build_stamp.read_text(encoding="utf-8") == source_hash and static.is_dir():
         return
-    run([node, npm_cli, "run", "build"], ui, env)
+    # npm run starts cmd.exe on Windows, which breaks on "&" in the project path.
+    run([node, ui / "node_modules" / "vite" / "bin" / "vite.js", "build"], ui, env)
     if not static.is_dir():
         raise FileNotFoundError("UI build did not create marathon/server/static")
     _write_stamp(build_stamp, source_hash)
