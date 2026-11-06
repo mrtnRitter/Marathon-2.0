@@ -39,6 +39,11 @@ static_dir = root_dir / "marathon" / "server" / "static"
 required_files = (requirements_file, server_config_file, ui_package_file, ui_lock_file)
 is_windows = os.name == "nt"
 
+ui_cli_paths = {
+    "typescript": Path("typescript/bin/tsc"),
+    "vite": Path("vite/bin/vite.js"),
+}
+
 
 # FUNC: paths and environment (shared with run.py)
 class BuildError(Exception):
@@ -66,8 +71,18 @@ def npm_command(*args: str) -> list[str]:
     return [str(node_exe()), str(npm_cli()), *args]
 
 
+def ui_command(tool: str, *args: str) -> list[str]:
+    """Run a UI tool directly with Node, without npm's Windows .cmd wrappers."""
+    if tool not in ui_cli_paths:
+        raise BuildError(f"Unbekanntes UI-Werkzeug: {tool}")
+    cli_file = ui_modules_dir / ui_cli_paths[tool]
+    if not cli_file.is_file():
+        raise BuildError(f"UI-Werkzeug fehlt: {cli_file}. Zuerst python build.py ausführen.")
+    return [str(node_exe()), str(cli_file), *args]
+
+
 def run(command: list[str], cwd: Path = root_dir, env: dict[str, str] | None = None) -> None:
-    result = subprocess.run(command, cwd=cwd, env=env)
+    result = subprocess.run(command, cwd=cwd, env=env, shell=False)
     if result.returncode:
         raise BuildError(f"Befehl fehlgeschlagen (Exit-Code {result.returncode}): {' '.join(command)}")
 
@@ -203,7 +218,9 @@ def install_ui_dependencies() -> None:
 
 
 def build_ui() -> None:
-    run(npm_command("run", "build"), cwd=ui_dir, env=node_env())
+    # Arguments stay separate: spaces and & in the repo path must never reach cmd.exe.
+    for command in (ui_command("typescript", "-p", "tsconfig.json"), ui_command("vite", "build")):
+        run(command, cwd=ui_dir, env=node_env())
     if not (static_dir / "index.html").is_file():
         raise BuildError(f"UI-Build hat keine index.html in {static_dir} erzeugt")
 

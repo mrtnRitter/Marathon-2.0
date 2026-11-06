@@ -5,7 +5,7 @@ import argparse
 import subprocess
 import sys
 
-from build import BuildError, node_env, node_exe, npm_command, root_dir, static_dir, ui_dir, ui_modules_dir, venv_python
+from build import BuildError, node_env, node_exe, ui_command, root_dir, static_dir, ui_dir, ui_modules_dir, venv_python
 
 # CONFIG
 app_name = "marathon-run"
@@ -24,7 +24,7 @@ def start_server() -> int:
 def start_dev() -> int:
     if not node_exe().is_file() or not ui_modules_dir.is_dir():
         raise BuildError(f"Node.js oder UI-Bibliotheken fehlen. {setup_hint}")
-    return subprocess.call(npm_command("run", "dev"), cwd=ui_dir, env=node_env())
+    return subprocess.call(ui_command("vite"), cwd=ui_dir, env=node_env(), shell=False)
 
 
 # MAIN
