@@ -2,3 +2,5 @@
 .tools
 .venv
 .data
+ui/node_modules
+marathon/server/static
