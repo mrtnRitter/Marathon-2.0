@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -152,7 +153,7 @@ def extract(archive: Path, target: Path) -> None:
 
 
 def install_node() -> None:
-    if node_exe().is_file() and stamp_matches("node", node_version):
+    if node_exe().is_file() and npm_cli().is_file() and stamp_matches("node", node_version):
         print(f"  Node.js {node_version} vorhanden, übersprungen")
         return
     archive_name = node_archive_name()
@@ -164,12 +165,30 @@ def install_node() -> None:
     if file_hash(archive) != expected_hash:
         archive.unlink()
         raise BuildError(f"Prüfsumme von {archive_name} stimmt nicht, Download verworfen")
-    unpack_dir = tools_dir / "node-unpack"
-    shutil.rmtree(unpack_dir, ignore_errors=True)
-    extract(archive, unpack_dir)
-    shutil.rmtree(node_dir, ignore_errors=True)
-    next(unpack_dir.iterdir()).rename(node_dir)
-    shutil.rmtree(unpack_dir)
+    try:
+        tools_dir.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="node-unpack-", dir=tools_dir, ignore_cleanup_errors=True) as temporary_dir:
+            unpack_dir = Path(temporary_dir)
+            extract(archive, unpack_dir)
+            roots = list(unpack_dir.iterdir())
+            if len(roots) != 1 or not roots[0].is_dir():
+                raise BuildError("Node.js-Archiv hat eine unerwartete Ordnerstruktur.")
+            source_dir = roots[0]
+            for required_file in (node_exe(), npm_cli()):
+                if not (source_dir / required_file.relative_to(node_dir)).is_file():
+                    raise BuildError(f"Node.js-Archiv ist unvollständig: {required_file.relative_to(node_dir)} fehlt.")
+            # Windows may lock whole directories; copy files instead of renaming the extracted root.
+            # A failed copy must never leave a valid installation stamp.
+            write_stamp("node", "")
+            shutil.copytree(source_dir, node_dir, dirs_exist_ok=True)
+    except (OSError, shutil.Error, tarfile.TarError, zipfile.BadZipFile) as error:
+        raise BuildError(
+            "Node.js-Dateien konnten nicht eingerichtet werden. "
+            "Beende laufende Marathon- und Node-Prozesse. "
+            "Falls das Projekt in OneDrive liegt, pausiere dessen Synchronisierung vorübergehend "
+            "und starte python build.py erneut. "
+            f"Ursprünglicher Fehler: {error}"
+        ) from error
     write_stamp("node", node_version)
 
 
