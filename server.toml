@@ -8,8 +8,8 @@ tls_certfile = ""
 tls_keyfile = ""
 
 [postgres]
-bin_dir = "postgres/bin"
-data_dir = "postgres/data"
+bin_dir = ".tools/postgresql/bin"
+data_dir = ".data/postgresql"
 port = 55432
 user = "marathon"
 database = "marathon"
