@@ -1,0 +1,15 @@
+.toolbar { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.button {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-panel-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+.button:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--text-dim); }
+.button:disabled { opacity: 0.4; cursor: default; }
+.button-primary { background: var(--accent); border-color: var(--accent); color: var(--text-inverse); font-weight: 500; }
+.button-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }

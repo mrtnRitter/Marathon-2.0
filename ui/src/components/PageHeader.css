@@ -1,0 +1,11 @@
+.page-header {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-4);
+  min-height: var(--header-height);
+  padding: var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.page-header h1 { margin: 0; font-size: var(--font-size-lg); font-weight: 500; display: flex; align-items: center; gap: var(--space-3); }
+.page-header-breadcrumb { font-size: var(--font-size-xs); color: var(--text-dim); }
+.page-header-breadcrumb a { color: var(--text-muted); }
+.page-header-tools { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; justify-content: flex-end; }

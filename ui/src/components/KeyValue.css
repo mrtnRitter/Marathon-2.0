@@ -1,0 +1,5 @@
+.key-value { margin: 0; font-size: var(--font-size-sm); }
+.key-value-row { display: grid; grid-template-columns: 150px 1fr; gap: var(--space-3); padding: 5px 0; border-bottom: 1px dashed var(--border); }
+.key-value-row:last-child { border-bottom: none; }
+.key-value dt { color: var(--text-dim); }
+.key-value dd { margin: 0; overflow-wrap: anywhere; }

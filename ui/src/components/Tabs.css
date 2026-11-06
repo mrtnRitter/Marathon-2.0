@@ -1,0 +1,12 @@
+.tabs { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border); }
+.tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: var(--space-2) var(--space-4);
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab-count { padding: 0 6px; border-radius: var(--radius-lg); background: var(--bg-hover); font-size: var(--font-size-xs); }

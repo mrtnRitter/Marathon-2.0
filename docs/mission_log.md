@@ -8,7 +8,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ---
 
-## Release 2.0.0-ui.1 – UI-Prototyp Look & Feel · in Arbeit
+## Release 2.0.0-ui.1 – UI-Prototyp Look & Feel · gebaut, Abnahme durch Martin offen
 
 **Ziel:** Oberfläche im Stil von FileFlows mit Beispieldaten, ohne echte Funktion.
 

@@ -1,0 +1,10 @@
+.page-content.asset-detail { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(320px, 1.4fr); grid-template-areas: 'head timeline' 'meta timeline' 'messages log'; align-content: start; }
+.asset-detail-head { grid-area: head; }
+.asset-detail-meta { grid-area: meta; }
+.asset-detail-timeline { grid-area: timeline; }
+.asset-detail-messages { grid-area: messages; }
+.asset-detail-log { grid-area: log; }
+.asset-message { padding: var(--space-1) var(--space-3); margin-bottom: var(--space-2); border-left: 2px solid; font-size: var(--font-size-sm); }
+.live-dot { margin-left: var(--space-2); color: var(--status-in-progress); text-transform: none; letter-spacing: 0; }
+.live-dot::before { content: '● '; animation: pulse 1.2s infinite; }
+@media (max-width: 1100px) { .page-content.asset-detail { grid-template-columns: 1fr; grid-template-areas: 'head' 'meta' 'timeline' 'messages' 'log'; } }

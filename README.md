@@ -69,6 +69,15 @@ Datei `config/server.toml`:
 | `host` | Adresse, an der der Server erreichbar ist. `0.0.0.0` macht ihn im lokalen Netz erreichbar. | `127.0.0.1` |
 | `port` | Port des Servers | `8080` |
 
+## Tests (optional)
+
+```bash
+.venv\Scripts\python -m pip install pytest httpx    # Windows
+.venv\Scripts\python -m pytest -q
+.venv/bin/python -m pip install pytest httpx         # Linux
+.venv/bin/python -m pytest -q
+```
+
 ## Projektstruktur
 
 ```
@@ -77,8 +86,15 @@ run.py                 Starten
 config/server.toml     Server-Einstellungen
 requirements/          Python-Abhängigkeiten (server.txt)
 marathon/common/       Gemeinsame Grundlage (Version)
-marathon/server/       Server; static/ enthält die gebaute Oberfläche
+marathon/server/       Server (api/ = API-Bereiche); static/ enthält die gebaute Oberfläche
 ui/                    Quellcode der Oberfläche
+  src/app/             Rahmen, Navigation, Routen
+  src/theme/           Farben, Schrift, Status-Farben (zentral)
+  src/components/      Wiederverwendbare Bausteine
+  src/data/            Datenschicht (heute Beispieldaten, später API)
+  src/pages/           Seiten
+  src/features/        Asset-Liste, Node-Editor
+tests/                 Automatische Tests
 docs/mission_log.md    Planung und Fortschritt der Releases
 ```
 

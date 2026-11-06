@@ -1,0 +1,16 @@
+.dashboard-rows { display: flex; flex-direction: column; }
+.dashboard-row {
+  display: grid; grid-template-columns: minmax(240px, 1.2fr) 2fr auto; grid-template-areas: 'head counts actions' 'desc bar actions';
+  gap: var(--space-2) var(--space-5); align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  transition: background var(--transition);
+}
+.dashboard-row:last-child { border-bottom: none; }
+.dashboard-row:hover { background: var(--bg-hover); }
+.dashboard-row-head { grid-area: head; display: flex; align-items: center; gap: var(--space-3); }
+.dashboard-row-desc { grid-area: desc; font-size: var(--font-size-xs); }
+.dashboard-row .status-bar { grid-area: bar; }
+.dashboard-row-counts { grid-area: counts; display: flex; flex-wrap: wrap; gap: var(--space-4); font-size: var(--font-size-xs); }
+.dashboard-row-counts b { font-size: var(--font-size-md); }
+.dashboard-row-actions { grid-area: actions; display: flex; gap: var(--space-1); }

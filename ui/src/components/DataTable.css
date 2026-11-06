@@ -1,0 +1,21 @@
+.data-table-wrap { overflow: auto; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.data-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.data-table th {
+  position: sticky; top: 0; z-index: 1;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-panel-raised);
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-weight: 500; text-align: left; text-transform: uppercase; letter-spacing: 0.06em; font-size: var(--font-size-xs);
+  white-space: nowrap; cursor: pointer; user-select: none;
+}
+.data-table th:hover { color: var(--text); }
+.data-table-sort { margin-left: 4px; color: var(--accent); font-size: 9px; }
+.data-table td { padding: 6px var(--space-3); border-bottom: 1px solid var(--border); white-space: nowrap; }
+.data-table tbody tr:nth-child(even) { background: var(--bg-zebra); }
+.data-table tbody tr { cursor: default; transition: background var(--transition); }
+.data-table tbody tr:hover { background: var(--bg-hover); }
+.data-table tbody tr.selected { background: var(--bg-selected); box-shadow: inset 2px 0 0 var(--accent); }
+.data-table-check { width: 34px; text-align: center; }
+.data-table input[type='checkbox'] { accent-color: var(--accent); cursor: pointer; }
+.data-table-empty { padding: var(--space-5); text-align: center; color: var(--text-dim); }

@@ -1,0 +1,11 @@
+.form-section { margin-bottom: var(--space-5); }
+.form-section h3 { margin: 0 0 var(--space-3); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); font-size: var(--font-size-sm); font-weight: 500; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; }
+.form-field { display: grid; grid-template-columns: 200px 1fr; gap: var(--space-3); align-items: start; padding: var(--space-2) 0; }
+.form-field-label { padding-top: 6px; color: var(--text-muted); font-size: var(--font-size-sm); }
+.form-field-help { margin-top: 4px; font-size: var(--font-size-xs); color: var(--text-dim); }
+.form-switch { position: relative; display: inline-block; width: 36px; height: 20px; margin-top: 4px; }
+.form-switch input { opacity: 0; width: 0; height: 0; }
+.form-switch-track { position: absolute; inset: 0; background: var(--bg-hover); border: 1px solid var(--border-strong); border-radius: 10px; cursor: pointer; transition: background var(--transition); }
+.form-switch-track::before { content: ''; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text-muted); transition: transform var(--transition), background var(--transition); }
+.form-switch input:checked + .form-switch-track { background: var(--accent-soft); border-color: var(--accent); }
+.form-switch input:checked + .form-switch-track::before { transform: translateX(16px); background: var(--accent); }

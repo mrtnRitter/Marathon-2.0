@@ -1,0 +1,16 @@
+.slide-panel-backdrop { position: fixed; inset: 0; background: var(--bg-overlay); z-index: 50; display: flex; justify-content: flex-end; }
+.slide-panel {
+  display: flex; flex-direction: column; max-width: 100vw; height: 100%;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-panel);
+  animation: slide-in 180ms ease;
+}
+@keyframes slide-in { from { transform: translateX(40px); opacity: 0; } }
+.slide-panel-header { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
+.slide-panel-header h2 { flex: 1; margin: 0; font-size: var(--font-size-lg); font-weight: 500; }
+.slide-panel-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent); }
+.slide-panel-close { background: none; border: none; color: var(--text-muted); cursor: pointer; padding: 4px; }
+.slide-panel-close:hover { color: var(--text); }
+.slide-panel-body { flex: 1; overflow: auto; padding: var(--space-4); }
+.slide-panel-footer { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border); }
