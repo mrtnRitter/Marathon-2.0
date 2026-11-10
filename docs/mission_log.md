@@ -12,17 +12,17 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 **Ziel:** Oberfläche im Stil von FileFlows mit Beispieldaten, ohne echte Funktion.
 
-- [ ] `build.py`: lokale Python-Umgebung, Node.js lokal, UI-Bibliotheken, UI-Build
-- [ ] `run.py`: Server-Start und Live-Vorschau (`--dev`)
-- [ ] Server: liefert die gebaute Oberfläche aus, `GET /api/v1/health`
-- [ ] Rahmen: feste Seitenleiste, nur Dark Theme, JetBrains Mono lokal, zentrale Farben und Status-Farben
-- [ ] Dashboard: je Workflow Name, aktiv/pausiert, Assets je Gesamtstatus, Sprung zu Module/Assets
-- [ ] Workflows: Liste und Workflow-Ansicht mit Reitern Module/Assets
-- [ ] Node-Editor: Modus Überwachen/Bearbeiten, Modul-Palette, Einstellungsformular, Modulsicht
-- [ ] Assets: globale Liste mit Workflow-Filter, Status-Reiter, Aktionsleiste, Asset-Detail mit Zeitstrahl und Log
-- [ ] Worker-Seite mit Aktionsleiste
-- [ ] Einstellungen als Platzhalterseite
-- [ ] Beispieldaten hinter einer austauschbaren Datenschicht
+- [x] `build.py`: lokale Python-Umgebung, Node.js lokal, UI-Bibliotheken, UI-Build
+- [x] `run.py`: Server-Start und Live-Vorschau (`--dev`)
+- [x] Server: liefert die gebaute Oberfläche aus, `GET /api/v1/health`
+- [x] Rahmen: feste Seitenleiste, nur Dark Theme, JetBrains Mono lokal, zentrale Farben und Status-Farben
+- [x] Dashboard: je Workflow Name, aktiv/pausiert, Assets je Gesamtstatus, Sprung zu Module/Assets
+- [x] Workflows: Liste und Workflow-Ansicht mit Reitern Module/Assets
+- [x] Node-Editor: Modus Überwachen/Bearbeiten, Modul-Palette, Einstellungsformular, Modulsicht
+- [x] Assets: globale Liste mit Workflow-Filter, Status-Reiter, Aktionsleiste, Asset-Detail mit Zeitstrahl und Log
+- [x] Worker-Seite mit Aktionsleiste
+- [x] Einstellungen als Platzhalterseite
+- [x] Beispieldaten hinter einer austauschbaren Datenschicht
 
 ---
 
