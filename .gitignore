@@ -7,4 +7,3 @@ marathon/server/static
 dist
 *.pyc
 tests/
-docs/
