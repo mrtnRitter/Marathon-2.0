@@ -8,7 +8,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ---
 
-## Release 2.0.0-ui.1 – UI-Prototyp Look & Feel · gebaut, Abnahme durch Martin offen
+## Release 2.0.0-ui.1 – UI-Prototyp Look & Feel · abgeschlossen
 
 **Ziel:** Oberfläche im Stil von FileFlows mit Beispieldaten, ohne echte Funktion.
 
@@ -26,12 +26,20 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ---
 
-## Nächster Release (Vorschlag) 2.0.0-db.1 – PostgreSQL-Grundlage
+## Release 2.0.0-db.1 – PostgreSQL-Grundlage · in Arbeit
 
-- [ ] `build.py`: PostgreSQL-Programmdateien nach `.tools`, Datenordner nach `.data`
-- [ ] `run.py`: lokale Datenbank starten und stoppen
-- [ ] Datenbank-Schicht mit Migrationen, erste Tabellen (Workflows, Assets)
-- [ ] Erste Lese-API für die Oberfläche, Dashboard liest echte Daten
+**Ziel:** Alles, was die Oberfläche zeigt, kommt aus der Datenbank. Die bisherigen Beispieldaten werden zu Demo-Daten in der Datenbank. Nur lesend; Speichern bleibt im Backlog.
+
+- [ ] `build.py`: PostgreSQL 18.6 (zonky, Maven Central, feste Prüfsumme) nach `.tools/postgres`, Datenordner `.data/postgres` mit erzeugtem Passwort
+- [ ] Datenbank-Schicht mit Migrationen: Modultypen, Workflows mit Versionen, Modulen und Verbindungen, Assets, Jobs, Historie, Logs, Worker
+- [ ] Demo-Daten: `python run.py --demo-data` füllt eine leere Datenbank
+- [ ] Lese-API für alle Ansichten, Oberfläche liest nur noch über die API
+- [ ] `run.py`: lokale Datenbank starten und stoppen, auch mit `--dev`
+- [ ] Hilfe-Button entfällt
+- [ ] Dashboard in zwei Sektionen: Workflows (Übersicht und Liste) und Worker (online/offline, Name, IP-Adresse)
+- [ ] Favicon gleich dem Logo in der Seitenleiste
+- [ ] Editor: Module links, Einstellungen rechts bei genau einem ausgewählten Modul
+- [ ] Editor: Schloss je Modul, Auswahlrahmen mit linker Maustaste, Verschieben/Löschen im Batch, Verschieben der Ansicht mit mittlerer Maustaste
 
 ---
 
