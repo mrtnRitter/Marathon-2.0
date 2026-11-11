@@ -89,3 +89,4 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Workflows → Bearbeiten: Auswahlrahmen nach der Auswahl ausblenden
 - [ ] Workflows → Nodes: zusätzlich zum Namen eine Beschreibung, unter dem Typ des Nodes; ohne Beschreibung kein freier Platz
 - [ ] Workflows → Nodes: Seitenleiste mit den Einstellungen in der Breite verschiebbar, Anfasser ist die Trennlinie
+- [ ] In Übersicht Workflows oberer Tabelle: jeden jobstatus anklickbar machen, wenn man drauf klickt, kommt am gleich zu den Assets, die diesen Status haben
