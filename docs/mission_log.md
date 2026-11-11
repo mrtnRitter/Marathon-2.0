@@ -74,3 +74,11 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
 
 - Button für Bug Report (via Mail) unten links im Seitenmen über Pfeil
+
+Workflow selbst hat keine Prio, aber es gibt das Modul Prioliste
+
+Nachdem neuer Workflow angelegt wurde, gleich in Bearbeiten wechseln
+
+Workflow pausieren, starten direkt in Worfklow Übersicht nach Status-Spalte und Linie mit Status als Play/Pause Button - wenn der Workflow läuft, zeigt der Button Pause-Symbol, wenn er pausiert ist, zeigt der Button Play-Symbol.
+
+Wenn man im Dashboard auf Workflow klickt, landet man in Workflow Übersicht.
