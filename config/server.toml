@@ -1,3 +1,9 @@
 # Marathon server settings
 host = "127.0.0.1"
 port = 8080
+
+[database]
+host = "127.0.0.1" # PostgreSQL-Serveradresse
+port = 5433 # PostgreSQL-Port
+name = "marathon" # Datenbankname
+user = "marathon" # Datenbanknutzer

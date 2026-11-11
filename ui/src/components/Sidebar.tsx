@@ -7,7 +7,7 @@ export function Sidebar({ collapsed, on_toggle }: { collapsed: boolean; on_toggl
   return (
     <nav className={`sidebar${collapsed ? ' collapsed' : ''}`}>
       <div className="sidebar-brand">
-        <span className="sidebar-logo">m</span>
+        <img className="sidebar-logo" src="/favicon.svg" alt="" width={30} height={30} />
         {!collapsed && <span className="sidebar-name">marathon<small>v{__APP_VERSION__}</small></span>}
       </div>
       {nav_groups.map(group => (

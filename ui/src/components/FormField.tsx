@@ -6,23 +6,24 @@ interface Props {
   spec: FieldSpec
   value: FieldValue | undefined
   on_change: (value: FieldValue) => void
+  disabled?: boolean
 }
 
 /** One form row generated from a field description. */
-export function FormField({ spec, value, on_change }: Props) {
+export function FormField({ spec, value, on_change, disabled = false }: Props) {
   const current = value ?? spec.default ?? (spec.type === 'boolean' ? false : '')
   const id = `field-${spec.key}`
   const control = {
-    text: <input id={id} className="input" value={String(current)} onChange={event => on_change(event.target.value)} />,
-    number: <input id={id} className="input" type="number" value={Number(current)} onChange={event => on_change(Number(event.target.value))} />,
+    text: <input id={id} className="input" value={String(current)} disabled={disabled} onChange={event => on_change(event.target.value)} />,
+    number: <input id={id} className="input" type="number" value={Number(current)} disabled={disabled} onChange={event => on_change(Number(event.target.value))} />,
     select: (
-      <select id={id} className="input" value={String(current)} onChange={event => on_change(event.target.value)}>
+      <select id={id} className="input" value={String(current)} disabled={disabled} onChange={event => on_change(event.target.value)}>
         {spec.options?.map(option => <option key={option}>{option}</option>)}
       </select>
     ),
     boolean: (
       <label className="form-switch">
-        <input id={id} type="checkbox" checked={Boolean(current)} onChange={event => on_change(event.target.checked)} />
+        <input id={id} type="checkbox" checked={Boolean(current)} disabled={disabled} onChange={event => on_change(event.target.checked)} />
         <span className="form-switch-track" />
       </label>
     ),

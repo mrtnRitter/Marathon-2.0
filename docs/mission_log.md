@@ -26,20 +26,20 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ---
 
-## Release 2.0.0-db.1 – PostgreSQL-Grundlage · in Arbeit
+## Release 2.0.0-db.1 – PostgreSQL-Grundlage · gebaut, Abnahme durch Martin offen
 
 **Ziel:** Alles, was die Oberfläche zeigt, kommt aus der Datenbank. Die bisherigen Beispieldaten werden zu Demo-Daten in der Datenbank. Nur lesend; Speichern bleibt im Backlog.
 
-- [ ] `build.py`: PostgreSQL 18.6 (zonky, Maven Central, feste Prüfsumme) nach `.tools/postgres`, Datenordner `.data/postgres` mit erzeugtem Passwort
-- [ ] Datenbank-Schicht mit Migrationen: Modultypen, Workflows mit Versionen, Modulen und Verbindungen, Assets, Jobs, Historie, Logs, Worker
-- [ ] Demo-Daten: `python run.py --demo-data` füllt eine leere Datenbank
-- [ ] Lese-API für alle Ansichten, Oberfläche liest nur noch über die API
-- [ ] `run.py`: lokale Datenbank starten und stoppen, auch mit `--dev`
-- [ ] Hilfe-Button entfällt
-- [ ] Dashboard in zwei Sektionen: Workflows (Übersicht und Liste) und Worker (online/offline, Name, IP-Adresse)
-- [ ] Favicon gleich dem Logo in der Seitenleiste
-- [ ] Editor: Module links, Einstellungen rechts bei genau einem ausgewählten Modul
-- [ ] Editor: Schloss je Modul, Auswahlrahmen mit linker Maustaste, Verschieben/Löschen im Batch, Verschieben der Ansicht mit mittlerer Maustaste
+- [x] `build.py`: PostgreSQL 18.6 (zonky, Maven Central, feste Prüfsumme) nach `.tools/postgres`, Datenordner `.data/postgres` mit erzeugtem Passwort
+- [x] Datenbank-Schicht mit Migrationen: Modultypen, Workflows mit Versionen, Modulen und Verbindungen, Assets, Jobs, Historie, Logs, Worker
+- [x] Demo-Daten: `python run.py --demo-data` füllt eine leere Datenbank
+- [x] Lese-API für alle Ansichten, Oberfläche liest nur noch über die API
+- [x] `run.py`: lokale Datenbank starten und stoppen, auch mit `--dev`
+- [x] Hilfe-Button entfällt
+- [x] Dashboard in zwei Sektionen: Workflows (Übersicht und Liste) und Worker (online/offline, Name, IP-Adresse)
+- [x] Favicon gleich dem Logo in der Seitenleiste
+- [x] Editor: Module links, Einstellungen rechts bei genau einem ausgewählten Modul
+- [x] Editor: Schloss je Modul, Auswahlrahmen mit linker Maustaste, Verschieben/Löschen im Batch, Verschieben der Ansicht mit mittlerer Maustaste
 
 ---
 

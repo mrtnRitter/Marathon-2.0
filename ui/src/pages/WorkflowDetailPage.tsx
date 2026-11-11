@@ -22,7 +22,7 @@ export function WorkflowDetailPage() {
       <PageHeader
         breadcrumb={<><Link to="/workflows">Workflows</Link> / {workflow?.name ?? workflow_id}</>}
         title={<>{workflow?.name ?? (loading ? '…' : 'Workflow nicht gefunden')}{workflow && <StatusBadge meta={active_meta(workflow.active)} />}</>}
-        actions={[{ label: workflow?.active ? 'Pausieren' : 'Aktivieren', icon: workflow?.active ? 'pause' : 'play' }, { label: 'Hilfe', icon: 'help' }]}
+        actions={[{ label: workflow?.active ? 'Pausieren' : 'Aktivieren', icon: workflow?.active ? 'pause' : 'play' }]}
       />
       <div className="workflow-tabs">
         <Tabs active={tab} on_change={id => navigate(`/workflows/${workflow_id}/${id}`)}

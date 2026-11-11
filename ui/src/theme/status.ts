@@ -1,4 +1,4 @@
-import type { AssetMessage, AssetStatus, JobStatus, LogLevel, StepStatus, WorkerStatus } from '../data/types'
+import type { AssetMessage, AssetStatus, JobStatus, LogLevel, StepStatus, Worker, WorkerStatus } from '../data/types'
 
 export interface StatusMeta {
   label: string
@@ -55,6 +55,10 @@ export const log_level_color: Record<LogLevel, string> = {
 
 export const active_meta = (active: boolean): StatusMeta =>
   active ? { label: 'aktiv', color: color('done') } : { label: 'pausiert', color: color('on-hold') }
+
+export const is_online = (worker: Worker) => worker.status !== 'offline'
+
+export const online_meta = (online: boolean): StatusMeta => online ? { label: 'Online', color: color('done') } : { label: 'Offline', color: color('offline') }
 
 export const message_kind_color: Record<AssetMessage['kind'], string> = {
   success: color('done'),

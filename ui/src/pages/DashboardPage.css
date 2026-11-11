@@ -14,3 +14,5 @@
 .dashboard-row-counts { grid-area: counts; display: flex; flex-wrap: wrap; gap: var(--space-4); font-size: var(--font-size-xs); }
 .dashboard-row-counts b { font-size: var(--font-size-md); }
 .dashboard-row-actions { grid-area: actions; display: flex; gap: var(--space-1); }
+.dashboard-section + .dashboard-section { margin-top: var(--space-6); }
+.dashboard-section-title { margin: 0 0 var(--space-3); font-size: var(--font-size-lg); font-weight: 500; }

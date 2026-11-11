@@ -3,7 +3,7 @@ import { Icon } from '../../components/Icon'
 import type { ModuleType } from '../../data/types'
 import { drag_mime } from './editor_types'
 
-/** Right-hand list of module types; entries are dragged onto the canvas. */
+/** Left-hand list of module types; entries are dragged onto the canvas. */
 export function ModulePalette({ module_types }: { module_types: ModuleType[] }) {
   const [search, set_search] = useState('')
   const groups = useMemo(() => {
@@ -37,7 +37,7 @@ export function ModulePalette({ module_types }: { module_types: ModuleType[] }) 
         ))}
         {groups.length === 0 && <div className="dim">Keine Treffer</div>}
       </div>
-      <div className="module-palette-hint dim">Ziehen = hinzufügen · Doppelklick = Einstellungen · Entf = löschen</div>
+      <div className="module-palette-hint dim">Ziehen = hinzufügen · Klick = Einstellungen · Rahmen = auswählen · Entf = löschen</div>
     </aside>
   )
 }

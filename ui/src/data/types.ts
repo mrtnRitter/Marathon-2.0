@@ -1,4 +1,4 @@
-// Data contract between UI and (later) the server API. Field names match the Python side.
+// Data contract between UI and the server API (/api/v1). Field names match the Python side.
 
 export type AssetStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'on_hold'
 export type StepStatus = 'waiting' | 'running'
@@ -49,6 +49,7 @@ export interface WorkflowModule {
   position: { x: number; y: number }
   settings: Record<string, FieldValue>
   counters: ModuleCounters
+  locked: boolean
 }
 
 export interface WorkflowConnection {
@@ -81,6 +82,7 @@ export interface Asset {
   name: string
   status: AssetStatus
   current_module: string | null
+  current_module_id: string | null
   step_status: StepStatus | null
   updated_at: string
 }
@@ -136,6 +138,7 @@ export interface Worker {
   running_jobs: number
   client_version: string
   last_seen: string
+  ip_address: string | null
 }
 
 export interface ModuleActivity {
@@ -148,6 +151,5 @@ export interface ModuleActivity {
 export interface DashboardData {
   workflows: Workflow[]
   totals: Record<AssetStatus, number>
-  workers_online: number
-  workers_total: number
+  workers: Worker[]
 }
