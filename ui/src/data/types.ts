@@ -46,6 +46,7 @@ export interface WorkflowModule {
   id: string
   type_id: string
   name: string
+  description: string
   position: { x: number; y: number }
   settings: Record<string, FieldValue>
   counters: ModuleCounters
@@ -152,4 +153,21 @@ export interface DashboardData {
   workflows: Workflow[]
   totals: Record<AssetStatus, number>
   workers: Worker[]
+}
+
+export interface JobStatusCounts {
+  counts: Record<JobStatus, number>
+  total: number
+}
+
+export interface JobStatusReportRow extends JobStatusCounts {
+  workflow_id: string
+  workflow_name: string
+}
+
+export interface JobStatusReport {
+  start: string
+  end: string
+  rows: JobStatusReportRow[]
+  totals: JobStatusCounts
 }

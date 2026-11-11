@@ -1,0 +1,9 @@
+.reports-filter { display: flex; align-items: flex-end; gap: var(--space-4); margin-bottom: var(--space-2); }
+.reports-filter label { display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--text-muted); }
+.reports-filter .input { width: auto; min-width: 160px; }
+.reports-hint { color: var(--status-on-hold); font-size: var(--font-size-sm); padding-bottom: 6px; }
+.reports-note { margin: 0 0 var(--space-4); font-size: var(--font-size-xs); }
+.reports-page .status-tabs { margin-bottom: var(--space-5); }
+.reports-table th { cursor: default; }
+.reports-table .num { text-align: right; }
+.reports-table tfoot td { font-weight: 700; border-top: 1px solid var(--border-strong); background: var(--bg-panel-raised); }

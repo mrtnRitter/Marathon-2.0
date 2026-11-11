@@ -18,7 +18,7 @@ def get_graph(connection: Connection, workflow_id: str) -> dict[str, Any] | None
         return None
 
     modules = connection.execute(text(
-        "SELECT module.id, module.type_id, module.name, module.position_x, module.position_y, "
+        "SELECT module.id, module.type_id, module.name, module.description, module.position_x, module.position_y, "
         "module.settings, module.locked, "
         "(SELECT COUNT(*) FROM assets AS asset WHERE asset.workflow_id = module.workflow_id "
         "AND asset.current_module_id = module.id AND asset.step_status = 'waiting') AS waiting, "

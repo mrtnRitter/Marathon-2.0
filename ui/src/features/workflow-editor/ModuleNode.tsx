@@ -12,6 +12,7 @@ export function ModuleNode({ data, selected }: NodeProps<ModuleFlowNode>) {
   const mode = useContext(EditorModeContext)
   const actions = useContext(EditorActionsContext)
   const { module, module_type } = data
+  const description = module.description?.trim() ?? ''
   const running = module.counters.running > 0
   const lock_icon = <Icon name="lock" size={13} />
   return (
@@ -35,6 +36,7 @@ export function ModuleNode({ data, selected }: NodeProps<ModuleFlowNode>) {
         <div className="module-node-title">
           <div className="module-node-name">{module.name}</div>
           <div className="module-node-type">{module_type.name}</div>
+          {description && <div className="module-node-desc" title={description}>{description}</div>}
         </div>
       </div>
       {mode === 'monitor' && (

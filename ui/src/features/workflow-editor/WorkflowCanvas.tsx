@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import {
   Background, BackgroundVariant, Controls, MiniMap, ReactFlow, ReactFlowProvider, SelectionMode, addEdge, useEdgesState, useNodesState, useReactFlow,
   type Connection, type Edge, type IsValidConnection, type NodeMouseHandler, type OnBeforeDelete,
@@ -19,6 +19,19 @@ import './editor.css'
 
 const node_types = { module: ModuleNode }
 
+const settings_width_key = 'marathon.editor.settings_width'
+const settings_width_range = { min: 260, max: 640, initial: 320 }
+const clamp_settings_width = (width: number) => Math.min(settings_width_range.max, Math.max(settings_width_range.min, Math.round(width)))
+
+function read_settings_width(): number {
+  try {
+    const value = Number(localStorage.getItem(settings_width_key))
+    return value ? clamp_settings_width(value) : settings_width_range.initial
+  } catch {
+    return settings_width_range.initial
+  }
+}
+
 const minimap_color = (node: ModuleFlowNode) =>
   node.data.module.counters.failed > 0 ? 'var(--status-failed)' : node.data.module.counters.running > 0 ? 'var(--status-in-progress)' : 'var(--border-strong)'
 
@@ -36,6 +49,10 @@ export function WorkflowCanvas({ workflow_id }: { workflow_id: string }) {
 
 function Editor({ graph, module_types }: { graph: WorkflowGraph; module_types: ModuleType[] }) {
   const [mode, set_mode] = useState<EditorMode>('monitor')
+  const [settings_width, set_settings_width] = useState(read_settings_width)
+  useEffect(() => {
+    try { localStorage.setItem(settings_width_key, String(settings_width)) } catch {}
+  }, [settings_width])
   const initial_nodes = to_nodes(graph, module_types)
   const [nodes, set_nodes, on_nodes_change] = useNodesState<ModuleFlowNode>(initial_nodes)
   const locked_module_ids = useRef(locked_ids(initial_nodes))
@@ -180,10 +197,10 @@ function Editor({ graph, module_types }: { graph: WorkflowGraph; module_types: M
               </ReactFlow>
             </div>
             {editing && selected_nodes.length === 1 && (
-              <ModuleSettingsPanel key={selected_nodes[0].id} data={selected_nodes[0].data} on_change={apply_settings} />
+              <ModuleSettingsPanel key={selected_nodes[0].id} data={selected_nodes[0].data} on_change={apply_settings} width={settings_width} on_width_change={width => set_settings_width(clamp_settings_width(width))} />
             )}
             {editing && selected_nodes.length === 0 && inspected_node && (
-              <ModuleSettingsPanel key={inspected_node.id} data={inspected_node.data} on_change={apply_settings} read_only />
+              <ModuleSettingsPanel key={inspected_node.id} data={inspected_node.data} on_change={apply_settings} width={settings_width} on_width_change={width => set_settings_width(clamp_settings_width(width))} read_only />
             )}
           </div>
         </div>

@@ -86,7 +86,7 @@
 .module-palette-item .module-node-icon { width: 22px; height: 22px; }
 .module-palette-hint { padding: var(--space-3); border-top: 1px solid var(--border); font-size: var(--font-size-xs); }
 
-.module-settings { display: flex; flex-direction: column; width: 320px; flex-shrink: 0; background: var(--bg-panel); border-left: 1px solid var(--border); min-height: 0; }
+.module-settings { display: flex; flex-direction: column; position: relative; flex-shrink: 0; background: var(--bg-panel); border-left: 1px solid var(--border); min-height: 0; }
 .module-settings-header { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--border); font-weight: 500; }
 .module-settings-body { flex: 1; overflow: auto; padding: var(--space-3); }
 
@@ -97,3 +97,10 @@
 .module-node-lock:hover { color: var(--text); }
 .module-node-lock.locked, span.module-node-lock { color: var(--accent); }
 span.module-node-lock { cursor: default; }
+
+.module-node-title { min-width: 0; }
+.module-node-desc { margin-top: 2px; font-size: var(--font-size-xs); color: var(--text-muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.workflow-editor .react-flow__nodesselection { display: none; }
+
+.module-settings-resizer { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; z-index: 5; cursor: col-resize; touch-action: none; }
+.module-settings-resizer:hover, .module-settings-resizer.active { background: var(--accent); opacity: 0.6; }

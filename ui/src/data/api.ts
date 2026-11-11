@@ -1,6 +1,6 @@
 // Single data access point for all pages; talks to the server API.
 import { notify } from '../components/Toast'
-import type { Asset, AssetDetail, AssetStatus, DashboardData, ModuleActivity, ModuleType, Worker, Workflow, WorkflowGraph } from './types'
+import type { Asset, AssetDetail, AssetStatus, DashboardData, JobStatusReport, ModuleActivity, ModuleType, Worker, Workflow, WorkflowGraph } from './types'
 
 const api_base = '/api/v1'
 
@@ -54,3 +54,9 @@ export function get_asset_detail(id: string): Promise<AssetDetail | null> {
 export const get_workers = (): Promise<Worker[]> => request<Worker[]>('/workers').then(data => data!)
 
 export const get_dashboard = (): Promise<DashboardData> => request<DashboardData>('/dashboard').then(data => data!)
+
+export function get_job_status_report(filter: { start: string; end: string; workflow_id?: string }): Promise<JobStatusReport> {
+  const params = new URLSearchParams({ start: filter.start, end: filter.end })
+  if (filter.workflow_id) params.set('workflow_id', filter.workflow_id)
+  return request<JobStatusReport>(`/reports/job-status?${params}`).then(data => data!)
+}

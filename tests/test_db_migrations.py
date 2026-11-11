@@ -45,8 +45,8 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0001"
-    assert upgrade_database(db_engine) == "0001"
+    assert upgrade_database(db_engine) == "0002"
+    assert upgrade_database(db_engine) == "0002"
 
 
 def test_ensure_database_creates_then_reuses(db_config):
@@ -130,7 +130,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0001" in captured.out
+    assert "Revision 0002" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 
@@ -146,3 +146,13 @@ def test_module_help_lists_upgrade():
     )
     assert result.returncode == 0
     assert "upgrade" in result.stdout
+
+
+def test_module_description_defaults_to_empty(db_engine):
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO module_types (id, name, category, icon, has_input) VALUES ('type', 'Type', 'test', 'box', false)"))
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf', 'Workflow')"))
+        connection.execute(text("INSERT INTO workflow_versions (workflow_id, version) VALUES ('wf', 1)"))
+        connection.execute(text("INSERT INTO workflow_modules (workflow_id, version, id, type_id, name, position_x, position_y) VALUES ('wf', 1, 'm1', 'type', 'One', 0, 0)"))
+        description = connection.execute(text("SELECT description FROM workflow_modules")).scalar_one()
+    assert description == ""

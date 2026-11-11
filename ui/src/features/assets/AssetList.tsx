@@ -13,15 +13,17 @@ import './AssetList.css'
 
 interface Props {
   workflow_id?: string
+  /** Status tab shown first; defaults to pending. */
+  initial_status?: AssetStatus
   /** When given, a workflow column is shown (global asset view). */
   workflows?: Workflow[]
 }
 
 /** Asset list with status tiles and actions; shared by the global view and the workflow tab. */
-export function AssetList({ workflow_id, workflows }: Props) {
+export function AssetList({ workflow_id, workflows, initial_status }: Props) {
   const navigate = useNavigate()
   const { data: assets = [], loading } = use_data(() => get_assets({ workflow_id }), [workflow_id])
-  const [status, set_status] = useState<AssetStatus>('pending')
+  const [status, set_status] = useState<AssetStatus>(initial_status ?? 'pending')
   const [selected, set_selected] = useState<string[]>([])
   const [search, set_search] = useState('')
 

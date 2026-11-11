@@ -39,6 +39,8 @@ export const job_status_meta: Record<JobStatus, StatusMeta> = {
   cancelled: { label: 'abgebrochen', color: color('offline') },
 }
 
+export const job_statuses = Object.keys(job_status_meta) as JobStatus[]
+
 export const module_counter_meta: Record<'waiting' | 'running' | 'done' | 'failed', StatusMeta> = {
   waiting: { label: 'wartet', color: color('pending') },
   running: { label: 'läuft', color: color('in-progress') },

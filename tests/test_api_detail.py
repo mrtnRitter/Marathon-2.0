@@ -23,6 +23,7 @@ def test_graph_returns_current_workflow_modules_and_counters(db_engine, tmp_path
         assert graph["workflow_id"] == "wf-ingest"
         assert len(graph["modules"]) == 6
         assert len(graph["connections"]) == 6
+        assert all(module["description"] == "" for module in graph["modules"])
         assert {module["id"]: module["locked"] for module in graph["modules"]} == {
             module_id: module_id == "m1" for module_id in ("m1", "m2", "m3", "m4", "m5", "m6")
         }

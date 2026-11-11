@@ -1,5 +1,5 @@
 import {
-  Activity, ArrowLeft, ArrowUpToLine, Check, ChevronLeft, ChevronRight, CircleHelp, CircleX, Clock, Copy, Cpu, Eye, Files,
+  Activity, ArrowLeft, ArrowUpToLine, ChartColumn, Check, ChevronLeft, ChevronRight, CircleHelp, CircleX, Clock, Copy, Cpu, Eye, Files,
   Film, FolderInput, GitBranch, LayoutDashboard, Lock, LockOpen, LogIn, Pause, Pencil, Play, Plus, RotateCcw, Rocket, Save, Search,
   Server, Settings, Trash2, Undo2, Upload, Workflow, X, type LucideIcon,
 } from 'lucide-react'
@@ -7,7 +7,7 @@ import {
 const icons: Record<string, LucideIcon> = {
   activity: Activity, 'arrow-left': ArrowLeft, 'arrow-up': ArrowUpToLine, check: Check, 'chevron-left': ChevronLeft,
   'chevron-right': ChevronRight, help: CircleHelp, cancel: CircleX, clock: Clock, copy: Copy, cpu: Cpu, eye: Eye, files: Files,
-  film: Film, 'folder-input': FolderInput, 'git-branch': GitBranch, dashboard: LayoutDashboard, lock: Lock, 'lock-open': LockOpen, 'log-in': LogIn,
+  film: Film, 'folder-input': FolderInput, 'git-branch': GitBranch, dashboard: LayoutDashboard, report: ChartColumn, lock: Lock, 'lock-open': LockOpen, 'log-in': LogIn,
   pause: Pause, pencil: Pencil, play: Play, plus: Plus, reprocess: RotateCcw, rocket: Rocket, save: Save, search: Search,
   server: Server, settings: Settings, trash: Trash2, undo: Undo2, upload: Upload, workflow: Workflow, close: X,
 }

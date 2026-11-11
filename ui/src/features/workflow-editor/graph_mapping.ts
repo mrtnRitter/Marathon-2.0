@@ -57,6 +57,7 @@ export function new_module(module_type: ModuleType, position: { x: number; y: nu
     id: `new-${Date.now()}-${index}`,
     type_id: module_type.id,
     name: module_type.name,
+    description: '',
     position,
     settings: Object.fromEntries(module_type.settings.flatMap(spec => (spec.default === undefined ? [] : [[spec.key, spec.default]]))),
     counters: { waiting: 0, running: 0, done: 0, failed: 0 },

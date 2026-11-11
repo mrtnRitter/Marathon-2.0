@@ -44,6 +44,7 @@ const worker_columns: Column<Worker>[] = [
 ]
 
 export function DashboardPage() {
+  const navigate = useNavigate()
   const { data } = use_data(get_dashboard)
   return (
     <>
@@ -53,7 +54,8 @@ export function DashboardPage() {
           <>
             <section className="dashboard-section">
               <h2 className="dashboard-section-title">Workflows</h2>
-              <StatusTabs items={asset_statuses.map(status => ({ id: status, ...asset_status_meta[status], count: data.totals[status] }))} />
+              <StatusTabs items={asset_statuses.map(status => ({ id: status, ...asset_status_meta[status], count: data.totals[status] }))}
+                on_change={status => navigate(`/assets?status=${status}`)} />
               <div className="panel">
                 <div className="dashboard-rows">
                   {data.workflows.map(workflow => <WorkflowRow key={workflow.id} workflow={workflow} />)}

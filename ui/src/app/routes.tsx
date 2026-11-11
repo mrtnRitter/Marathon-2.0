@@ -4,6 +4,7 @@ import { AssetDetailPage } from '../pages/AssetDetailPage'
 import { AssetsPage } from '../pages/AssetsPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { NotFoundPage } from '../pages/NotFoundPage'
+import { ReportsPage } from '../pages/ReportsPage'
 import { SettingsPage } from '../pages/SettingsPage'
 import { WorkersPage } from '../pages/WorkersPage'
 import { WorkflowDetailPage } from '../pages/WorkflowDetailPage'
@@ -17,6 +18,7 @@ export const routes: { path: string; element: ReactNode }[] = [
   { path: '/workflows/:workflow_id/:tab', element: <WorkflowDetailPage /> },
   { path: '/assets', element: <AssetsPage /> },
   { path: '/assets/:asset_id', element: <AssetDetailPage /> },
+  { path: '/reports', element: <ReportsPage /> },
   { path: '/workers', element: <WorkersPage /> },
   { path: '/settings', element: <SettingsPage /> },
   { path: '*', element: <NotFoundPage /> },

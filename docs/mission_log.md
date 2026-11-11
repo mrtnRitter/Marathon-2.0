@@ -43,6 +43,20 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ---
 
+## Release 2.0.0-ui.2 – UI-Feinschliff und Reports · gebaut, Abnahme durch Martin offen
+
+**Ziel:** Feinschliff an Oberfläche und Editor sowie eine erste Reports-Ansicht.
+
+- [x] Icon: „m“ größer, besonders im Favicon
+- [x] Dashboard: mehr Abstand zwischen der Workflow-Übersicht (obere Tabelle) und den Zeilen darunter
+- [x] Workflows → Bearbeiten: Auswahlrahmen nach der Auswahl ausblenden
+- [x] Workflows → Nodes: zusätzlich zum Namen eine Beschreibung, unter dem Typ des Nodes; ohne Beschreibung kein freier Platz
+- [x] Workflows → Nodes: Seitenleiste mit den Einstellungen in der Breite verschiebbar, Anfasser ist die Trennlinie
+- [x] In Übersicht Workflows oberer Tabelle: jeden jobstatus anklickbar machen, wenn man drauf klickt, kommt am gleich zu den Assets, die diesen Status haben
+- [x] Reports: eigene Ansicht mit Zeitraum und Workflow als Filter, Kennzahlen als Summe der Jobstatus je Workflow (ähnlich Marathon 1)
+
+---
+
 ## Backlog (Reihenfolge offen)
 
 ### Engine und Worker
@@ -70,7 +84,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### Reports
 
-- [ ] Eigene Ansicht Reports mit Datumsauswahl, Workflowauswahl usw.
+- [ ] Reports ausbauen: weitere Filter und Kennzahlen
 - [ ] Export von Reports als CSV (nächster Release)
 
 ### Zugang und Sicherheit
@@ -81,12 +95,3 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Workflows freigeben/sperren
   - Offen: Wie werden Workflows freigegeben und gesperrt?
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
-
-### UI-Feinschliff
-
-- [ ] Icon: „m“ größer, besonders im Favicon
-- [ ] Dashboard: mehr Abstand zwischen der Workflow-Übersicht (obere Tabelle) und den Zeilen darunter
-- [ ] Workflows → Bearbeiten: Auswahlrahmen nach der Auswahl ausblenden
-- [ ] Workflows → Nodes: zusätzlich zum Namen eine Beschreibung, unter dem Typ des Nodes; ohne Beschreibung kein freier Platz
-- [ ] Workflows → Nodes: Seitenleiste mit den Einstellungen in der Breite verschiebbar, Anfasser ist die Trennlinie
-- [ ] In Übersicht Workflows oberer Tabelle: jeden jobstatus anklickbar machen, wenn man drauf klickt, kommt am gleich zu den Assets, die diesen Status haben
