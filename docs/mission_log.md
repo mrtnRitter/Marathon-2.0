@@ -10,10 +10,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ## Aktueller Release (eingebaut, Abnahme offen)
 
-- [~] Workflows anlegen, ändern, speichern (Versionen, Module, Verbindungen) und löschen
-- [~] Dummy-Daten überall löschen (Datenbank, Repo, Tests, Oberfläche); Modul-Palette bleibt bis zum Modulkatalog leer
-- [~] Export von Reports als CSV
-
 ### Editor (Abnahme erst möglich, wenn es Module gibt)
 
 - [~] Markierung soll schon Node beinhalten, wenn dieser zu über 50 % vom Auswahlrahmen bedeckt ist
