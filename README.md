@@ -2,7 +2,7 @@
 
 Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Version 2.0.0).
 
-**Aktueller Stand:** Die Oberfläche liest alle Inhalte aus einer lokalen PostgreSQL-Datenbank. Zum Testen lassen sich Demo-Daten laden. Der Stand ist nur lesend: Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
+**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, im Node-Editor bearbeiten, speichern (jede Speicherung ergibt eine neue Version) und löschen. Reports lassen sich als CSV herunterladen. Modultypen gibt es noch nicht; die Modul-Palette bleibt bis zum Modulkatalog leer. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
 
 ## Voraussetzungen
 
@@ -37,8 +37,7 @@ Bereits erledigte Schritte werden übersprungen. `build.py` erneut ausführen na
 ## Starten
 
 ```bash
-python run.py --demo-data   # beim ersten Start: Demo-Daten laden
-python run.py               # danach
+python run.py
 ```
 
 `run.py` startet die Datenbank, bringt sie auf den neuesten Stand und startet den Server. Beim Beenden (`Strg+C`) wird die Datenbank wieder gestoppt.
@@ -61,13 +60,12 @@ Oberfläche öffnen: http://127.0.0.1:5173
 |---|---|
 | `python build.py` | Alles installieren, Datenbank-Ordner anlegen und die Oberfläche bauen |
 | `python run.py` | Datenbank und Server starten |
-| `python run.py --demo-data` | Wie oben, vorher Demo-Daten laden. Nur in eine leere Datenbank, sonst wird der Schritt übersprungen |
-| `python run.py --dev` | Datenbank, Server und Live-Vorschau starten (mit `--demo-data` kombinierbar) |
+| `python run.py --dev` | Datenbank, Server und Live-Vorschau starten |
 | `python build.py --help` / `python run.py --help` | Hilfe anzeigen |
 
 ### Datenbank zurücksetzen
 
-Löscht alle Daten: Server beenden, Ordner `.data` löschen, `python build.py` ausführen, dann `python run.py --demo-data`.
+Löscht alle Daten: Server beenden, Ordner `.data` löschen, `python build.py` ausführen, dann `python run.py`.
 
 ## Konfiguration
 
@@ -105,7 +103,7 @@ requirements/          Python-Abhängigkeiten (server.txt)
 marathon/common/       Gemeinsame Grundlage (Version)
 marathon/server/       Server; static/ enthält die gebaute Oberfläche
   api/                 API-Bereiche (/api/v1)
-  db/                  Datenbank: Verbindung, Migrationen, Abfragen, Demo-Daten
+  db/                  Datenbank: Verbindung, Migrationen, Abfragen
 ui/                    Quellcode der Oberfläche
   src/app/             Rahmen, Navigation, Routen
   src/theme/           Farben, Schrift, Status-Farben (zentral)

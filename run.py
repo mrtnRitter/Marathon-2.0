@@ -234,7 +234,6 @@ def main(argv: list[str] | None = None) -> int:
         description="Startet die Marathon-Datenbank und den Server oder die Live-Vorschau."
     )
     parser.add_argument("--dev", action="store_true", help="Live-Vorschau der Oberfläche starten")
-    parser.add_argument("--demo-data", action="store_true", help="Demo-Daten in eine leere Datenbank laden")
     args = parser.parse_args(argv)
 
     exit_code = 0
@@ -254,8 +253,6 @@ def main(argv: list[str] | None = None) -> int:
             raise
         database_started = True
         _run_database_command(venv, "upgrade")
-        if args.demo_data:
-            _run_database_command(venv, "demo-data")
         exit_code = start_dev(config, venv) if args.dev else start_server(venv)
     except KeyboardInterrupt:
         exit_code = 0

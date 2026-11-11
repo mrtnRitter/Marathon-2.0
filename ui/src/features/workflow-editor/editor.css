@@ -4,8 +4,6 @@
 .workflow-editor-body { flex: 1; display: flex; min-height: 0; }
 .workflow-editor-canvas { flex: 1; position: relative; }
 .chip.unsaved { color: var(--status-on-hold); border-color: var(--status-on-hold); }
-.live-indicator { color: var(--status-in-progress); font-size: var(--font-size-xs); }
-.live-indicator::before { content: '● '; animation: pulse 1.2s infinite; }
 
 .mode-switch { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
 .mode-switch button { padding: 4px var(--space-3); background: var(--bg-panel-raised); border: none; color: var(--text-muted); cursor: pointer; }
@@ -75,6 +73,9 @@
   color: var(--text); white-space: normal; pointer-events: none;
 }
 .module-handle { width: 10px; height: 10px; border: 2px solid currentColor; background: var(--bg-panel); }
+.module-node .react-flow__handle.module-output-handle { top: 0; left: 0; right: 0; bottom: 0; width: auto; height: auto; min-width: 0; min-height: 0; transform: none; border: none; border-radius: 0; background: transparent; }
+.module-node .react-flow__handle.module-output-handle::after { content: ''; position: absolute; left: 50%; bottom: 0; width: 10px; height: 10px; box-sizing: border-box; transform: translate(-50%, 50%); border: 2px solid currentColor; border-radius: 50%; background: var(--bg-panel); }
+.module-node .react-flow__handle.module-output-handle.connectionindicator { cursor: crosshair; }
 .module-node .react-flow__handle-top { color: var(--text-muted); }
 
 .module-palette { display: flex; flex-direction: column; width: 240px; flex-shrink: 0; background: var(--bg-panel); border-right: 1px solid var(--border); }
@@ -99,8 +100,10 @@
 span.module-node-lock { cursor: default; }
 
 .module-node-title { min-width: 0; }
-.module-node-desc { margin-top: 2px; font-size: var(--font-size-xs); color: var(--text-muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.module-node-desc { margin-top: 2px; font-size: var(--font-size-xs); color: var(--text-muted); overflow-wrap: anywhere; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .workflow-editor .react-flow__nodesselection { display: none; }
 
 .module-settings-resizer { position: absolute; top: 0; bottom: 0; left: -3px; width: 6px; z-index: 5; cursor: col-resize; touch-action: none; }
 .module-settings-resizer:hover, .module-settings-resizer.active { background: var(--accent); opacity: 0.6; }
+
+.module-settings-description { display: block; width: 100%; resize: none; overflow: hidden; line-height: 1.4; }

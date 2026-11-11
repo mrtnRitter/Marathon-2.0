@@ -24,18 +24,22 @@ export function ModulePalette({ module_types }: { module_types: ModuleType[] }) 
         <input className="input" placeholder="Module suchen …" value={search} onChange={event => set_search(event.target.value)} />
       </div>
       <div className="module-palette-list">
-        {groups.map(group => (
-          <div key={group.category} className="module-palette-group">
-            <div className="module-palette-category">{group.category}</div>
-            {group.items.map(type => (
-              <div key={type.id} className="module-palette-item" draggable onDragStart={event => start_drag(event, type)} title={type.description}>
-                <span className="module-node-icon"><Icon name={type.icon} size={14} /></span>
-                <span>{type.name}</span>
+        {module_types.length === 0 ? <div className="dim">Keine Modultypen vorhanden</div> : (
+          <>
+            {groups.map(group => (
+              <div key={group.category} className="module-palette-group">
+                <div className="module-palette-category">{group.category}</div>
+                {group.items.map(type => (
+                  <div key={type.id} className="module-palette-item" draggable onDragStart={event => start_drag(event, type)} title={type.description}>
+                    <span className="module-node-icon"><Icon name={type.icon} size={14} /></span>
+                    <span>{type.name}</span>
+                  </div>
+                ))}
               </div>
             ))}
-          </div>
-        ))}
-        {groups.length === 0 && <div className="dim">Keine Treffer</div>}
+            {groups.length === 0 && <div className="dim">Keine Treffer</div>}
+          </>
+        )}
       </div>
       <div className="module-palette-hint dim">Ziehen = hinzufügen · Klick = Einstellungen · Rahmen = auswählen · Entf = löschen</div>
     </aside>

@@ -7,3 +7,5 @@
 .reports-table th { cursor: default; }
 .reports-table .num { text-align: right; }
 .reports-table tfoot td { font-weight: 700; border-top: 1px solid var(--border-strong); background: var(--bg-panel-raised); }
+
+.reports-filter a.button { text-decoration: none; }

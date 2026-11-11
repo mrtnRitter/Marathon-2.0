@@ -1,10 +1,25 @@
 import type { Connection, Edge } from '@xyflow/react'
-import type { ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
+import type { GraphInput, ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
 import type { ModuleFlowNode } from './editor_types'
 
 export function apply_lock(node: ModuleFlowNode): ModuleFlowNode {
   const locked = node.data.module.locked
   return { ...node, draggable: !locked, selectable: !locked, deletable: !locked, connectable: !locked }
+}
+
+export function view_nodes(nodes: ModuleFlowNode[], editing: boolean): ModuleFlowNode[] {
+  return editing ? nodes : nodes.map(node => node.draggable === false ? node : { ...node, draggable: false })
+}
+
+export function lock_targets(nodes: ModuleFlowNode[], module_id: string): { ids: string[]; locked: boolean } {
+  const module_node = nodes.find(node => node.id === module_id)
+  if (!module_node) return { ids: [], locked: false }
+  const locked = !module_node.data.module.locked
+  const selected_nodes = nodes.filter(node => node.selected)
+  const ids = !module_node.data.module.locked && module_node.selected && selected_nodes.length >= 2
+    ? selected_nodes.map(node => node.id)
+    : [module_id]
+  return { ids, locked }
 }
 
 export function locked_ids(nodes: ModuleFlowNode[]): Set<string> {
@@ -39,6 +54,29 @@ export function create_edge(connection: Connection | Edge, running = false): Edg
     type: 'smoothstep',
     animated: running,
     className: output === 'failure' ? 'edge-failure' : undefined,
+  }
+}
+
+export function to_graph_input(base_version: number, nodes: ModuleFlowNode[], edges: Edge[]): GraphInput {
+  return {
+    base_version,
+    modules: nodes.map(node => {
+      const module = node.data.module
+      return {
+        id: module.id,
+        type_id: module.type_id,
+        name: module.name,
+        description: module.description,
+        position: node.position,
+        settings: module.settings,
+        locked: module.locked,
+      }
+    }),
+    connections: edges.map(edge => ({
+      source_module_id: edge.source,
+      source_output_id: edge.sourceHandle ?? '',
+      target_module_id: edge.target,
+    })),
   }
 }
 

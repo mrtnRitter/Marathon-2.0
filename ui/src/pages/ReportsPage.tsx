@@ -1,8 +1,9 @@
 import { useState } from 'react'
+import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/PageHeader'
 import { StatusTabs } from '../components/StatusTabs'
 import '../components/DataTable.css'
-import { get_job_status_report, get_workflows } from '../data/api'
+import { get_job_status_report, get_workflows, job_status_csv_url } from '../data/api'
 import { use_data } from '../data/use_data'
 import { job_status_meta, job_statuses } from '../theme/status'
 import './ReportsPage.css'
@@ -104,6 +105,8 @@ export function ReportsPage() {
             <option value="">Alle Workflows</option>
             {workflows.map(workflow => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}
           </select></label>
+          {range && <a className="button" href={job_status_csv_url({ start: range.start, end: range.end, workflow_id: workflow_id || undefined })}
+            download={`job-status_${dates.from}_${dates.to}.csv`}><Icon name="download" size={14} /><span>CSV herunterladen</span></a>}
           {range_hint && <div className="reports-hint">{range_hint}</div>}
         </div>
         <p className="dim reports-note">Jobs, die im Zeitraum angelegt wurden, nach aktuellem Status</p>

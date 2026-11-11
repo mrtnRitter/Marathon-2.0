@@ -1,4 +1,4 @@
-import { useRef, useState, type PointerEvent } from 'react'
+import { useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 import { FormField, FormSection } from '../../components/FormField'
 import { Icon } from '../../components/Icon'
 import type { WorkflowModule } from '../../data/types'
@@ -16,7 +16,15 @@ interface Props {
 /** Settings form generated from the module type description. */
 export function ModuleSettingsPanel({ data, on_change, read_only = false, width, on_width_change }: Props) {
   const drag = useRef<{ pointer_id: number; start_x: number; start_width: number } | null>(null)
+  const description_ref = useRef<HTMLTextAreaElement>(null)
   const [resizing, set_resizing] = useState(false)
+
+  useLayoutEffect(() => {
+    const element = description_ref.current
+    if (!element) return
+    element.style.height = 'auto'
+    element.style.height = `${element.scrollHeight}px`
+  }, [data.module.description, width])
 
   const end_drag = (event: PointerEvent<HTMLDivElement>) => {
     if (drag.current?.pointer_id !== event.pointerId) return
@@ -68,7 +76,20 @@ export function ModuleSettingsPanel({ data, on_change, read_only = false, width,
               on_change={value => { if (!read_only) on_change({ ...data.module, name: String(value) }) }}
             />
           </div>
-          <FormField spec={{ key: 'module_description', label: 'Beschreibung', type: 'text' }} value={data.module.description} disabled={read_only} on_change={value => { if (!read_only) on_change({ ...data.module, description: String(value) }) }} />
+          <div className="form-field">
+            <label htmlFor="field-module_description" className="form-field-label">Beschreibung</label>
+            <div className="form-field-control">
+              <textarea
+                ref={description_ref}
+                id="field-module_description"
+                className="input module-settings-description"
+                rows={1}
+                value={data.module.description ?? ''}
+                disabled={read_only}
+                onChange={event => { if (!read_only) on_change({ ...data.module, description: event.target.value }) }}
+              />
+            </div>
+          </div>
         </FormSection>
         <FormSection title={`Einstellungen · ${data.module_type.name}`}>
           {data.module_type.settings.map(spec => (

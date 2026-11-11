@@ -171,3 +171,18 @@ export interface JobStatusReport {
   rows: JobStatusReportRow[]
   totals: JobStatusCounts
 }
+
+export interface WorkflowInput {
+  name: string
+  description: string
+  priority: number
+}
+
+export type ModuleInput = Omit<WorkflowModule, 'counters'>
+export type ConnectionInput = Omit<WorkflowConnection, 'id'>
+
+export interface GraphInput {
+  base_version: number
+  modules: ModuleInput[]
+  connections: ConnectionInput[]
+}

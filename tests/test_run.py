@@ -2,6 +2,7 @@
 
 # IMPORTS
 import os
+import re
 import socket
 import subprocess
 from pathlib import Path
@@ -59,7 +60,7 @@ def completed(returncode=0):
     return subprocess.CompletedProcess(args=[], returncode=returncode)
 
 
-def test_main_orders_database_migration_demo_server_and_stop(ready_runner, monkeypatch):
+def test_main_orders_database_migration_server_and_stop(ready_runner, monkeypatch):
     calls = []
 
     def fake_run(command, **kwargs):
@@ -73,9 +74,6 @@ def test_main_orders_database_migration_demo_server_and_stop(ready_runner, monke
         if command[1:4] == ["-m", "marathon.server.db", "upgrade"]:
             calls.append("upgrade")
             return completed()
-        if command[1:4] == ["-m", "marathon.server.db", "demo-data"]:
-            calls.append("demo-data")
-            return completed()
         if command[1:2] == ["stop"]:
             calls.append("stop")
             return completed()
@@ -84,8 +82,8 @@ def test_main_orders_database_migration_demo_server_and_stop(ready_runner, monke
     monkeypatch.setattr(run.subprocess, "run", fake_run)
     monkeypatch.setattr(run.subprocess, "call", lambda *args, **kwargs: calls.append("server") or 0)
 
-    assert run.main(["--demo-data"]) == 0
-    assert calls == ["status", "start", "upgrade", "demo-data", "server", "stop"]
+    assert run.main([]) == 0
+    assert calls == ["status", "start", "upgrade", "server", "stop"]
 
 
 def test_main_stops_database_after_server_keyboard_interrupt(ready_runner, monkeypatch):
@@ -268,13 +266,13 @@ def test_api_url_maps_other_wildcard_hosts_to_loopback(host):
     assert run._api_url(host, 8123) == "http://127.0.0.1:8123"
 
 
-def test_help_includes_both_options(capsys):
+def test_help_lists_dev_option(capsys):
     with pytest.raises(SystemExit) as error:
         run.main(["--help"])
     assert error.value.code == 0
     output = capsys.readouterr().out
     assert "--dev" in output
-    assert "--demo-data" in output
+    assert set(re.findall(r"--[a-z][a-z-]*", output)) == {"--help", "--dev"}
 
 
 def test_postgres_start_stop_integration(tmp_path, monkeypatch):

@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from marathon.server.app import create_app
-from marathon.server.db.demo import load_demo_data
+from records import insert_records
 
 
 fixed_now = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -16,8 +16,8 @@ job_statuses = ("open", "assigned", "succeeded", "failed", "cancelled")
 
 @pytest.fixture
 def api_client(db_engine, tmp_path):
-    """Load deterministic demo data and provide a client with a UI fallback."""
-    load_demo_data(db_engine, now=fixed_now)
+    """Insert test records and provide a client with a UI fallback."""
+    insert_records(db_engine, fixed_now)
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
     with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
         yield client
@@ -59,7 +59,7 @@ def test_report_counts_all_jobs_in_wide_range(api_client, db_engine):
     assert response.status_code == 200
     data = response.json()
     assert [row["workflow_id"] for row in data["rows"]] == [
-        "wf-ingest", "wf-proxy", "wf-archive"
+        "wf-a", "wf-b", "wf-c"
     ]
     with db_engine.connect() as connection:
         for row in data["rows"]:
@@ -76,12 +76,12 @@ def test_report_filters_by_workflow(api_client):
     end = fixed_now + timedelta(days=2)
     response = api_client.get(
         "/api/v1/reports/job-status",
-        params={"start": start.isoformat(), "end": end.isoformat(), "workflow_id": "wf-proxy"},
+        params={"start": start.isoformat(), "end": end.isoformat(), "workflow_id": "wf-b"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert [row["workflow_id"] for row in data["rows"]] == ["wf-proxy"]
+    assert [row["workflow_id"] for row in data["rows"]] == ["wf-b"]
     assert data["totals"] == {
         "counts": data["rows"][0]["counts"], "total": data["rows"][0]["total"]
     }

@@ -72,3 +72,5 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Workflows freigeben/sperren
   - Offen: Wie werden Workflows freigegeben und gesperrt?
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
+
+- Button für Bug Report (via Mail) unten links im Seitenmen über Pfeil

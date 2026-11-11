@@ -23,6 +23,8 @@ export function ModuleNode({ data, selected }: NodeProps<ModuleFlowNode>) {
           className={`module-node-lock nodrag nopan${module.locked ? ' locked' : ''}`}
           title={module.locked ? 'Entsperren' : 'Sperren'}
           aria-label={module.locked ? 'Entsperren' : 'Sperren'}
+          onPointerDown={event => event.stopPropagation()}
+          onMouseDown={event => event.stopPropagation()}
           onClick={event => { event.stopPropagation(); actions?.toggle_lock(module.id) }}
         >
           <Icon name={module.locked ? 'lock' : 'lock-open'} size={13} />
@@ -53,7 +55,7 @@ export function ModuleNode({ data, selected }: NodeProps<ModuleFlowNode>) {
         {module_type.outputs.map(output => (
           <div key={output.id} className="module-output" style={{ color: output_color(output.id) }} data-tip={output.description}>
             <span>{output.label}</span>
-            <Handle type="source" id={output.id} position={Position.Bottom} className="module-handle" isConnectable={mode === 'edit' && !module.locked} />
+            <Handle type="source" id={output.id} position={Position.Bottom} className="module-handle module-output-handle" isConnectable={mode === 'edit' && !module.locked} />
           </div>
         ))}
       </div>
