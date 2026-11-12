@@ -3,14 +3,17 @@
 # IMPORTS
 import json
 import threading
+from datetime import datetime, timedelta, timezone
 from time import monotonic, sleep
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 
 from marathon.server.app import create_app
-from marathon.server.db.workflow_writes import WorkflowValidationError, create_workflow
+from marathon.server.db import workflow_writes
+from marathon.server.db.workflow_writes import WorkflowValidationError, create_workflow, update_workflow
 
 
 # FUNC
@@ -71,7 +74,7 @@ def api_client(db_engine, tmp_path):
 def test_create_update_and_delete_workflow(api_client):
     created = api_client.post(
         "/api/v1/workflows",
-        json={"name": "  Alpha  ", "description": "  Beschreibung  ", "priority": 4},
+        json={"name": "  Alpha  ", "description": "  Beschreibung  "},
     )
     assert created.status_code == 201
     workflow = created.json()
@@ -88,12 +91,12 @@ def test_create_update_and_delete_workflow(api_client):
 
     updated = api_client.put(
         f"/api/v1/workflows/{workflow['id']}",
-        json={"name": "Beta", "description": "Neue Beschreibung", "priority": 9},
+        json={"name": "Beta", "description": "Neue Beschreibung"},
     )
     assert updated.status_code == 200
     assert updated.json()["name"] == "Beta"
     assert updated.json()["description"] == "Neue Beschreibung"
-    assert updated.json()["priority"] == 9
+    assert "priority" not in updated.json()
     assert api_client.get(f"/api/v1/workflows/{workflow['id']}").json()["name"] == "Beta"
 
     deleted = api_client.delete(f"/api/v1/workflows/{workflow['id']}")
@@ -301,7 +304,7 @@ def test_delete_cascades_assets_and_jobs(api_client, db_engine):
 
 
 def test_unknown_workflow_returns_404(api_client):
-    missing = {"name": "Test", "description": "", "priority": 0}
+    missing = {"name": "Test", "description": ""}
     put = api_client.put("/api/v1/workflows/nope", json=missing)
     assert put.status_code == 404
     assert put.json()["detail"] == "Workflow nicht gefunden"
@@ -326,14 +329,14 @@ def test_concurrent_create_with_same_name_is_rejected(db_engine):
     def create_second_workflow() -> None:
         try:
             with db_engine.begin() as connection:
-                create_workflow(connection, "parallel", "", 0)
+                create_workflow(connection, "parallel", "")
             result["result"] = "created"
         except WorkflowValidationError as exc:
             result["result"] = str(exc)
 
     thread = threading.Thread(target=create_second_workflow)
     try:
-        create_workflow(first, "Parallel", "", 0)
+        create_workflow(first, "Parallel", "")
         thread.start()
         deadline = monotonic() + 5
         with db_engine.connect() as observer:
@@ -357,3 +360,261 @@ def test_concurrent_create_with_same_name_is_rejected(db_engine):
         first.close()
         if thread.ident is not None:
             thread.join(timeout=10)
+
+
+def test_list_has_no_priority(api_client):
+    created = api_client.post("/api/v1/workflows", json={"name": "Ohne Priorität"})
+    assert created.status_code == 201
+
+    response = api_client.get("/api/v1/workflows")
+
+    assert response.status_code == 200
+    assert all("priority" not in workflow for workflow in response.json())
+
+
+def test_list_sorted_by_name_case_insensitive(api_client):
+    for name in ("b-zwei", "A-eins", "c-drei"):
+        response = api_client.post("/api/v1/workflows", json={"name": name})
+        assert response.status_code == 201
+
+    listed = api_client.get("/api/v1/workflows")
+
+    assert [workflow["name"] for workflow in listed.json()] == ["A-eins", "b-zwei", "c-drei"]
+
+
+def test_set_active_toggles(api_client):
+    workflow = api_client.post("/api/v1/workflows", json={"name": "Aktiv"}).json()
+    assert workflow["active"] is False
+
+    enabled = api_client.put(f"/api/v1/workflows/{workflow['id']}/active", json={"active": True})
+    assert enabled.status_code == 200
+    assert enabled.json()["active"] is True
+    assert api_client.get(f"/api/v1/workflows/{workflow['id']}").json()["active"] is True
+
+    disabled = api_client.put(f"/api/v1/workflows/{workflow['id']}/active", json={"active": False})
+    assert disabled.status_code == 200
+    assert disabled.json()["active"] is False
+
+
+def test_set_active_clears_scheduled_flag(api_client, db_engine):
+    workflow = api_client.post("/api/v1/workflows", json={"name": "Zeitplan aktiv"}).json()
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE workflows SET active = true, scheduled_active = true WHERE id = :id"),
+            {"id": workflow["id"]},
+        )
+
+    response = api_client.put(
+        f"/api/v1/workflows/{workflow['id']}/active", json={"active": True}
+    )
+
+    assert response.status_code == 200
+    with db_engine.connect() as connection:
+        scheduled_active = connection.execute(
+            text("SELECT scheduled_active FROM workflows WHERE id = :id"),
+            {"id": workflow["id"]},
+        ).scalar_one()
+    assert scheduled_active is False
+
+
+def test_set_active_missing_returns_404(api_client):
+    response = api_client.put("/api/v1/workflows/nope/active", json={"active": True})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Workflow nicht gefunden"
+
+
+def test_set_active_rejects_non_bool(api_client):
+    response = api_client.put("/api/v1/workflows/nope/active", json={"active": "maybe"})
+
+    assert response.status_code == 422
+
+
+def test_workflow_schedule_is_returned_for_list_and_detail(api_client, db_engine):
+    workflow = api_client.post("/api/v1/workflows", json={"name": "Mit Zeitplan"}).json()
+    with db_engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE workflows SET schedule_every = 2, schedule_unit = 'days', "
+                "schedule_start = '2026-01-01 10:00:00+00'::timestamptz, "
+                "next_run_at = '2026-01-03 10:00:00+00'::timestamptz WHERE id = :id"
+            ),
+            {"id": workflow["id"]},
+        )
+
+    listed = api_client.get("/api/v1/workflows").json()[0]
+    detail = api_client.get(f"/api/v1/workflows/{workflow['id']}").json()
+    expected = {
+        "every": 2,
+        "unit": "days",
+        "start": "2026-01-01T10:00:00Z",
+        "next_run_at": "2026-01-03T10:00:00Z",
+    }
+
+    assert listed["schedule"] == expected
+    assert detail["schedule"] == expected
+
+    updated = api_client.put(
+        f"/api/v1/workflows/{workflow['id']}",
+        json={"name": "Zeitplan behalten", "description": "", "schedule": expected},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["schedule"] == expected
+
+
+def test_create_with_schedule_normalizes(api_client):
+    response = api_client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "S1",
+            "schedule": {
+                "every": 60,
+                "unit": "minutes",
+                "start": "2030-01-01T06:00:00+01:00",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    schedule = response.json()["schedule"]
+    assert schedule["every"] == 1
+    assert schedule["unit"] == "hours"
+    expected = datetime.fromisoformat("2030-01-01T05:00:00+00:00")
+    assert datetime.fromisoformat(schedule["start"].replace("Z", "+00:00")) == expected
+    assert datetime.fromisoformat(schedule["next_run_at"].replace("Z", "+00:00")) == expected
+
+
+def test_schedule_in_past_gets_next_slot(api_client):
+    response = api_client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "Vergangener Zeitplan",
+            "schedule": {
+                "every": 1,
+                "unit": "hours",
+                "start": "2020-01-01T00:00:00Z",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    next_run = datetime.fromisoformat(response.json()["schedule"]["next_run_at"].replace("Z", "+00:00"))
+    now = datetime.now(timezone.utc)
+    assert now < next_run <= now + timedelta(hours=1)
+    assert next_run.minute == 0
+    assert next_run.second == 0
+
+
+@pytest.mark.parametrize(
+    ("schedule", "message"),
+    [
+        ({"every": 0, "unit": "hours", "start": "2030-01-01T06:00:00Z"}, "Intervall muss mindestens 1 sein"),
+        ({"every": 1, "unit": "years", "start": "2030-01-01T06:00:00Z"}, "Unbekannte Einheit: years"),
+        ({"every": 1501, "unit": "minutes", "start": "2030-01-01T06:00:00Z"}, "Intervall zu groß: höchstens 1439 Minuten"),
+        ({"every": 1, "unit": "hours", "start": "2030-01-01T06:00:00"}, "Startzeit braucht eine Zeitzone"),
+    ],
+)
+def test_schedule_validation_messages(api_client, schedule, message):
+    response = api_client.post("/api/v1/workflows", json={"name": "Ungültiger Zeitplan", "schedule": schedule})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == message
+
+
+def test_name_error_before_schedule_error(api_client):
+    response = api_client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "",
+            "schedule": {"every": 0, "unit": "hours", "start": "2030-01-01T06:00:00Z"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Name fehlt"
+
+
+def test_put_without_schedule_clears_it(api_client, db_engine):
+    created = api_client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "Zeitplan löschen",
+            "schedule": {"every": 1, "unit": "hours", "start": "2030-01-01T06:00:00Z"},
+        },
+    )
+    assert created.status_code == 201
+    workflow_id = created.json()["id"]
+    with db_engine.begin() as connection:
+        connection.execute(text("UPDATE workflows SET scheduled_active = true WHERE id = :id"), {"id": workflow_id})
+
+    response = api_client.put(f"/api/v1/workflows/{workflow_id}", json={"name": "Zeitplan gelöscht"})
+
+    assert response.status_code == 200
+    assert response.json()["schedule"] is None
+    with db_engine.begin() as connection:
+        row = connection.execute(
+            text("SELECT schedule_every, schedule_unit, schedule_start, next_run_at, scheduled_active FROM workflows WHERE id = :id"),
+            {"id": workflow_id},
+        ).one()
+    assert tuple(row) == (None, None, None, None, False)
+
+
+def test_put_same_schedule_keeps_next_run(api_client, db_engine):
+    body = {
+        "name": "Zeitplan erhalten",
+        "schedule": {"every": 1, "unit": "hours", "start": "2020-01-01T00:00:00Z"},
+    }
+    created = api_client.post("/api/v1/workflows", json=body)
+    assert created.status_code == 201
+    workflow_id = created.json()["id"]
+    fixed_next_run = datetime.fromisoformat("2020-01-02T03:00:00+00:00")
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE workflows SET next_run_at = :next_run_at WHERE id = :id"),
+            {"next_run_at": fixed_next_run, "id": workflow_id},
+        )
+
+    unchanged = api_client.put(f"/api/v1/workflows/{workflow_id}", json=body)
+    assert unchanged.status_code == 200
+    unchanged_next_run = datetime.fromisoformat(unchanged.json()["schedule"]["next_run_at"].replace("Z", "+00:00"))
+    assert unchanged_next_run == fixed_next_run
+
+    changed_body = {
+        "name": "Zeitplan erhalten",
+        "schedule": {"every": 2, "unit": "hours", "start": "2020-01-01T00:00:00Z"},
+    }
+    changed = api_client.put(f"/api/v1/workflows/{workflow_id}", json=changed_body)
+    assert changed.status_code == 200
+    changed_next_run = datetime.fromisoformat(changed.json()["schedule"]["next_run_at"].replace("Z", "+00:00"))
+    assert changed_next_run > datetime.now(timezone.utc)
+
+
+def test_update_workflow_sets_timeout_before_row_lock(api_client, db_engine, monkeypatch):
+    workflow_id = api_client.post("/api/v1/workflows", json={"name": "Locked", "description": ""}).json()["id"]
+    holder = db_engine.connect()
+    lock_transaction = holder.begin()
+    holder.execute(text("SELECT id FROM workflows WHERE id = :id FOR UPDATE"), {"id": workflow_id})
+    updater = db_engine.connect()
+    updater.execute(text("SET lock_timeout = '4s'"))
+    updater.commit()
+
+    original_text = workflow_writes.text
+
+    def use_short_test_timeout(statement, *args, **kwargs):
+        if statement == "SET LOCAL lock_timeout = '10s'":
+            statement = "SET LOCAL lock_timeout = '1s'"
+        return original_text(statement, *args, **kwargs)
+
+    monkeypatch.setattr(workflow_writes, "text", use_short_test_timeout)
+    started = monotonic()
+    try:
+        with pytest.raises(DBAPIError):
+            with updater.begin():
+                update_workflow(updater, workflow_id, "Locked", "")
+        elapsed = monotonic() - started
+    finally:
+        lock_transaction.rollback()
+        holder.close()
+        updater.close()
+
+    assert elapsed < 3

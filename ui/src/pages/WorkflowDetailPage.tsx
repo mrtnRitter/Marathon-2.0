@@ -1,4 +1,4 @@
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { Tabs } from '../components/Tabs'
@@ -6,6 +6,7 @@ import { get_workflow } from '../data/api'
 import { use_data } from '../data/use_data'
 import { AssetList } from '../features/assets/AssetList'
 import { WorkflowCanvas } from '../features/workflow-editor/WorkflowCanvas'
+import type { EditorMode } from '../features/workflow-editor/editor_types'
 import { active_meta, asset_statuses } from '../theme/status'
 import './WorkflowDetailPage.css'
 
@@ -14,6 +15,8 @@ const tabs = ['modules', 'assets']
 export function WorkflowDetailPage() {
   const { workflow_id = '', tab = 'modules' } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const initial_mode: EditorMode | undefined = (location.state as { mode?: string } | null)?.mode === 'edit' ? 'edit' : undefined
   const { data: workflow, loading } = use_data(() => get_workflow(workflow_id), [workflow_id])
   if (!tabs.includes(tab)) return <Navigate to={`/workflows/${workflow_id}/modules`} replace />
   const asset_total = workflow ? asset_statuses.reduce((sum, status) => sum + workflow.asset_counts[status], 0) : undefined
@@ -28,7 +31,7 @@ export function WorkflowDetailPage() {
         <Tabs active={tab} on_change={id => navigate(`/workflows/${workflow_id}/${id}`)}
           items={[{ id: 'modules', label: 'Module', icon: 'workflow' }, { id: 'assets', label: 'Assets', icon: 'files', count: asset_total }]} />
       </div>
-      {workflow && tab === 'modules' && <div className="page-content flush"><WorkflowCanvas workflow_id={workflow_id} /></div>}
+      {workflow && tab === 'modules' && <div className="page-content flush"><WorkflowCanvas workflow_id={workflow_id} initial_mode={initial_mode} /></div>}
       {workflow && tab === 'assets' && <div className="page-content"><AssetList workflow_id={workflow_id} /></div>}
       {!workflow && !loading && <div className="page-content"><p className="muted">Kein Workflow mit dieser Kennung.</p></div>}
     </>

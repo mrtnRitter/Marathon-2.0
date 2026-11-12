@@ -34,9 +34,9 @@ def insert_records(engine: Engine, now: datetime) -> None:
         },
     ]
     workflows = [
-        {"id": "wf-a", "name": "Alpha", "description": "", "priority": 10, "active": True, "current_version": 2},
-        {"id": "wf-b", "name": "Beta", "description": "", "priority": 5, "active": True, "current_version": 1},
-        {"id": "wf-c", "name": "Gamma", "description": "", "priority": 0, "active": False, "current_version": 1},
+        {"id": "wf-a", "name": "Alpha", "description": "", "active": True, "current_version": 2},
+        {"id": "wf-b", "name": "Beta", "description": "", "active": True, "current_version": 1},
+        {"id": "wf-c", "name": "Gamma", "description": "", "active": False, "current_version": 1},
     ]
     versions = [
         {"workflow_id": "wf-a", "version": 1, "created_at": ago(1430)},
@@ -104,8 +104,8 @@ def insert_records(engine: Engine, now: datetime) -> None:
             module_types, {"outputs": JSONB(), "settings": JSONB()},
         ),
         (
-            "INSERT INTO workflows (id, name, description, priority, active, current_version, created_at, updated_at) "
-            "VALUES (:id, :name, :description, :priority, :active, :current_version, :created_at, :updated_at)",
+            "INSERT INTO workflows (id, name, description, active, current_version, created_at, updated_at) "
+            "VALUES (:id, :name, :description, :active, :current_version, :created_at, :updated_at)",
             [{**row, "created_at": ago(1439), "updated_at": now} for row in workflows], {},
         ),
         (

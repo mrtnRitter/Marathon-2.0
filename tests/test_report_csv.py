@@ -42,7 +42,7 @@ def test_job_status_csv_endpoint(db_engine, tmp_path):
     fixed_time = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
     with db_engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO workflows (id, name, priority) VALUES ('wf-x', 'Ingest', 0)")
+            text("INSERT INTO workflows (id, name) VALUES ('wf-x', 'Ingest')")
         )
         connection.execute(
             text(

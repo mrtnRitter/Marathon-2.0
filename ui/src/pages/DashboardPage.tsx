@@ -15,7 +15,7 @@ function WorkflowRow({ workflow }: { workflow: Workflow }) {
   const navigate = useNavigate()
   const open = (tab: string) => navigate(`/workflows/${workflow.id}/${tab}`)
   return (
-    <div className="dashboard-row" onDoubleClick={() => open('modules')}>
+    <div className="dashboard-row" onClick={() => navigate(`/workflows?selected=${encodeURIComponent(workflow.id)}`)}>
       <div className="dashboard-row-head">
         <strong>{workflow.name}</strong>
         <StatusBadge meta={active_meta(workflow.active)} />
@@ -29,7 +29,7 @@ function WorkflowRow({ workflow }: { workflow: Workflow }) {
           </span>
         ))}
       </div>
-      <div className="dashboard-row-actions">
+      <div className="dashboard-row-actions" onClick={event => event.stopPropagation()}>
         <Button label="Module" icon="workflow" on_click={() => open('modules')} />
         <Button label="Assets" icon="files" on_click={() => open('assets')} />
       </div>

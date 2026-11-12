@@ -1,10 +1,11 @@
 """Workflow write endpoints."""
 
 # IMPORTS
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy.engine import Engine
 
 from marathon.server.api.deps import get_engine
@@ -15,18 +16,33 @@ from marathon.server.db.workflow_writes import (
     WorkflowValidationError,
     create_workflow,
     delete_workflow,
+    set_workflow_active,
     save_graph,
     update_workflow,
 )
 
 
 # MODELS
+class ScheduleInput(BaseModel):
+    """Schedule interval and first scheduled timestamp."""
+
+    every: int
+    unit: str
+    start: datetime
+
+
 class WorkflowInput(BaseModel):
     """Metadata supplied when creating or updating a workflow."""
 
     name: str
     description: str = ""
-    priority: int = 0
+    schedule: ScheduleInput | None = None
+
+
+class ActiveInput(BaseModel):
+    """Strict boolean payload for changing a workflow active state."""
+
+    active: StrictBool
 
 
 class PositionInput(BaseModel):
@@ -77,7 +93,11 @@ def post_workflow(
     try:
         with engine.begin() as connection:
             workflow_id = create_workflow(
-                connection, payload.name, payload.description, payload.priority
+                connection,
+                payload.name,
+                payload.description,
+                payload.schedule.model_dump() if payload.schedule else None,
+                datetime.now(timezone.utc),
             )
             workflow = get_workflow(connection, workflow_id)
     except WorkflowValidationError as exc:
@@ -99,13 +119,29 @@ def put_workflow(
                 workflow_id,
                 payload.name,
                 payload.description,
-                payload.priority,
+                payload.schedule.model_dump() if payload.schedule else None,
+                datetime.now(timezone.utc),
             )
             if not updated:
                 raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
             workflow = get_workflow(connection, workflow_id)
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return workflow
+
+
+@router.put("/workflows/{workflow_id}/active")
+def put_workflow_active(
+    workflow_id: str,
+    payload: ActiveInput,
+    engine: Engine = Depends(get_engine),
+) -> dict[str, Any]:
+    """Set a workflow's active state and return its metadata."""
+    with engine.begin() as connection:
+        updated = set_workflow_active(connection, workflow_id, payload.active)
+        if not updated:
+            raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+        workflow = get_workflow(connection, workflow_id)
     return workflow
 
 

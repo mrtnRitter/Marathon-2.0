@@ -4,6 +4,7 @@ import { DataTable, type Column } from '../../components/DataTable'
 import { StatusBadge } from '../../components/StatusBadge'
 import { StatusTabs } from '../../components/StatusTabs'
 import { Toolbar } from '../../components/Toolbar'
+import { ReprocessPanel } from './ReprocessPanel'
 import { get_assets } from '../../data/api'
 import type { Asset, AssetStatus, Workflow } from '../../data/types'
 import { use_data } from '../../data/use_data'
@@ -22,10 +23,11 @@ interface Props {
 /** Asset list with status tiles and actions; shared by the global view and the workflow tab. */
 export function AssetList({ workflow_id, workflows, initial_status }: Props) {
   const navigate = useNavigate()
-  const { data: assets = [], loading } = use_data(() => get_assets({ workflow_id }), [workflow_id])
+  const { data: assets = [], loading, reload } = use_data(() => get_assets({ workflow_id }), [workflow_id])
   const [status, set_status] = useState<AssetStatus>(initial_status ?? 'pending')
   const [selected, set_selected] = useState<string[]>([])
   const [search, set_search] = useState('')
+  const [reprocess_open, set_reprocess_open] = useState(false)
 
   const visible = useMemo(() => assets.filter(asset =>
     asset.status === status && asset.name.toLowerCase().includes(search.trim().toLowerCase())), [assets, status, search])
@@ -41,6 +43,7 @@ export function AssetList({ workflow_id, workflows, initial_status }: Props) {
     { key: 'updated_at', label: 'Letzte Änderung', render: row => <span title={format_datetime(row.updated_at)}>{format_relative(row.updated_at)}</span>, sort_value: row => row.updated_at },
   ]
   const none = selected.length === 0
+  const selected_in_progress = assets.some(asset => selected.includes(asset.id) && asset.status === 'in_progress')
 
   return (
     <div className="asset-list">
@@ -50,7 +53,7 @@ export function AssetList({ workflow_id, workflows, initial_status }: Props) {
         <Toolbar actions={[
           { label: 'Ansehen', icon: 'eye', disabled: selected.length !== 1, on_click: () => open(selected[0]) },
           { label: 'Nach oben', icon: 'arrow-up', disabled: none },
-          { label: 'Erneut verarbeiten', icon: 'reprocess', disabled: none },
+          { label: 'Erneut verarbeiten', icon: 'reprocess', disabled: none || selected_in_progress, on_click: () => set_reprocess_open(true) },
           { label: 'Abbrechen', icon: 'cancel', disabled: none },
           { label: status === 'on_hold' ? 'Freigeben' : 'Anhalten', icon: status === 'on_hold' ? 'play' : 'pause', disabled: none },
           { label: 'Entfernen', icon: 'trash', disabled: none },
@@ -64,6 +67,8 @@ export function AssetList({ workflow_id, workflows, initial_status }: Props) {
           on_selection_change={set_selected} on_row_open={row => open(row.id)}
           empty_text={`Keine Assets mit Status „${asset_status_meta[status].label}“`} />
       )}
+      <ReprocessPanel open={reprocess_open} asset_ids={selected} current_workflow_id={workflow_id}
+        on_close={() => set_reprocess_open(false)} on_done={() => { set_reprocess_open(false); set_selected([]); reload() }} />
     </div>
   )
 }

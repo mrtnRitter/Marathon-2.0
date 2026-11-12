@@ -36,8 +36,8 @@ function read_settings_width(): number {
 const minimap_color = (node: ModuleFlowNode) =>
   node.data.module.counters.failed > 0 ? 'var(--status-failed)' : node.data.module.counters.running > 0 ? 'var(--status-in-progress)' : 'var(--border-strong)'
 
-export function WorkflowCanvas({ workflow_id }: { workflow_id: string }) {
-  const [mode, set_mode] = useState<EditorMode>('monitor')
+export function WorkflowCanvas({ workflow_id, initial_mode }: { workflow_id: string; initial_mode?: EditorMode }) {
+  const [mode, set_mode] = useState<EditorMode>(initial_mode ?? 'monitor')
   const { data, reload } = use_data(() => Promise.all([get_workflow_graph(workflow_id), get_module_types()]), [workflow_id])
   if (!data) return <div className="loading">Lade Workflow</div>
   const [graph, module_types] = data

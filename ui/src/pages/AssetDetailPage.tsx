@@ -2,9 +2,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { KeyValue } from '../components/KeyValue'
 import { LogView } from '../components/LogView'
 import { PageHeader } from '../components/PageHeader'
+import { ReprocessPanel } from '../features/assets/ReprocessPanel'
 import { StatusBadge } from '../components/StatusBadge'
 import { get_asset_detail, get_workflow } from '../data/api'
 import { use_data } from '../data/use_data'
+import { useState } from 'react'
 import { AssetTimeline } from '../features/assets/AssetTimeline'
 import { format_datetime } from '../lib/format'
 import { asset_status_meta, message_kind_color, step_status_meta } from '../theme/status'
@@ -13,7 +15,8 @@ import './AssetDetailPage.css'
 export function AssetDetailPage() {
   const { asset_id = '' } = useParams()
   const navigate = useNavigate()
-  const { data: asset, loading } = use_data(() => get_asset_detail(asset_id), [asset_id])
+  const { data: asset, loading, reload } = use_data(() => get_asset_detail(asset_id), [asset_id])
+  const [reprocess_open, set_reprocess_open] = useState(false)
   const { data: workflow } = use_data(() => (asset ? get_workflow(asset.workflow_id) : Promise.resolve(null)), [asset?.workflow_id])
 
   if (!asset) {
@@ -32,12 +35,18 @@ export function AssetDetailPage() {
         actions={[
           { label: 'Zurück', icon: 'arrow-left', on_click: () => navigate(-1) },
           { label: 'Nach oben', icon: 'arrow-up' },
-          { label: 'Erneut verarbeiten', icon: 'reprocess' },
+          { label: 'Erneut verarbeiten', icon: 'reprocess', disabled: asset.status === 'in_progress', on_click: () => set_reprocess_open(true) },
           { label: 'Abbrechen', icon: 'cancel' },
           { label: asset.status === 'on_hold' ? 'Freigeben' : 'Anhalten', icon: asset.status === 'on_hold' ? 'play' : 'pause' },
           { label: 'Entfernen', icon: 'trash' },
         ]}
       />
+      <ReprocessPanel open={reprocess_open} asset_ids={[asset.id]} current_workflow_id={asset.workflow_id}
+        on_close={() => set_reprocess_open(false)} on_done={ids => {
+          set_reprocess_open(false)
+          if (ids[0] !== asset.id) navigate(`/assets/${ids[0]}`)
+          else reload()
+        }} />
       <div className="page-content asset-detail">
         <section className="panel asset-detail-head">
           <h2 className="panel-title">Kopfdaten</h2>

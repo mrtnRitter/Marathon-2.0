@@ -4,7 +4,7 @@
   gap: var(--space-2) var(--space-5); align-items: center;
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border);
-  transition: background var(--transition);
+  transition: background var(--transition); cursor: pointer;
 }
 .dashboard-row:last-child { border-bottom: none; }
 .dashboard-row:hover { background: var(--bg-hover); }

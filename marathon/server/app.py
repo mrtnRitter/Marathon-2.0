@@ -11,21 +11,36 @@ from sqlalchemy.exc import OperationalError, TimeoutError as SQLAlchemyTimeoutEr
 
 from marathon.common.version import app_name, app_version
 from marathon.server.api import api_prefix, api_routers
+from marathon.server.api.deps import app_engine
 from marathon.server.config import ConfigError
+from marathon.server.scheduler import ScheduleRunner
 from marathon.server.ui import create_ui_router, default_static_dir
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Dispose of an app-owned engine when the application shuts down."""
+    """Run configured background scheduling and dispose of owned resources."""
+    runner = None
     try:
+        if app.state.scheduler_interval_s is not None:
+            runner = ScheduleRunner(
+                lambda: app_engine(app),
+                app.state.scheduler_interval_s,
+            )
+            runner.start()
         yield
     finally:
+        if runner is not None:
+            runner.stop()
         if app.state.engine_owned and app.state.engine is not None:
             app.state.engine.dispose()
 
 
-def create_app(static_dir: Path | None = None, engine: Engine | None = None) -> FastAPI:
+def create_app(
+    static_dir: Path | None = None,
+    engine: Engine | None = None,
+    scheduler_interval_s: float | None = None,
+) -> FastAPI:
     """Build the versioned API and UI without opening a database connection."""
     app = FastAPI(
         title=app_name,
@@ -37,6 +52,7 @@ def create_app(static_dir: Path | None = None, engine: Engine | None = None) -> 
     )
     app.state.engine = engine
     app.state.engine_owned = engine is None
+    app.state.scheduler_interval_s = scheduler_interval_s
 
     @app.exception_handler(OperationalError)
     @app.exception_handler(SQLAlchemyTimeoutError)

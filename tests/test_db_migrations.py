@@ -45,8 +45,8 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0002"
-    assert upgrade_database(db_engine) == "0002"
+    assert upgrade_database(db_engine) == "0003"
+    assert upgrade_database(db_engine) == "0003"
 
 
 def test_ensure_database_creates_then_reuses(db_config):
@@ -130,7 +130,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0002" in captured.out
+    assert "Revision 0003" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 
@@ -156,3 +156,65 @@ def test_module_description_defaults_to_empty(db_engine):
         connection.execute(text("INSERT INTO workflow_modules (workflow_id, version, id, type_id, name, position_x, position_y) VALUES ('wf', 1, 'm1', 'type', 'One', 0, 0)"))
         description = connection.execute(text("SELECT description FROM workflow_modules")).scalar_one()
     assert description == ""
+
+
+def test_workflow_schedule_columns(db_engine):
+    columns = {column["name"] for column in inspect(db_engine).get_columns("workflows")}
+
+    assert {
+        "schedule_every", "schedule_unit", "schedule_start", "next_run_at", "scheduled_active"
+    } <= columns
+    assert "priority" not in columns
+
+
+def test_schedule_constraints(db_engine):
+    from datetime import datetime, timezone
+
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    next_run = datetime(2025, 1, 2, tzinfo=timezone.utc)
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(
+                text("INSERT INTO workflows (id, name, schedule_every) VALUES ('partial', 'Partial', 1)")
+            )
+
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO workflows "
+                    "(id, name, schedule_every, schedule_unit, schedule_start, next_run_at) "
+                    "VALUES ('invalid-unit', 'Invalid unit', 1, 'years', :start, :next_run)"
+                ),
+                {"start": start, "next_run": next_run},
+            )
+
+    with db_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO workflows "
+                "(id, name, schedule_every, schedule_unit, schedule_start, next_run_at) "
+                "VALUES ('valid-schedule', 'Valid schedule', 1, 'days', :start, :next_run)"
+            ),
+            {"start": start, "next_run": next_run},
+        )
+        assert connection.execute(
+            text("SELECT schedule_unit FROM workflows WHERE id = 'valid-schedule'")
+        ).scalar_one() == "days"
+
+
+def test_downgrade_restores_priority(db_engine):
+    from alembic import command
+    from alembic.config import Config
+
+    from marathon.server.db.engine import migrations_dir
+
+    config = Config()
+    config.set_main_option("script_location", str(migrations_dir))
+    with db_engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0002")
+
+    columns = {column["name"] for column in inspect(db_engine).get_columns("workflows")}
+    assert "priority" in columns
+    assert not {"schedule_every", "schedule_unit", "schedule_start", "next_run_at", "scheduled_active"} & columns

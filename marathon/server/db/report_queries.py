@@ -31,8 +31,8 @@ def job_status_report(
             "LEFT JOIN jobs AS job ON job.workflow_id = workflow.id "
             "AND job.created_at >= :start AND job.created_at < :end "
             f"{workflow_filter} "
-            "GROUP BY workflow.id, workflow.name, workflow.priority, job.status "
-            "ORDER BY workflow.priority DESC, workflow.name"
+            "GROUP BY workflow.id, workflow.name, job.status "
+            "ORDER BY lower(workflow.name), workflow.id"
         ),
         parameters,
     ).mappings()

@@ -2,12 +2,15 @@
 
 # IMPORTS
 import re
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import Text, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.engine import Connection
+
+from marathon.server.schedule import ScheduleError, next_occurrence, normalize_interval
 
 
 # EXCEPTIONS
@@ -101,21 +104,68 @@ def _validate_graph(
         connected_outputs.add(output_key)
 
 
+def _schedule_values(
+    schedule: dict[str, Any] | None,
+    now: datetime | None,
+    current: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Normalize schedule fields and calculate the next scheduled run."""
+    keys = ("schedule_every", "schedule_unit", "schedule_start", "next_run_at")
+    if schedule is None:
+        return dict.fromkeys(keys)
+
+    try:
+        every, unit = normalize_interval(schedule["every"], schedule["unit"])
+        start = schedule["start"]
+        if not isinstance(start, datetime) or start.utcoffset() is None:
+            raise ScheduleError("Startzeit braucht eine Zeitzone")
+        unchanged = (
+            current is not None
+            and current.get("schedule_every") == every
+            and current.get("schedule_unit") == unit
+            and current.get("schedule_start") == start
+        )
+        next_run_at = (
+            current["next_run_at"]
+            if unchanged
+            else next_occurrence(start, every, unit, after=now or datetime.now(timezone.utc))
+        )
+    except ScheduleError as exc:
+        raise WorkflowValidationError(str(exc)) from exc
+
+    return {
+        "schedule_every": every,
+        "schedule_unit": unit,
+        "schedule_start": start,
+        "next_run_at": next_run_at,
+    }
+
+
 # WORKFLOW WRITES
-def create_workflow(connection: Connection, name: str, description: str, priority: int) -> str:
+def create_workflow(
+    connection: Connection,
+    name: str,
+    description: str,
+    schedule: dict[str, Any] | None = None,
+    now: datetime | None = None,
+) -> str:
     """Create a workflow and its initial empty version, returning its ID."""
     workflow_id = f"wf-{uuid4().hex[:12]}"
     normalized_name = _validate_workflow_name(connection, name, workflow_id)
+    schedule_fields = _schedule_values(schedule, now)
     connection.execute(
         text(
-            "INSERT INTO workflows (id, name, description, active, priority, current_version) "
-            "VALUES (:id, :name, :description, false, :priority, 1)"
+            "INSERT INTO workflows "
+            "(id, name, description, active, current_version, schedule_every, schedule_unit, "
+            "schedule_start, next_run_at, scheduled_active) "
+            "VALUES (:id, :name, :description, false, 1, :schedule_every, :schedule_unit, "
+            ":schedule_start, :next_run_at, false)"
         ),
         {
             "id": workflow_id,
             "name": normalized_name,
             "description": description.strip(),
-            "priority": priority,
+            **schedule_fields,
         },
     )
     connection.execute(
@@ -130,26 +180,51 @@ def update_workflow(
     workflow_id: str,
     name: str,
     description: str,
-    priority: int,
+    schedule: dict[str, Any] | None = None,
+    now: datetime | None = None,
 ) -> bool:
-    """Update workflow metadata, returning False if the workflow is missing."""
-    exists = connection.execute(
-        text("SELECT 1 FROM workflows WHERE id = :id"), {"id": workflow_id}
-    ).scalar_one_or_none()
-    if exists is None:
+    """Update workflow metadata and schedule, returning False if it is missing."""
+    connection.execute(text("SET LOCAL lock_timeout = '10s'"))
+    current_row = connection.execute(
+        text(
+            "SELECT schedule_every, schedule_unit, schedule_start, next_run_at, scheduled_active "
+            "FROM workflows WHERE id = :id FOR UPDATE"
+        ),
+        {"id": workflow_id},
+    ).mappings().one_or_none()
+    if current_row is None:
         return False
+
     normalized_name = _validate_workflow_name(connection, name, workflow_id)
+    current = dict(current_row)
+    schedule_fields = _schedule_values(schedule, now, current)
+    scheduled_active = current["scheduled_active"] if schedule is not None else False
     updated = connection.execute(
         text(
-            "UPDATE workflows SET name = :name, description = :description, priority = :priority, "
-            "updated_at = now() WHERE id = :id RETURNING id"
+            "UPDATE workflows SET name = :name, description = :description, "
+            "schedule_every = :schedule_every, schedule_unit = :schedule_unit, "
+            "schedule_start = :schedule_start, next_run_at = :next_run_at, "
+            "scheduled_active = :scheduled_active, updated_at = now() WHERE id = :id RETURNING id"
         ),
         {
             "id": workflow_id,
             "name": normalized_name,
             "description": description.strip(),
-            "priority": priority,
+            **schedule_fields,
+            "scheduled_active": scheduled_active,
         },
+    ).scalar_one_or_none()
+    return updated is not None
+
+
+def set_workflow_active(connection: Connection, workflow_id: str, active: bool) -> bool:
+    """Set a workflow's active state and clear schedule activation."""
+    updated = connection.execute(
+        text(
+            "UPDATE workflows SET active = :active, scheduled_active = false, "
+            "updated_at = now() WHERE id = :id RETURNING id"
+        ),
+        {"id": workflow_id, "active": active},
     ).scalar_one_or_none()
     return updated is not None
 

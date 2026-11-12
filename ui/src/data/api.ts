@@ -1,6 +1,6 @@
 // Single data access point for all pages; talks to the server API.
 import { notify } from '../components/Toast'
-import type { Asset, AssetDetail, AssetStatus, DashboardData, GraphInput, JobStatusReport, ModuleActivity, ModuleType, Worker, Workflow, WorkflowGraph, WorkflowInput } from './types'
+import type { Asset, AssetDetail, AssetStatus, DashboardData, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Worker, Workflow, WorkflowGraph, WorkflowInput } from './types'
 
 const api_base = '/api/v1'
 
@@ -38,6 +38,9 @@ async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PU
 
 export const get_workflows = (): Promise<Workflow[]> => request<Workflow[]>('/workflows').then(data => data!)
 
+export const set_workflow_active = (id: string, active: boolean): Promise<Workflow> =>
+  request<Workflow>(`/workflows/${encodeURIComponent(id)}/active`, { method: 'PUT', body: { active } }).then(data => data!)
+
 export const get_workflow = (id: string): Promise<Workflow | null> =>
   request<Workflow>(`/workflows/${encodeURIComponent(id)}`, { allow_404: true })
 
@@ -48,6 +51,9 @@ export const get_module_types = (): Promise<ModuleType[]> => request<ModuleType[
 
 export const get_module_activity = (workflow_id: string, module_id: string): Promise<ModuleActivity> =>
   request<ModuleActivity>(`/workflows/${encodeURIComponent(workflow_id)}/modules/${encodeURIComponent(module_id)}/activity`).then(data => data!)
+
+export const reprocess_assets = (asset_ids: string[], target_workflow_id: string | null): Promise<ReprocessResult> =>
+  request<ReprocessResult>('/assets/reprocess', { method: 'POST', body: { asset_ids, target_workflow_id } }).then(data => data!)
 
 export function get_assets(filter: { workflow_id?: string; status?: AssetStatus } = {}): Promise<Asset[]> {
   const params = new URLSearchParams()

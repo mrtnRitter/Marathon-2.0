@@ -24,13 +24,30 @@ def _asset_counts(connection: Connection, workflow_id: str | None = None) -> dic
     return counts
 
 
+def _workflow_record(row: Any) -> dict[str, Any]:
+    """Map a workflow row and its nullable database fields to the API shape."""
+    workflow = dict(row)
+    every = workflow.pop("schedule_every")
+    unit = workflow.pop("schedule_unit")
+    start = workflow.pop("schedule_start")
+    next_run_at = workflow.pop("next_run_at")
+    workflow["schedule"] = None if every is None else {
+        "every": every,
+        "unit": unit,
+        "start": start,
+        "next_run_at": next_run_at,
+    }
+    return workflow
+
+
 def list_workflows(connection: Connection) -> list[dict[str, Any]]:
-    """List workflows by descending priority and name with counts for every asset status."""
+    """List workflows by case-insensitive name with counts for every asset status."""
     rows = connection.execute(text(
-        "SELECT id, name, description, active, current_version AS version, priority "
-        "FROM workflows ORDER BY priority DESC, name"
+        "SELECT id, name, description, active, current_version AS version, "
+        "schedule_every, schedule_unit, schedule_start, next_run_at "
+        "FROM workflows ORDER BY lower(name), id"
     )).mappings()
-    workflows = [dict(row) for row in rows]
+    workflows = [_workflow_record(row) for row in rows]
     counts_by_workflow = {
         workflow["id"]: _asset_counts(connection, workflow["id"]) for workflow in workflows
     }
@@ -42,12 +59,13 @@ def list_workflows(connection: Connection) -> list[dict[str, Any]]:
 def get_workflow(connection: Connection, workflow_id: str) -> dict[str, Any] | None:
     """Return one workflow and its asset counts, or None when it does not exist."""
     row = connection.execute(text(
-        "SELECT id, name, description, active, current_version AS version, priority "
+        "SELECT id, name, description, active, current_version AS version, "
+        "schedule_every, schedule_unit, schedule_start, next_run_at "
         "FROM workflows WHERE id = :workflow_id"
     ), {"workflow_id": workflow_id}).mappings().one_or_none()
     if row is None:
         return None
-    workflow = dict(row)
+    workflow = _workflow_record(row)
     workflow["asset_counts"] = _asset_counts(connection, workflow_id)
     return workflow
 

@@ -67,13 +67,25 @@ export interface WorkflowGraph {
   connections: WorkflowConnection[]
 }
 
+export type ScheduleUnit = 'minutes' | 'hours' | 'days' | 'weeks' | 'months'
+
+export interface ScheduleInput {
+  every: number
+  unit: ScheduleUnit
+  start: string
+}
+
+export interface WorkflowSchedule extends ScheduleInput {
+  next_run_at: string
+}
+
 export interface Workflow {
   id: string
   name: string
   description: string
   active: boolean
   version: number
-  priority: number
+  schedule?: WorkflowSchedule | null
   asset_counts: Record<AssetStatus, number>
 }
 
@@ -175,7 +187,11 @@ export interface JobStatusReport {
 export interface WorkflowInput {
   name: string
   description: string
-  priority: number
+  schedule: ScheduleInput | null
+}
+
+export interface ReprocessResult {
+  asset_ids: string[]
 }
 
 export type ModuleInput = Omit<WorkflowModule, 'counters'>

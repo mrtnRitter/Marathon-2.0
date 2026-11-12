@@ -20,19 +20,22 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ---
 
-## Nächster Release: Workflows (geplant)
+## Release Workflows (eingebaut, Abnahme offen)
 
 ### Ablauf und Steuerung
 
-- [ ] Workflow selbst hat keine Priorität, dafür gibt es das Modul „Prioliste“
-- [ ] Workflows zeitgesteuert starten (alle x Tage, täglich usw.)
-- [ ] Assets neu verarbeiten: Option: in einem anderen Workflow
+- [~] Workflow selbst hat keine Priorität, dafür gibt es das Modul „Prioliste“
+- [~] Workflows zeitgesteuert starten (alle x Tage, täglich usw.)
+  - Alle X Minuten/Stunden/Tage/Wochen/Monate ab „Erster Start“; 60 Minuten → 1 Stunde usw. wird autokorrigiert
+  - Pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist
+- [~] Assets neu verarbeiten: Option: in einem anderen Workflow
+  - Im alten Workflow „Erledigt“ mit Historien-Hinweis, im neuen als neues Asset mit Herkunftshinweis
 
 ### Oberfläche
 
-- [ ] Nachdem ein neuer Workflow angelegt wurde, gleich in „Bearbeiten“ wechseln
-- [ ] Workflow pausieren und starten direkt in der Workflow-Übersicht: Spalte nach der Status-Spalte mit Play/Pause-Button. Läuft der Workflow, zeigt der Button das Pause-Symbol; ist er pausiert, das Play-Symbol
-- [ ] Klick auf einen Workflow im Dashboard führt in die Workflow-Übersicht
+- [~] Nachdem ein neuer Workflow angelegt wurde, gleich in „Bearbeiten“ wechseln
+- [~] Workflow pausieren und starten direkt in der Workflow-Übersicht: Spalte nach der Status-Spalte mit Play/Pause-Button. Läuft der Workflow, zeigt der Button das Pause-Symbol; ist er pausiert, das Play-Symbol
+- [~] Klick auf einen Workflow im Dashboard führt in die Workflow-Übersicht
 
 ---
 
