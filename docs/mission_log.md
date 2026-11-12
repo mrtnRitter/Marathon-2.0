@@ -20,6 +20,22 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ---
 
+## Nächster Release: Workflows (geplant)
+
+### Ablauf und Steuerung
+
+- [ ] Workflow selbst hat keine Priorität, dafür gibt es das Modul „Prioliste“
+- [ ] Workflows zeitgesteuert starten (alle x Tage, täglich usw.)
+- [ ] Assets neu verarbeiten: Option: in einem anderen Workflow
+
+### Oberfläche
+
+- [ ] Nachdem ein neuer Workflow angelegt wurde, gleich in „Bearbeiten“ wechseln
+- [ ] Workflow pausieren und starten direkt in der Workflow-Übersicht: Spalte nach der Status-Spalte mit Play/Pause-Button. Läuft der Workflow, zeigt der Button das Pause-Symbol; ist er pausiert, das Play-Symbol
+- [ ] Klick auf einen Workflow im Dashboard führt in die Workflow-Übersicht
+
+---
+
 ## Backlog (Reihenfolge offen)
 
 ### Engine und Worker
@@ -51,19 +67,14 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - [ ] Prioliste
   - [ ] API (EditShare, Veritone, ARK, awork) → später
 
-### Workflows, Assets und Daten
+### Assets und Daten
 
-- [ ] Workflow selbst hat keine Priorität, dafür gibt es das Modul „Prioliste“
-- [ ] Workflows zeitgesteuert starten (alle x Tage, täglich usw.)
 - [ ] Assets hinzufügen: manuell und einfacher Listenimport
 - [ ] Aufbewahrung der Daten
   - Offen: Daten pro Workflow oder global aufheben?
 
 ### Oberfläche
 
-- [ ] Nachdem ein neuer Workflow angelegt wurde, gleich in „Bearbeiten“ wechseln
-- [ ] Workflow pausieren und starten direkt in der Workflow-Übersicht: Spalte nach der Status-Spalte mit Play/Pause-Button. Läuft der Workflow, zeigt der Button das Pause-Symbol; ist er pausiert, das Play-Symbol
-- [ ] Klick auf einen Workflow im Dashboard führt in die Workflow-Übersicht
 - [ ] Button für Bug-Report (per Mail) unten links im Seitenmenü über dem Pfeil
 
 ### Reports
@@ -80,5 +91,4 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
 
 ### unsortiert von Martin
-- [] Assets neu verarbeiten: Option: in einem anderen Workflow
 - [ ] 
