@@ -15,13 +15,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [] Das Beschreibungsfeld soll sich automatisch nach unten erweitern, wenn der Inhalt größer wird. Umbrüche sind erlaubt (Enter)
 - [] In der Ansicht „Überwachen“ sollen die Nodes nicht verschoben werden können, auch wenn sie in „Bearbeiten“ nicht gelockt sind
 - [] Assets neu verarbeiten: Option: in einem anderen Workflow
-- [] Dashboard: Play/Pause-Button an Stelle des Buttons „Module“; Klick auf einen Workflow öffnet ihn direkt in „Überwachen“
-- [] Aktivieren/Pausieren funktioniert überall: Workflow-Detailseite, Toolbar der Workflow-Liste (auch bei Mehrfachauswahl), Dashboard
-- [] Workflow-Name schon vergeben: Feld rot mit Hinweis darunter, keine Fehlermeldung unten rechts (auch in „Eigenschaften“)
-- [] Workflow-Beschreibung wächst mit dem Inhalt mit, Umbrüche erlaubt (Enter)
-- [] Spalte „Zeitplan“ statt „Version“ in der Workflow-Liste; Versionsanzeige entfällt überall
-- [] Workflow duplizieren: Kopie „Name (Kopie)“ mit Beschreibung, Zeitplan und Modulen, pausiert, ohne Assets
-- [] Button für Bug-Report (Katzenkopf) unten links über dem Pfeil: Betreff und strukturierter Text, Abbrechen/Senden; Senden schließt nur mit Meldung, noch kein Versand
 
 ---
 ---
