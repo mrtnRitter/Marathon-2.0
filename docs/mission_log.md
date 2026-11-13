@@ -93,4 +93,11 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
 
 ### unsortiert von Martin
-- [ ] 
+- [ ] Orner öffnen - bekommen wir irgendwie die Netzlaufwerke angezeigt (zb. im Windows Explorer gebe ich in \\10.0.77.11 enter - sehe alle Shares und navigiere von da aus)  
+- [ ] Warten: nur "Angabe in Sekunden", Rest weg
+- [ ] wenn Prio verändert wird, Zeile kurz aufleuchten lassen
+- [ ] Workflow mit fehlern, unvollständigen angaben soll dennoch gespeichert werden können - workflow lässt sich aber nicht starten, ausrufezeichen in workflowübersicht (dashboard und workflow), beim versuch, zu starten hinweis, dass einstellungen geprüft werden müssen.
+- [ ] Beschreibung "Namenskonflikt lösen" (ohne "mit _n")
+- [ ] module: erfolg und fehler bekommen grun und rot als textfarbe im stil unserer Farbpalette, linien von diesen Punkten bekommen die gleiche farbe (grün oder rot)
+- [ ] workflow überwachen: wenn ein node markiert ist und ich einen anderen node anklicke, soll gleich dessen nodeansicht mit jobs angezeigt werden (aktuell geht erst das seitenpanel zu)
+- [ ] Cat Icon mit Schnurrhaare?
