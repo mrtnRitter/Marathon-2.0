@@ -1,6 +1,6 @@
 // Single data access point for all pages; talks to the server API.
 import { notify } from '../components/Toast'
-import type { Asset, AssetDetail, AssetStatus, DashboardData, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Worker, Workflow, WorkflowGraph, WorkflowInput } from './types'
+import type { Asset, AssetDetail, AssetStatus, DashboardData, DirListing, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Worker, Workflow, WorkflowGraph, WorkflowInput } from './types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -30,7 +30,7 @@ async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PU
       signal: AbortSignal.timeout(15_000),
     })
   } catch {
-    notify('Server nicht erreichbar')
+    if (!quiet) notify('Server nicht erreichbar')
     throw new Error('Server nicht erreichbar')
   }
 
@@ -60,6 +60,9 @@ export const get_workflow_graph = (id: string): Promise<WorkflowGraph | null> =>
   request<WorkflowGraph>(`/workflows/${encodeURIComponent(id)}/graph`, { allow_404: true })
 
 export const get_module_types = (): Promise<ModuleType[]> => request<ModuleType[]>('/module-types').then(data => data!)
+
+export const list_dirs = (path?: string | null): Promise<DirListing> =>
+  request<DirListing>(`/fs/dirs${path === undefined || path === null ? '' : `?path=${encodeURIComponent(path)}`}`, { quiet: true }).then(data => data!)
 
 export const get_module_activity = (workflow_id: string, module_id: string): Promise<ModuleActivity> =>
   request<ModuleActivity>(`/workflows/${encodeURIComponent(workflow_id)}/modules/${encodeURIComponent(module_id)}/activity`).then(data => data!)

@@ -10,6 +10,7 @@ from sqlalchemy import Text, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.engine import Connection
 
+from marathon.modules import catalog_module
 from marathon.server.schedule import ScheduleError, next_occurrence, normalize_interval
 
 
@@ -107,6 +108,29 @@ def _validate_graph(
         if output_key in connected_outputs:
             raise WorkflowValidationError(f"Ausgang {output_id} an Modul {source_id} ist mehrfach verbunden")
         connected_outputs.add(output_key)
+
+
+def _validate_module_settings(modules: list[dict[str, Any]]) -> None:
+    """Validate module settings with the validator registered for each module type."""
+    for module in modules:
+        mod = catalog_module(module["type_id"])
+        validator = getattr(mod, "validate_settings", None) if mod is not None else None
+        if validator is None:
+            continue
+
+        errors = validator(module["settings"])
+        if not errors:
+            continue
+        key = next(iter(errors))
+        label = next(
+            (
+                setting.get("label", key)
+                for setting in mod.MODULE["settings"]
+                if setting.get("key") == key
+            ),
+            key,
+        )
+        raise WorkflowValidationError(f"{module['name']}: {label}: {errors[key]}")
 
 
 def _schedule_values(
@@ -351,6 +375,7 @@ def save_graph(
         ).mappings()
         module_types = {row["id"]: dict(row) for row in rows}
     _validate_graph(modules, connections, module_types)
+    _validate_module_settings(modules)
 
     new_version = current_version + 1
     connection.execute(

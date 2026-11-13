@@ -15,6 +15,13 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [] Das Beschreibungsfeld soll sich automatisch nach unten erweitern, wenn der Inhalt größer wird. Umbrüche sind erlaubt (Enter)
 - [] In der Ansicht „Überwachen“ sollen die Nodes nicht verschoben werden können, auch wenn sie in „Bearbeiten“ nicht gelockt sind
 - [] Assets neu verarbeiten: Option: in einem anderen Workflow
+- [] Module liegen immer im Repo (`marathon/modules/`) und erscheinen beim Serverstart in der Palette
+- [] Watchfolder
+  - Pfad per Ordner-Dialog oder direkt; Netzpfade `\\server\freigabe`, Laufwerksbuchstaben erlaubt
+  - Include-/Exclude-Liste (`.ext1, .ext2`); doppelte Endung färbt das aktuelle Feld rot mit Hinweis auf die andere Liste, Speichern gesperrt
+  - Wartezeit (Standard 60 s) = Ruhezeit für Größe und Zeitstempel und Prüfintervall
+  - Unterordner einstellbar, Standard aus
+  - Ordnerfehler einmal im Modul-Log, danach „Ordner wieder erreichbar“
 
 ---
 ---
@@ -30,12 +37,19 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### Module
 
-- [ ] Modulkatalog und Modul-Schnittstelle, Testmodul „Warten“
-- [ ] Module liegen immer im Repo (anders als bei m1)
-- [ ] Teilworkflows als Modul neben den Basis-Modulen, genannt Sub
+- [ ] Modul-Schnittstelle für die Ausführung, Testmodul „Warten“
+- [ ] Teilworkflows als Modul neben den Basis-Modulen, genannt Sub – zurückgestellt bis Engine und erste Fachmodule laufen
+  - Anlegen: Module im Workflow markieren → „Als Sub speichern“; Eingang, Erfolg, Fehler ergeben sich aus der Auswahl
+  - Freigegebene Optionen (z. B. QC-Preset) je Verwendung im Seitenpanel einstellbar
+  - Doppelklick betritt den Sub; Änderungen gelten nur für diese Instanz
+  - Vorlage ändern: Sub in leeren Workflow ziehen, auflösen, ändern, beim Speichern bestehenden Sub ersetzen
+  - Verwendende Workflows bekommen einen Update-Hinweis zum Übernehmen; Instanz-Einstellungen bleiben, sonst Warnung
+  - Offen: Was gilt bei einem Update, wenn die Instanz innen geändert wurde?
 - [ ] Modulpanel mit ausklappbaren Kategorien zur Sortierung 
+- [ ] Watchfolder: ersetzte Datei – altes Asset beenden („Quelldatei kann nicht mehr zugeordnet werden“), neues Asset mit Hinweis auf die verlorene Vorgängerdatei
+  - Offen: Welcher Status ist „beendet“ – Erledigt oder Fehlgeschlagen?
+- [ ] Watchfolder in zeitgesteuert gestarteten Workflows (pausieren sich ohne ausstehende Assets sofort)
 - Geplante Module:
-  - [ ] Watchfolder
   - [ ] Warten.
   - [ ] Verschieben, Kopieren (Mover)
   - [ ] Umbenennen

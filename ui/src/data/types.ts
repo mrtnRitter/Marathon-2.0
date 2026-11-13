@@ -7,13 +7,30 @@ export type JobStatus = 'open' | 'assigned' | 'succeeded' | 'failed' | 'cancelle
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export type FieldValue = string | number | boolean
 
+export interface DirEntry {
+  name: string
+  path: string
+}
+
+export interface DirListing {
+  path: string | null
+  parent: string | null
+  dirs: DirEntry[]
+  truncated: boolean
+}
+
 export interface FieldSpec {
   key: string
   label: string
-  type: 'text' | 'number' | 'select' | 'boolean'
+  type: 'text' | 'number' | 'select' | 'boolean' | 'path' | 'extensions'
   default?: FieldValue
   options?: string[]
   help?: string
+  min?: number
+  max?: number
+  unit?: string
+  exclusive_with?: string
+  list_label?: string
 }
 
 export type ModuleSetting = FieldSpec

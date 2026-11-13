@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 import { FormField, FormSection } from '../../components/FormField'
 import { Icon } from '../../components/Icon'
 import type { WorkflowModule } from '../../data/types'
+import { parse_extensions, setting_errors } from '../../lib/module_settings'
 import type { ModuleNodeData } from './editor_types'
 import { output_color } from '../../theme/status'
 
@@ -18,6 +19,7 @@ export function ModuleSettingsPanel({ data, on_change, read_only = false, width,
   const drag = useRef<{ pointer_id: number; start_x: number; start_width: number } | null>(null)
   const description_ref = useRef<HTMLTextAreaElement>(null)
   const [resizing, set_resizing] = useState(false)
+  const [focus_key, set_focus_key] = useState<string | null>(null)
 
   useLayoutEffect(() => {
     const element = description_ref.current
@@ -31,6 +33,8 @@ export function ModuleSettingsPanel({ data, on_change, read_only = false, width,
     drag.current = null
     set_resizing(false)
   }
+
+  const errors = setting_errors(data.module_type, data.module.settings, focus_key)
 
   const update_settings = (key: string, value: string | number | boolean) => {
     if (!read_only) on_change({ ...data.module, settings: { ...data.module.settings, [key]: value } })
@@ -92,9 +96,34 @@ export function ModuleSettingsPanel({ data, on_change, read_only = false, width,
           </div>
         </FormSection>
         <FormSection title={`Einstellungen · ${data.module_type.name}`}>
-          {data.module_type.settings.map(spec => (
-            <FormField key={spec.key} spec={spec} value={data.module.settings[spec.key]} disabled={read_only} on_change={value => update_settings(spec.key, value)} />
-          ))}
+          {data.module_type.settings.map(spec => {
+            const field = (
+              <FormField
+                spec={spec}
+                value={data.module.settings[spec.key]}
+                disabled={read_only}
+                error={errors[spec.key]}
+                on_change={value => {
+                  if (spec.type === 'extensions') set_focus_key(spec.key)
+                  update_settings(spec.key, value)
+                }}
+              />
+            )
+            if (spec.type !== 'extensions') return <div key={spec.key}>{field}</div>
+            return (
+              <div key={spec.key} onBlur={event => {
+                if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget as Node)) return
+                if (read_only) return
+                const raw = String(data.module.settings[spec.key] ?? spec.default ?? '')
+                const normalized = parse_extensions(raw)
+                if (normalized.invalid !== null) return
+                const value = normalized.values.join(', ')
+                if (value !== raw) update_settings(spec.key, value)
+              }}>
+                {field}
+              </div>
+            )
+          })}
         </FormSection>
         <FormSection title="Ausgänge">
           {data.module_type.outputs.map(output => (

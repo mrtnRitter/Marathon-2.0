@@ -6,6 +6,7 @@ import sys
 import uvicorn
 
 from marathon.common.version import app_name, app_version
+from marathon.server import watcher
 from marathon.server.app import create_app
 from marathon.server.config import ConfigError, load_server_config
 from marathon.server.scheduler import tick_interval_s
@@ -14,6 +15,7 @@ from marathon.server.ui import default_static_dir
 
 # MAIN
 def main() -> int:
+    """Load configuration and start the database-backed server."""
     try:
         config = load_server_config()
     except ConfigError as error:
@@ -23,7 +25,16 @@ def main() -> int:
         print("Fehler: Oberfläche ist nicht gebaut. Zuerst python build.py ausführen.", file=sys.stderr)
         return 1
     print(f"{app_name} {app_version} läuft auf http://{config.host}:{config.port}  (Beenden mit Strg+C)")
-    uvicorn.run(create_app(scheduler_interval_s=tick_interval_s), host=config.host, port=config.port, log_level="warning")
+    uvicorn.run(
+        create_app(
+            scheduler_interval_s=tick_interval_s,
+            sync_catalog=True,
+            watch_interval_s=watcher.tick_interval_s,
+        ),
+        host=config.host,
+        port=config.port,
+        log_level="warning",
+    )
     return 0
 
 

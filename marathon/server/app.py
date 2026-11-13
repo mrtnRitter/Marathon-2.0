@@ -13,23 +13,35 @@ from marathon.common.version import app_name, app_version
 from marathon.server.api import api_prefix, api_routers
 from marathon.server.api.deps import app_engine
 from marathon.server.config import ConfigError
+from marathon.server.db.catalog_writes import sync_module_types
+from marathon.modules import load_catalog
 from marathon.server.scheduler import ScheduleRunner
+from marathon.server.watcher import WatchRunner
 from marathon.server.ui import create_ui_router, default_static_dir
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Run configured background scheduling and dispose of owned resources."""
+    """Run configured background tasks and dispose of owned resources."""
     runner = None
+    watcher = None
     try:
+        if app.state.sync_catalog:
+            with app_engine(app).begin() as connection:
+                sync_module_types(connection, load_catalog())
         if app.state.scheduler_interval_s is not None:
             runner = ScheduleRunner(
                 lambda: app_engine(app),
                 app.state.scheduler_interval_s,
             )
             runner.start()
+        if app.state.watch_interval_s is not None:
+            watcher = WatchRunner(lambda: app_engine(app), app.state.watch_interval_s)
+            watcher.start()
         yield
     finally:
+        if watcher is not None:
+            watcher.stop()
         if runner is not None:
             runner.stop()
         if app.state.engine_owned and app.state.engine is not None:
@@ -40,6 +52,8 @@ def create_app(
     static_dir: Path | None = None,
     engine: Engine | None = None,
     scheduler_interval_s: float | None = None,
+    sync_catalog: bool = False,
+    watch_interval_s: float | None = None,
 ) -> FastAPI:
     """Build the versioned API and UI without opening a database connection."""
     app = FastAPI(
@@ -53,6 +67,8 @@ def create_app(
     app.state.engine = engine
     app.state.engine_owned = engine is None
     app.state.scheduler_interval_s = scheduler_interval_s
+    app.state.sync_catalog = sync_catalog
+    app.state.watch_interval_s = watch_interval_s
 
     @app.exception_handler(OperationalError)
     @app.exception_handler(SQLAlchemyTimeoutError)

@@ -12,3 +12,6 @@
 
 .input.input-error { border-color: var(--status-failed); }
 .form-field-error { margin-top: 4px; font-size: var(--font-size-xs); color: var(--status-failed); }
+.form-field-row { display: flex; align-items: center; gap: var(--space-2); }
+.form-field-row > .input, .form-field-row > select { flex: 1; min-width: 0; }
+.form-field-unit { flex-shrink: 0; color: var(--text-muted); font-size: var(--font-size-sm); }

@@ -1,0 +1,7 @@
+.folder-dialog-navigation { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
+.folder-dialog-path { flex: 1; min-width: 0; }
+.folder-dialog-loading, .folder-dialog-truncated { margin: var(--space-2) 0; color: var(--text-muted); font-size: var(--font-size-sm); }
+.folder-dialog-list { margin: 0; padding: 0; list-style: none; }
+.folder-dialog-entry { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2); color: var(--text); text-align: left; background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; }
+.folder-dialog-entry:hover:not(:disabled) { background: var(--bg-hover); }
+.folder-dialog-entry:disabled { opacity: 0.6; cursor: default; }

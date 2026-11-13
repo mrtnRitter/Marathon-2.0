@@ -25,7 +25,7 @@ from marathon.server.db.__main__ import main
 table_names = {
     "module_types", "workflows", "workflow_versions", "workflow_modules",
     "workflow_connections", "workers", "assets", "jobs", "job_assets",
-    "asset_history", "log_lines", "alembic_version",
+    "asset_history", "log_lines", "watch_modules", "watch_files", "alembic_version",
 }
 
 
@@ -45,8 +45,8 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0003"
-    assert upgrade_database(db_engine) == "0003"
+    assert upgrade_database(db_engine) == "0004"
+    assert upgrade_database(db_engine) == "0004"
 
 
 def test_ensure_database_creates_then_reuses(db_config):
@@ -130,7 +130,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0003" in captured.out
+    assert "Revision 0004" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 
@@ -218,3 +218,61 @@ def test_downgrade_restores_priority(db_engine):
     columns = {column["name"] for column in inspect(db_engine).get_columns("workflows")}
     assert "priority" in columns
     assert not {"schedule_every", "schedule_unit", "schedule_start", "next_run_at", "scheduled_active"} & columns
+
+
+
+def test_watch_tables_cascade(db_engine):
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-watch', 'Watch')"))
+        connection.execute(text(
+            "INSERT INTO watch_modules (workflow_id, module_id, next_scan_at) "
+            "VALUES ('wf-watch', 'watch', '2025-01-01T00:00:00+00:00')"
+        ))
+        connection.execute(text(
+            "INSERT INTO watch_files "
+            "(workflow_id, module_id, path, size, mtime_ns, stable_since) "
+            "VALUES ('wf-watch', 'watch', '/input/file', 10, 20, '2025-01-01T00:00:00+00:00')"
+        ))
+        connection.execute(text("DELETE FROM workflows WHERE id = 'wf-watch'"))
+        for table in ("watch_modules", "watch_files"):
+            assert connection.execute(text(f"SELECT count(*) FROM {table}")).scalar_one() == 0
+
+
+def test_watch_file_asset_set_null(db_engine):
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-watch', 'Watch')"))
+        connection.execute(text(
+            "INSERT INTO watch_modules (workflow_id, module_id, next_scan_at) "
+            "VALUES ('wf-watch', 'watch', '2025-01-01T00:00:00+00:00')"
+        ))
+        connection.execute(text(
+            "INSERT INTO assets (id, workflow_id, name, status) "
+            "VALUES ('asset-watch', 'wf-watch', 'Asset', 'pending')"
+        ))
+        connection.execute(text(
+            "INSERT INTO watch_files "
+            "(workflow_id, module_id, path, size, mtime_ns, stable_since, asset_id) "
+            "VALUES ('wf-watch', 'watch', '/input/file', 10, 20, "
+            "'2025-01-01T00:00:00+00:00', 'asset-watch')"
+        ))
+        connection.execute(text("DELETE FROM assets WHERE id = 'asset-watch'"))
+        assert connection.execute(text(
+            "SELECT asset_id FROM watch_files WHERE workflow_id = 'wf-watch' "
+            "AND module_id = 'watch' AND path = '/input/file'"
+        )).scalar_one() is None
+
+
+def test_downgrade_removes_watch_tables(db_engine):
+    from alembic import command
+    from alembic.config import Config
+
+    from marathon.server.db.engine import migrations_dir
+
+    config = Config()
+    config.set_main_option("script_location", str(migrations_dir))
+    with db_engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0003")
+
+    assert not inspect(db_engine).has_table("watch_modules")
+    assert not inspect(db_engine).has_table("watch_files")

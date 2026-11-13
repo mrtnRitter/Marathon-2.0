@@ -2,7 +2,7 @@
 
 Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Version 2.0.0).
 
-**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und pausieren und zeitgesteuert starten (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuert gestarteter Workflow pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Modultypen gibt es noch nicht; die Modul-Palette bleibt bis zum Modulkatalog leer. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
+**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und pausieren und zeitgesteuert starten (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuert gestarteter Workflow pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette; erstes Modul ist der Watchfolder (siehe [Module](#module)). Die weitere Verarbeitung der Assets folgt mit der Engine. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
 
 ## Voraussetzungen
 
@@ -82,6 +82,26 @@ Datei `config/server.toml`:
 
 `name` und `user` erlauben nur Kleinbuchstaben, Ziffern und `_`. Den Benutzer nach dem Einrichten nicht mehr ändern, sonst die Datenbank zurücksetzen.
 
+## Module
+
+### Watchfolder (Kategorie „Quelle“)
+
+Überwacht einen Ordner und legt für jede neue Datei ein Asset im Workflow an (Status „Ausstehend“, aktuelles Modul = Watchfolder), sobald sich Größe und Zeitstempel eine Wartezeit lang nicht geändert haben. Gescannt wird nur, solange der Workflow gestartet ist. Kein Eingang, ein Ausgang „Erfolg“.
+
+| Einstellung | Bedeutung | Standard |
+|---|---|---|
+| Ordner | Absoluter Pfad, z. B. `D:\Ingest`, verbundenes Laufwerk `Z:\Ingest` oder Netzpfad `\\server\freigabe\ordner`. Direkt eingeben oder über den Ordner-Button wählen. | – |
+| Include-Endungen | Nur diese Endungen übernehmen, z. B. `.mxf, .mov`. Leer = alle Dateien. | leer |
+| Exclude-Endungen | Diese Endungen nie übernehmen. Eine Endung darf nicht in beiden Listen stehen. | leer |
+| Wartezeit | So lange müssen Größe und Zeitstempel unverändert sein; zugleich Abstand der Ordnerprüfung (5–86400 s). | 60 s |
+| Unterordner einbeziehen | Auch Dateien in Unterordnern übernehmen. | aus |
+
+- Pfade gelten aus Sicht des Servers. Das Konto, unter dem der Server läuft, braucht Lesezugriff auf den Ordner bzw. die Netzfreigabe.
+- Der Ordner-Dialog zeigt nur Ordnernamen des Servers, keine Dateien. Netzfreigaben lassen sich ab `\\server\freigabe` durchblättern.
+- Jede Datei wird je Pfad einmal übernommen. Eine unter gleichem Namen ersetzte Datei wird derzeit nicht erneut übernommen. Wird ein Asset gelöscht und liegt die Datei noch im Ordner, wird sie erneut übernommen.
+- Ist der Ordner nicht erreichbar (oder antwortet er 60 s nicht), steht das einmal im Modul-Log; danach folgt „Ordner wieder erreichbar“.
+- Zeitgesteuert gestartete Workflows pausieren sich, sobald kein Asset aussteht. Den Watchfolder deshalb in einem dauerhaft gestarteten Workflow verwenden.
+
 ## Tests (optional)
 
 ```bash
@@ -89,6 +109,13 @@ Datei `config/server.toml`:
 .venv\Scripts\python -m pytest -q
 .venv/bin/python -m pip install pytest httpx         # Linux
 .venv/bin/python -m pytest -q
+```
+
+Prüfregeln der Oberfläche:
+
+```bash
+.tools\node\node.exe --test ui/tests/module_settings.test.mjs   # Windows
+.tools/node/bin/node --test ui/tests/module_settings.test.mjs     # Linux
 ```
 
 Die Datenbank-Tests starten eine eigene, temporäre PostgreSQL-Instanz mit den Programmen aus `.tools/postgres` und räumen sie danach wieder ab.
@@ -101,6 +128,7 @@ run.py                 Starten
 config/server.toml     Server- und Datenbank-Einstellungen
 requirements/          Python-Abhängigkeiten (server.txt)
 marathon/common/       Gemeinsame Grundlage (Version)
+marathon/modules/      Module (je Ordner ein Modultyp, z. B. watchfolder/)
 marathon/server/       Server; static/ enthält die gebaute Oberfläche
   api/                 API-Bereiche (/api/v1)
   db/                  Datenbank: Verbindung, Migrationen, Abfragen

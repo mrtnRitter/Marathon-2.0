@@ -8,6 +8,7 @@ import { Button } from '../../components/Toolbar'
 import { notify } from '../../components/Toast'
 import { get_module_types, get_workflow_graph, save_workflow_graph } from '../../data/api'
 import type { ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
+import { has_setting_errors } from '../../lib/module_settings'
 import { use_data } from '../../data/use_data'
 import { EditorActionsContext, EditorModeContext, drag_mime, type EditorMode, type ModuleFlowNode, type ModuleNodeData } from './editor_types'
 import { apply_lock, create_edge, create_node, locked_ids, lock_edges, lock_targets, new_module, to_edges, to_graph_input, to_nodes, view_nodes } from './graph_mapping'
@@ -92,10 +93,11 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
   }, [selection_rect, transform, editing])
   const display_nodes = useMemo(() => view_nodes(nodes, editing), [nodes, editing])
   const selected_nodes = nodes.filter(node => node.selected)
+  const invalid = nodes.filter(node => has_setting_errors(node.data.module_type, node.data.module.settings))
   const inspected_node = nodes.find(node => node.id === inspected_id && node.data.module.locked)
 
   const save = async () => {
-    if (saving) return
+    if (saving || invalid.length > 0) return
     set_saving(true)
     try {
       await save_workflow_graph(graph.workflow_id, to_graph_input(graph.version, nodes, edges))
@@ -199,11 +201,12 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
             </div>
             <span className="dim">{nodes.length} Module · {edges.length} Verbindungen</span>
             {dirty && <span className="chip unsaved">ungespeichert</span>}
+            {editing && invalid.length > 0 && <span className="chip invalid">Einstellungen prüfen: {invalid.map(node => node.data.module.name).join(', ')}</span>}
             <div className="workflow-editor-actions">
               {editing ? (
                 <>
                   <Button label="Verwerfen" icon="undo" on_click={reset} disabled={!dirty} />
-                  <Button label="Speichern" icon="save" primary on_click={save} disabled={!dirty || saving} />
+                  <Button label="Speichern" icon="save" primary on_click={save} disabled={!dirty || saving || invalid.length > 0} />
                 </>
               ) : null}
             </div>

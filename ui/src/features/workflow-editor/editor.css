@@ -4,6 +4,7 @@
 .workflow-editor-body { flex: 1; display: flex; min-height: 0; }
 .workflow-editor-canvas { flex: 1; position: relative; }
 .chip.unsaved { color: var(--status-on-hold); border-color: var(--status-on-hold); }
+.chip.invalid { color: var(--status-failed); border-color: var(--status-failed); }
 
 .mode-switch { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
 .mode-switch button { padding: 4px var(--space-3); background: var(--bg-panel-raised); border: none; color: var(--text-muted); cursor: pointer; }
