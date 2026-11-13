@@ -32,13 +32,11 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 - [ ] Modulkatalog und Modul-Schnittstelle, Testmodul „Warten“
 - [ ] Module liegen immer im Repo (anders als bei m1)
-- [ ] Teilworkflows als Modul neben den Basis-Modulen; dafür einzelne Einstellungen als „public“ markieren, damit sie gleich oben erscheinen
-- Reihenfolge:
-  - Erster Modul-Release: Watchfolder, Transcoder, Mover, Renamer, QCer
-  - Nächster Modul-Release: API-Abfrage ES und VT, Restorer
+- [ ] Teilworkflows als Modul neben den Basis-Modulen, genannt Sub
+- [ ] Modulpanel mit ausklappbaren Kategorien zur Sortierung 
 - Geplante Module:
   - [ ] Watchfolder
-  - [ ] Warten
+  - [ ] Warten.
   - [ ] Verschieben, Kopieren (Mover)
   - [ ] Umbenennen
   - [ ] Transcode
