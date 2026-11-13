@@ -2,7 +2,7 @@
 
 Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Version 2.0.0).
 
-**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und pausieren und zeitgesteuert starten (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuert gestarteter Workflow pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette; erstes Modul ist der Watchfolder (siehe [Module](#module)). Die weitere Verarbeitung der Assets folgt mit der Engine. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
+**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und pausieren und zeitgesteuert starten (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuert gestarteter Workflow pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Die weitere Verarbeitung der Assets folgt mit der Engine. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
 
 ## Voraussetzungen
 
@@ -97,10 +97,67 @@ Datei `config/server.toml`:
 | Unterordner einbeziehen | Auch Dateien in Unterordnern übernehmen. | aus |
 
 - Pfade gelten aus Sicht des Servers. Das Konto, unter dem der Server läuft, braucht Lesezugriff auf den Ordner bzw. die Netzfreigabe.
-- Der Ordner-Dialog zeigt nur Ordnernamen des Servers, keine Dateien. Netzfreigaben lassen sich ab `\\server\freigabe` durchblättern.
+- Das Fenster „Ordner wählen“ zeigt nur Ordnernamen des Servers, keine Dateien. Netzfreigaben lassen sich ab `\\server\freigabe` durchblättern.
 - Jede Datei wird je Pfad einmal übernommen. Eine unter gleichem Namen ersetzte Datei wird derzeit nicht erneut übernommen. Wird ein Asset gelöscht und liegt die Datei noch im Ordner, wird sie erneut übernommen.
 - Ist der Ordner nicht erreichbar (oder antwortet er 60 s nicht), steht das einmal im Modul-Log; danach folgt „Ordner wieder erreichbar“.
 - Zeitgesteuert gestartete Workflows pausieren sich, sobald kein Asset aussteht. Den Watchfolder deshalb in einem dauerhaft gestarteten Workflow verwenden.
+
+Warten, Datei kopieren, Datei verschieben und Umbenennen lassen sich im Workflow platzieren und einstellen. Ausgeführt werden sie, sobald Engine und Worker folgen; Pfade gelten dann aus Sicht des Workers.
+
+### Warten (Kategorie „Steuerung“)
+
+Hält jedes Asset eine einstellbare Zeit an und gibt es dann über „Erfolg“ weiter. Für kurze Zeitspannen gedacht.
+
+| Einstellung | Bedeutung | Standard |
+|---|---|---|
+| Dauer | Wartezeit in Sekunden (1–86400), z. B. `3600` für eine Stunde | 60 s |
+
+### Datei kopieren (Kategorie „Dateien“)
+
+Kopiert die Datei des Assets unter ihrem Originalnamen in den Zielordner. Ausgänge „Erfolg“ und „Fehler“.
+
+| Einstellung | Bedeutung | Standard |
+|---|---|---|
+| Zielordner | Absoluter Pfad, Laufwerksbuchstabe oder Netzpfad | – |
+| Checksumme | `Keine`, `MD5` oder `SHA-256` | Keine |
+| Namenskonflikt mit _n lösen | Ist der Name im Ziel belegt, wird `_1`, `_2` … vor der Endung angehängt | aus |
+
+- Ohne Checksumme gilt die Kopie als erfolgreich, sobald das Betriebssystem den Schreibvorgang bestätigt. Mit Checksumme wird die Kopie nachgelesen; stimmen die Prüfsummen nicht, wird die Kopie gelöscht und das Asset geht auf „Fehler“.
+- Erfolg: Das Original ist im Durchlauf beendet (Log „Kopiert nach …“). Die Kopie wird ein neues Asset (Log „Kopie von …“) und läuft über „Erfolg“ weiter.
+- Ohne „_n“ führt ein belegter Name zu „Fehler“. Vorhandene Dateien werden nie überschrieben.
+- Bei Abbruch oder Fehler wird eine unvollständige Kopie entfernt.
+
+### Datei verschieben (Kategorie „Dateien“)
+
+Verschiebt die Datei des Assets unter ihrem Originalnamen in den Zielordner. Ausgänge „Erfolg“ und „Fehler“; danach zeigt das Asset auf den neuen Pfad.
+
+| Einstellung | Bedeutung | Standard |
+|---|---|---|
+| Zielordner | Absoluter Pfad, Laufwerksbuchstabe oder Netzpfad | – |
+
+- Auf demselben Laufwerk bzw. derselben Freigabe verschiebt das Betriebssystem die Datei direkt.
+- Liegt das Ziel auf einem anderen Laufwerk, wird die Datei kopiert und die Quelle gelöscht – ohne Checksumme. Das Log weist darauf hin.
+- Ist der Name im Ziel belegt, geht das Asset auf „Fehler“.
+
+### Umbenennen (Kategorie „Dateien“)
+
+Setzt ein Präfix vor den Dateinamen und ein Suffix vor die Dateiendung, z. B. `clip.mxf` mit Präfix `P_` und Suffix `_v2` → `P_clip_v2.mxf`. Ausgänge „Erfolg“ und „Fehler“; danach zeigt das Asset auf den neuen Namen.
+
+| Einstellung | Bedeutung | Standard |
+|---|---|---|
+| Präfix | Text vor dem Dateinamen | leer |
+| Suffix | Text vor der Dateiendung | leer |
+| Namenskonflikt mit _n lösen | Ist der neue Name belegt, wird `_1`, `_2` … angehängt; sonst „Fehler“ | aus |
+
+Präfix oder Suffix muss gesetzt sein. Nicht erlaubt sind `/ \ : * ? " < > |` und Steuerzeichen.
+
+### Prioliste (Kategorie „Daten“)
+
+Liste von Einträgen mit Namen, z. B. „Kollektion Defa“, „Kollektion Cintec“. Die Position in der Liste ist die Priorität (Spalte „Prio“). Kein Eingang; der Ausgang „Prioliste“ wird zusätzlich zum Asset-Fluss mit dem Eingang des Moduls verbunden, das die Assets danach verarbeiten soll.
+
+- In den Moduleinstellungen: „Eintrag hinzufügen“, Name direkt bearbeiten, Pfeile zum Hoch- und Runtersetzen.
+- Drei-Punkte-Menü: „Metadaten bearbeiten“ (noch nicht verfügbar) und „Entfernen“.
+- Namen sind Pflicht und eindeutig (Groß-/Kleinschreibung zählt nicht).
 
 ## Tests (optional)
 
@@ -114,8 +171,8 @@ Datei `config/server.toml`:
 Prüfregeln der Oberfläche:
 
 ```bash
-.tools\node\node.exe --test ui/tests/module_settings.test.mjs   # Windows
-.tools/node/bin/node --test ui/tests/module_settings.test.mjs     # Linux
+.tools\node\node.exe --test ui/tests/module_settings.test.mjs ui/tests/selection.test.mjs   # Windows
+.tools/node/bin/node --test ui/tests/module_settings.test.mjs ui/tests/selection.test.mjs     # Linux
 ```
 
 Die Datenbank-Tests starten eine eigene, temporäre PostgreSQL-Instanz mit den Programmen aus `.tools/postgres` und räumen sie danach wieder ab.
@@ -128,7 +185,7 @@ run.py                 Starten
 config/server.toml     Server- und Datenbank-Einstellungen
 requirements/          Python-Abhängigkeiten (server.txt)
 marathon/common/       Gemeinsame Grundlage (Version)
-marathon/modules/      Module (je Ordner ein Modultyp, z. B. watchfolder/)
+marathon/modules/      Module (je Ordner ein Modultyp, z. B. watchfolder/; _job.py Ausführungsvertrag, _files.py Datei-Helfer)
 marathon/server/       Server; static/ enthält die gebaute Oberfläche
   api/                 API-Bereiche (/api/v1)
   db/                  Datenbank: Verbindung, Migrationen, Abfragen

@@ -2,6 +2,17 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { has_setting_errors, parse_extensions, setting_errors, validate_path } from '../src/lib/module_settings.ts'
 
+const priolist_type = {
+  id: 'priolist',
+  name: 'Prioliste',
+  category: 'data',
+  icon: 'list-ordered',
+  description: '',
+  has_input: false,
+  outputs: [],
+  settings: [{ key: 'entries', label: 'Einträge', type: 'priolist', default: [] }],
+}
+
 const watchfolder_type = {
   id: 'watchfolder',
   name: 'Watchfolder',
@@ -62,6 +73,15 @@ test('setting_errors validates number bounds and default values', () => {
 
 test('setting_errors rejects an empty number value', () => {
   assert.deepEqual(setting_errors(watchfolder_type, { path: 'D:\\In', wait_s: '' }), { wait_s: 'Zahl erwartet' })
+})
+
+test('setting_errors validates priolist values with backend messages', () => {
+  assert.deepEqual(setting_errors(priolist_type, { entries: 'A' }), { entries: 'Liste erwartet' })
+  assert.deepEqual(setting_errors(priolist_type, { entries: [{ name: 3 }] }), { entries: 'Eintrag 1: Name fehlt' })
+  assert.deepEqual(setting_errors(priolist_type, { entries: [{ name: '   ' }] }), { entries: 'Eintrag 1: Name fehlt' })
+  assert.deepEqual(setting_errors(priolist_type, { entries: [{ name: 'A', metadata: [] }] }), { entries: 'Eintrag 1: Metadaten ungültig' })
+  assert.deepEqual(setting_errors(priolist_type, { entries: [{ name: 'A' }, { name: ' A ' }] }), { entries: 'Eintrag 2: Name doppelt: A' })
+  assert.deepEqual(setting_errors(priolist_type, { entries: [{ name: 'A' }, { name: 'B', metadata: { rank: 2 } }] }), {})
 })
 
 test('has_setting_errors reflects setting validation', () => {

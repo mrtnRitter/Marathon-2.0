@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
+from marathon.server.api.workflows import ModuleInput
 from marathon.server.app import create_app
 from marathon.server.db import workflow_writes
 from marathon.server.db.workflow_writes import WorkflowValidationError, create_workflow, update_workflow
@@ -71,6 +72,18 @@ def api_client(db_engine, tmp_path):
 
 
 # TESTS
+def test_module_input_accepts_priolist_settings_without_database():
+    settings = {"entries": [{"name": "Urgent", "metadata": {"rank": 1}}]}
+    module = ModuleInput.model_validate({
+        "id": "m-prio",
+        "type_id": "priolist",
+        "name": "Prioliste",
+        "position": {"x": 0, "y": 0},
+        "settings": settings,
+    })
+    assert module.settings == settings
+
+
 def test_create_update_and_delete_workflow(api_client):
     created = api_client.post(
         "/api/v1/workflows",
@@ -182,6 +195,20 @@ def test_save_graph_creates_new_version(api_client, db_engine):
             {"id": workflow["id"]},
         ).scalar_one()
     assert version_count == 2
+
+
+def test_save_graph_roundtrips_priolist_settings(api_client, db_engine):
+    _insert_module_types(db_engine)
+    workflow = api_client.post("/api/v1/workflows", json={"name": "Prioliste"}).json()
+    settings = {"entries": [{"name": "Urgent", "metadata": {"rank": 1, "labels": ["hot"]}}]}
+    saved = api_client.put(
+        f"/api/v1/workflows/{workflow['id']}/graph",
+        json={"base_version": 1, "modules": [{**_module("m-prio", name="Prioliste"), "settings": settings}], "connections": []},
+    )
+    assert saved.status_code == 200
+    graph = api_client.get(f"/api/v1/workflows/{workflow['id']}/graph")
+    assert graph.status_code == 200
+    assert graph.json()["modules"][0]["settings"] == settings
 
 
 def test_save_graph_conflict(api_client, db_engine):

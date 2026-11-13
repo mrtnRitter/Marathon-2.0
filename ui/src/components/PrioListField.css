@@ -1,0 +1,17 @@
+.priolist-field { min-width: 0; }
+.priolist-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.priolist-table th { padding: 0 var(--space-1) var(--space-1); text-align: left; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 500; }
+.priolist-table th:first-child { width: 48px; }
+.priolist-table th:last-child { width: 112px; }
+.priolist-table td { padding: var(--space-1); border-top: 1px solid var(--border); }
+.priolist-number { color: var(--text-muted); text-align: center; }
+.priolist-table .input { width: 100%; min-width: 0; }
+.priolist-actions { position: relative; display: flex; justify-content: flex-end; gap: 2px; }
+.priolist-icon-button { display: inline-flex; align-items: center; justify-content: center; padding: 5px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; }
+.priolist-icon-button:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.priolist-icon-button:disabled { opacity: 0.4; cursor: default; }
+.priolist-menu { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; display: flex; flex-direction: column; min-width: 190px; padding: var(--space-1); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg-panel-raised); box-shadow: 0 8px 20px rgb(0 0 0 / 30%); }
+.priolist-menu button { display: flex; align-items: center; gap: var(--space-2); padding: 6px var(--space-2); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; white-space: nowrap; }
+.priolist-menu button:hover { background: var(--bg-hover); }
+.priolist-empty { padding: var(--space-2) 0; color: var(--text-dim); font-size: var(--font-size-sm); }
+.priolist-add { margin-top: var(--space-2); }

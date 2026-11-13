@@ -61,7 +61,7 @@ class ModuleInput(BaseModel):
     name: str
     description: str = ""
     position: PositionInput
-    settings: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    settings: dict[str, Any] = Field(default_factory=dict)
     locked: bool = False
 
 

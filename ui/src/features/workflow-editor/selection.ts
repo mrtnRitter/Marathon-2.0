@@ -1,4 +1,7 @@
 export interface Rect { x: number; y: number; width: number; height: number }
+export function ignore_select_changes(rect: { width: number; height: number } | null): boolean {
+  return rect !== null && (rect.width > 0 || rect.height > 0)
+}
 
 export const selection_threshold = 0.5
 

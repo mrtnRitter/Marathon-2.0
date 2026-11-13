@@ -15,7 +15,7 @@ import { apply_lock, create_edge, create_node, locked_ids, lock_edges, lock_targ
 import { ModuleActivityPanel } from './ModuleActivityPanel'
 import { ModuleNode } from './ModuleNode'
 import { ModulePalette } from './ModulePalette'
-import { covered_node_ids, to_flow_rect } from './selection'
+import { covered_node_ids, ignore_select_changes, to_flow_rect } from './selection'
 import { ModuleSettingsPanel } from './ModuleSettingsPanel'
 import './editor.css'
 
@@ -220,12 +220,12 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
                 edges={edges}
                 nodeTypes={node_types}
                 onNodesChange={changes => {
-                  const filtered_changes = store.getState().userSelectionRect !== null ? changes.filter(change => change.type !== 'select') : changes
+                  const filtered_changes = ignore_select_changes(store.getState().userSelectionRect) ? changes.filter(change => change.type !== 'select') : changes
                   on_nodes_change(filtered_changes)
                   if (editing && filtered_changes.some(change => change.type !== 'select' && change.type !== 'dimensions')) set_dirty(true)
                 }}
                 onEdgesChange={changes => {
-                  const filtered_changes = store.getState().userSelectionRect !== null ? changes.filter(change => change.type !== 'select') : changes
+                  const filtered_changes = ignore_select_changes(store.getState().userSelectionRect) ? changes.filter(change => change.type !== 'select') : changes
                   on_edges_change(filtered_changes)
                   if (filtered_changes.some(change => change.type === 'remove')) set_dirty(true)
                 }}

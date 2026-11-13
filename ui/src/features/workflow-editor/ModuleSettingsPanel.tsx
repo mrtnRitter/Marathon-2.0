@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 import { FormField, FormSection } from '../../components/FormField'
 import { Icon } from '../../components/Icon'
-import type { WorkflowModule } from '../../data/types'
+import type { FieldValue, WorkflowModule } from '../../data/types'
 import { parse_extensions, setting_errors } from '../../lib/module_settings'
 import type { ModuleNodeData } from './editor_types'
 import { output_color } from '../../theme/status'
@@ -36,7 +36,7 @@ export function ModuleSettingsPanel({ data, on_change, read_only = false, width,
 
   const errors = setting_errors(data.module_type, data.module.settings, focus_key)
 
-  const update_settings = (key: string, value: string | number | boolean) => {
+  const update_settings = (key: string, value: FieldValue) => {
     if (!read_only) on_change({ ...data.module, settings: { ...data.module.settings, [key]: value } })
   }
 

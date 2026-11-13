@@ -28,12 +28,34 @@ export function validate_path(raw: string): string | null {
   return "Pfad muss absolut sein, z. B. D:\\Ingest oder \\\\server\\freigabe"
 }
 
+function _validate_priolist(value: unknown): string | null {
+  if (!Array.isArray(value)) return 'Liste erwartet'
+  const seen = new Set<string>()
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) return `Eintrag ${index + 1}: Name fehlt`
+    const name = (entry as Record<string, unknown>).name
+    if (typeof name !== 'string' || !name.trim()) return `Eintrag ${index + 1}: Name fehlt`
+    const metadata = (entry as Record<string, unknown>).metadata
+    if (metadata !== undefined && (metadata === null || typeof metadata !== 'object' || Array.isArray(metadata))) {
+      return `Eintrag ${index + 1}: Metadaten ungültig`
+    }
+    const normalized_name = name.trim().toLowerCase()
+    if (seen.has(normalized_name)) return `Eintrag ${index + 1}: Name doppelt: ${name.trim()}`
+    seen.add(normalized_name)
+  }
+  return null
+}
+
 export function setting_errors(module_type: ModuleType, settings: Record<string, FieldValue>, focus_key?: string | null): Record<string, string> {
   const errors: Record<string, string> = {}
   const extension_values = new Map<string, string[]>()
   for (const spec of module_type.settings) {
     const value = settings[spec.key] ?? spec.default
-    if (spec.type === 'number') {
+    if (spec.type === 'priolist') {
+      const raw_value: unknown = settings[spec.key] === undefined ? spec.default : settings[spec.key]
+      const error = _validate_priolist(raw_value)
+      if (error) errors[spec.key] = error
+    } else if (spec.type === 'number') {
       const number = Number(value)
       if (value === '' || !Number.isFinite(number)) errors[spec.key] = 'Zahl erwartet'
       else if (spec.min !== undefined && number < spec.min) errors[spec.key] = `Mindestens ${spec.min}${spec.unit ? ` ${spec.unit}` : ''}`

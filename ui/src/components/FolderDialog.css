@@ -1,6 +1,19 @@
+.folder-dialog-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: var(--space-4); background: var(--bg-overlay); }
+.folder-dialog {
+  display: flex; flex-direction: column; width: min(640px, 90vw); max-height: 80vh;
+  background: var(--bg-panel); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-panel);
+}
+.folder-dialog-header { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
+.folder-dialog-header h2 { flex: 1; margin: 0; font-size: var(--font-size-lg); font-weight: 500; }
+.folder-dialog-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent); }
+.folder-dialog-close { padding: 4px; color: var(--text-muted); background: none; border: 0; cursor: pointer; }
+.folder-dialog-close:hover { color: var(--text); }
+.folder-dialog-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; padding: var(--space-4); }
+.folder-dialog-footer { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border); }
 .folder-dialog-navigation { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
 .folder-dialog-path { flex: 1; min-width: 0; }
-.folder-dialog-loading, .folder-dialog-truncated { margin: var(--space-2) 0; color: var(--text-muted); font-size: var(--font-size-sm); }
+.folder-dialog-loading, .folder-dialog-truncated { flex: none; margin: var(--space-2) 0; color: var(--text-muted); font-size: var(--font-size-sm); }
+.folder-dialog-list-scroll { flex: 1; min-height: 0; overflow: auto; }
 .folder-dialog-list { margin: 0; padding: 0; list-style: none; }
 .folder-dialog-entry { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2); color: var(--text); text-align: left; background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; }
 .folder-dialog-entry:hover:not(:disabled) { background: var(--bg-hover); }

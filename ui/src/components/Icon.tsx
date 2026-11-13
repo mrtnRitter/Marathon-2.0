@@ -1,11 +1,12 @@
 import {
-  Activity, ArrowLeft, ArrowUpToLine, Cat, ChartColumn, Check, ChevronLeft, ChevronRight, CircleHelp, CircleX, Clock, Copy, Cpu, Download, Eye, Files,
+  Activity, ArrowLeft, ArrowUpToLine, Cat, ChartColumn, Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleHelp, CircleX, Clock, Copy, Cpu, Download, EllipsisVertical, Eye, Files,
   Film, Folder, FolderInput, FolderOpen, GitBranch, LayoutDashboard, Lock, LockOpen, LogIn, Pause, Pencil, Play, Plus, RotateCcw, Rocket, Save, Search,
-  Send, Server, Settings, Trash2, Undo2, Upload, Workflow, X, type LucideIcon,
+  ListOrdered, MoveRight, Send, Server, Settings, TextCursorInput, Timer, Trash2, Undo2, Upload, Workflow, X, type LucideIcon,
 } from 'lucide-react'
 
 const icons: Record<string, LucideIcon> = {
-  activity: Activity, 'arrow-left': ArrowLeft, 'arrow-up': ArrowUpToLine, cat: Cat, check: Check, 'chevron-left': ChevronLeft,
+  activity: Activity, 'arrow-left': ArrowLeft, 'arrow-up': ArrowUpToLine, cat: Cat, check: Check, timer: Timer, move: MoveRight,
+  rename: TextCursorInput, 'list-ordered': ListOrdered, more: EllipsisVertical, 'chevron-up': ChevronUp, 'chevron-down': ChevronDown, 'chevron-left': ChevronLeft,
   'chevron-right': ChevronRight, help: CircleHelp, cancel: CircleX, clock: Clock, copy: Copy, cpu: Cpu, eye: Eye, files: Files,
   film: Film, folder: Folder, 'folder-open': FolderOpen, 'folder-input': FolderInput, 'git-branch': GitBranch, dashboard: LayoutDashboard, report: ChartColumn, download: Download, lock: Lock, 'lock-open': LockOpen, 'log-in': LogIn,
   pause: Pause, pencil: Pencil, play: Play, plus: Plus, reprocess: RotateCcw, rocket: Rocket, save: Save, search: Search,

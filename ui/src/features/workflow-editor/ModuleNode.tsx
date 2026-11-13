@@ -36,7 +36,7 @@ export function ModuleNode({ data, selected }: NodeProps<ModuleFlowNode>) {
       <div className="module-node-head">
         <span className="module-node-icon"><Icon name={module_type.icon} size={16} /></span>
         <div className="module-node-title">
-          <div className="module-node-name">{module.name}</div>
+          <div className="module-node-name" title={module.name}>{module.name}</div>
           <div className="module-node-type">{module_type.name}</div>
           {description && <div className="module-node-desc" title={description}>{description}</div>}
         </div>

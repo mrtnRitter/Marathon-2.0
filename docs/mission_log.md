@@ -15,6 +15,16 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [] Watchfolder
   - Pfad per Ordner-Dialog oder direkt; Netzpfade `\\server\freigabe`, Laufwerksbuchstaben erlaubt
   - Ordnerfehler einmal im Modul-Log, danach „Ordner wieder erreichbar“
+- [] Modul Warten: Dauer in Sekunden, Standard 60 (1–86400)
+- [] Modul Datei kopieren: Zielordner, Checksumme Keine/MD5/SHA-256, Namenskonflikt mit „_n“; Original endet, Kopie läuft als neues Asset weiter
+- [] Modul Datei verschieben: echtes Verschieben; anderes Laufwerk = kopieren + Quelle löschen ohne Checksumme, mit Hinweis
+- [] Modul Umbenennen: Präfix und Suffix, Namenskonflikt mit „_n“
+- [] Modul Prioliste (Grundgerüst): Einträge mit Namen, Prio-Spalte, hoch/runter, Drei-Punkte-Menü; Ausgang in den Eingang eines Moduls
+- [] Ausführungsvertrag für Module (`run(job)`); Dateien bewegt später der Worker, angeschlossen wird mit der Engine
+- [] Bug melden: Sprechblase mit zufälligem Katzenlaut
+- [] Modulname einzeilig, lange Namen mit „…“
+- [] Ordnerauswahl als Fenster statt Seitenpanel
+- [] Module lassen sich per Klick auf die leere Fläche zuverlässig abwählen
 
 ---
 ---
@@ -30,7 +40,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### Module
 
-- [ ] Modul-Schnittstelle für die Ausführung, Testmodul „Warten“
+- [ ] Module über Engine und Worker ausführen (Vertrag `run(job)` steht)
 - [ ] Teilworkflows als Modul neben den Basis-Modulen, genannt Sub – zurückgestellt bis Engine und erste Fachmodule laufen
   - Anlegen: Module im Workflow markieren → „Als Sub speichern“; Eingang, Erfolg, Fehler ergeben sich aus der Auswahl
   - Freigegebene Optionen (z. B. QC-Preset) je Verwendung im Seitenpanel einstellbar
@@ -43,17 +53,15 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Offen: Welcher Status ist „beendet“ – Erledigt oder Fehlgeschlagen?
 - [ ] Watchfolder in zeitgesteuert gestarteten Workflows (pausieren sich ohne ausstehende Assets sofort)
 - Geplante Module:
-  - [ ] Warten.
-  - [ ] Verschieben, Kopieren (Mover)
-  - [ ] Umbenennen
   - [ ] Transcode
   - [ ] QC
   - [ ] Searcher
   - [ ] Restore
   - [ ] Mailversand
   - [ ] Report erstellen
-  - [ ] Prioliste
   - [ ] API (EditShare, Veritone, ARK, awork) → später
+  - [ ] Umbenennen: weitere Methoden
+  - [ ] Prioliste: Metadaten je Eintrag bearbeiten, Verarbeitung nach Prio
 
 ### Assets und Daten
 
@@ -85,8 +93,4 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
 
 ### unsortiert von Martin
-- [] wenn man auf Bug melden klickt, soll an der Stelle des Buttons (etwas darüber), eine kleine Sprechblase mit einem Katzengeräusch kurz erscheinen (Murr, Mautz, Miau, Mau, Greep, Brrr und so ähnlich) - die Meldung ist immer zufällig gewählt
-- [ ] Wenn der Modulname sehr lang wird, geht die Beschriftung über das UI Element des Moduls hinaus - der Modulname soll immer nur einzeilig sein, lange Namen werden mit ... abgetrennt  
-- [ ] Modul Watchfolder soll einen Filedialog öffnen, gerne direkt aus der Browserengine, es soll kein Seitenpanel kommen
-- [ ] Wenn ein Modul über Ziehrahmen oder mit anklicken gewählt wurde, lässt es sich nicht mehr zuverlässig deselektieren. Es geht mit einer neuen, aber leeren auswahl.
 - [ ] 

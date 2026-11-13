@@ -5,7 +5,9 @@ export type StepStatus = 'waiting' | 'running'
 export type WorkerStatus = 'new' | 'ready' | 'busy' | 'offline' | 'locked' | 'updating'
 export type JobStatus = 'open' | 'assigned' | 'succeeded' | 'failed' | 'cancelled'
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
-export type FieldValue = string | number | boolean
+export interface PrioEntry { name: string; metadata: Record<string, unknown> }
+
+export type FieldValue = string | number | boolean | PrioEntry[]
 
 export interface DirEntry {
   name: string
@@ -22,7 +24,7 @@ export interface DirListing {
 export interface FieldSpec {
   key: string
   label: string
-  type: 'text' | 'number' | 'select' | 'boolean' | 'path' | 'extensions'
+  type: 'text' | 'number' | 'select' | 'boolean' | 'path' | 'extensions' | 'priolist'
   default?: FieldValue
   options?: string[]
   help?: string

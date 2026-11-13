@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
 import { FolderDialog } from './FolderDialog'
 import { Icon } from './Icon'
-import type { FieldSpec, FieldValue } from '../data/types'
+import { PrioListField } from './PrioListField'
+import type { FieldSpec, FieldValue, PrioEntry } from '../data/types'
 import './FormField.css'
 
 interface Props {
@@ -15,12 +16,14 @@ interface Props {
 
 /** One form row generated from a field description. */
 export function FormField({ spec, value, on_change, disabled = false, error, addon }: Props) {
-  const current = value ?? spec.default ?? (spec.type === 'boolean' ? false : '')
+  const current = value ?? spec.default ?? (spec.type === 'boolean' ? false : spec.type === 'priolist' ? [] : '')
   const [folder_dialog_open, set_folder_dialog_open] = useState(false)
   const id = `field-${spec.key}`
   const has_error = Boolean(error)
   const control_class = has_error ? 'input input-error' : 'input'
-  const control = {
+  const control = spec.type === 'priolist'
+    ? <PrioListField value={Array.isArray(current) ? current as PrioEntry[] : []} on_change={on_change} disabled={disabled} />
+    : {
     text: <input id={id} className={control_class} aria-invalid={has_error || undefined} value={String(current)} disabled={disabled} onChange={event => on_change(event.target.value)} />,
     path: <input id={id} className={control_class} aria-invalid={has_error || undefined} value={String(current)} disabled={disabled} onChange={event => on_change(event.target.value)} placeholder="D:\Ingest oder \\server\freigabe" />,
     extensions: <input id={id} className={control_class} aria-invalid={has_error || undefined} value={String(current)} disabled={disabled} onChange={event => on_change(event.target.value)} placeholder=".mxf, .mov" />,
