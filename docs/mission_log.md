@@ -78,3 +78,4 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
 
 ### unsortiert von Martin
+- [] wenn man auf Bug melden klickt, soll an der Stelle des Buttons (etwas darüber), eine kleine Sprechblase mit einem Katzengeräusch kurz erscheinen (Murr, Mautz, Miau, Mau, Greep, Brrr und so ähnlich) - die Meldung ist immer zufällig gewählt
