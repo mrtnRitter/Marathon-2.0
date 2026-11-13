@@ -9,18 +9,11 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### Abnahme offen
 
-- [] Markierung soll schon Node beinhalten, wenn dieser zu über 50 % vom Auswahlrahmen bedeckt ist
 - [] Sind mehrere Nodes gewählt und wird bei einem Node das Schlosssymbol gedrückt, sind alle gewählten Nodes gelockt. Zum Entlocken muss jeder Node einzeln gewählt werden
-- [] Wenn von einem Node eine Linie gezogen wird, soll das schon funktionieren, wenn die Maus auf dem Feld „Erfolg“ oder „Fehler“ ist, nicht nur auf dem Punkt
-- [] Das Beschreibungsfeld soll sich automatisch nach unten erweitern, wenn der Inhalt größer wird. Umbrüche sind erlaubt (Enter)
-- [] In der Ansicht „Überwachen“ sollen die Nodes nicht verschoben werden können, auch wenn sie in „Bearbeiten“ nicht gelockt sind
 - [] Assets neu verarbeiten: Option: in einem anderen Workflow
 - [] Module liegen immer im Repo (`marathon/modules/`) und erscheinen beim Serverstart in der Palette
 - [] Watchfolder
   - Pfad per Ordner-Dialog oder direkt; Netzpfade `\\server\freigabe`, Laufwerksbuchstaben erlaubt
-  - Include-/Exclude-Liste (`.ext1, .ext2`); doppelte Endung färbt das aktuelle Feld rot mit Hinweis auf die andere Liste, Speichern gesperrt
-  - Wartezeit (Standard 60 s) = Ruhezeit für Größe und Zeitstempel und Prüfintervall
-  - Unterordner einstellbar, Standard aus
   - Ordnerfehler einmal im Modul-Log, danach „Ordner wieder erreichbar“
 
 ---
@@ -93,3 +86,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### unsortiert von Martin
 - [] wenn man auf Bug melden klickt, soll an der Stelle des Buttons (etwas darüber), eine kleine Sprechblase mit einem Katzengeräusch kurz erscheinen (Murr, Mautz, Miau, Mau, Greep, Brrr und so ähnlich) - die Meldung ist immer zufällig gewählt
+- [ ] Wenn der Modulname sehr lang wird, geht die Beschriftung über das UI Element des Moduls hinaus - der Modulname soll immer nur einzeilig sein, lange Namen werden mit ... abgetrennt  
+- [ ] Modul Watchfolder soll einen Filedialog öffnen, gerne direkt aus der Browserengine, es soll kein Seitenpanel kommen
+- [ ] Wenn ein Modul über Ziehrahmen oder mit anklicken gewählt wurde, lässt es sich nicht mehr zuverlässig deselektieren. Es geht mit einer neuen, aber leeren auswahl.
+- [ ] 
