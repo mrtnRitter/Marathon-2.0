@@ -9,22 +9,11 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### Abnahme offen
 
-- [] Sind mehrere Nodes gewählt und wird bei einem Node das Schlosssymbol gedrückt, sind alle gewählten Nodes gelockt. Zum Entlocken muss jeder Node einzeln gewählt werden
 - [] Assets neu verarbeiten: Option: in einem anderen Workflow
-- [] Module liegen immer im Repo (`marathon/modules/`) und erscheinen beim Serverstart in der Palette
 - [] Watchfolder
   - Pfad per Ordner-Dialog oder direkt; Netzpfade `\\server\freigabe`, Laufwerksbuchstaben erlaubt
   - Ordnerfehler einmal im Modul-Log, danach „Ordner wieder erreichbar“
-- [] Modul Warten: Dauer in Sekunden, Standard 60 (1–86400)
-- [] Modul Datei kopieren: Zielordner, Checksumme Keine/MD5/SHA-256, Namenskonflikt mit „_n“; Original endet, Kopie läuft als neues Asset weiter
-- [] Modul Datei verschieben: echtes Verschieben; anderes Laufwerk = kopieren + Quelle löschen ohne Checksumme, mit Hinweis
-- [] Modul Umbenennen: Präfix und Suffix, Namenskonflikt mit „_n“
-- [] Modul Prioliste (Grundgerüst): Einträge mit Namen, Prio-Spalte, hoch/runter, Drei-Punkte-Menü; Ausgang in den Eingang eines Moduls
 - [] Ausführungsvertrag für Module (`run(job)`); Dateien bewegt später der Worker, angeschlossen wird mit der Engine
-- [] Bug melden: Sprechblase mit zufälligem Katzenlaut
-- [] Modulname einzeilig, lange Namen mit „…“
-- [] Ordnerauswahl als Fenster statt Seitenpanel
-- [] Module lassen sich per Klick auf die leere Fläche zuverlässig abwählen
 
 ---
 ---
