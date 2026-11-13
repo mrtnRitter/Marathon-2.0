@@ -98,8 +98,8 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
     if (saving) return
     set_saving(true)
     try {
-      const saved = await save_workflow_graph(graph.workflow_id, to_graph_input(graph.version, nodes, edges))
-      notify(`Gespeichert · Version ${saved.version}`)
+      await save_workflow_graph(graph.workflow_id, to_graph_input(graph.version, nodes, edges))
+      notify('Gespeichert')
       on_saved()
     } catch {
       // The request already displays the error.
@@ -197,7 +197,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
                 </button>
               ))}
             </div>
-            <span className="dim">Version {graph.version} · {nodes.length} Module · {edges.length} Verbindungen</span>
+            <span className="dim">{nodes.length} Module · {edges.length} Verbindungen</span>
             {dirty && <span className="chip unsaved">ungespeichert</span>}
             <div className="workflow-editor-actions">
               {editing ? (

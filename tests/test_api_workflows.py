@@ -618,3 +618,144 @@ def test_update_workflow_sets_timeout_before_row_lock(api_client, db_engine, mon
         updater.close()
 
     assert elapsed < 3
+
+
+def test_duplicate_workflow_copies_metadata_and_graph(api_client, db_engine):
+    _insert_module_types(db_engine)
+    start = datetime.now(timezone.utc) + timedelta(days=2)
+    created = api_client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "Alpha",
+            "description": "Beschreibung",
+            "schedule": {"every": 2, "unit": "hours", "start": start.isoformat()},
+        },
+    )
+    assert created.status_code == 201
+    source = created.json()
+    graph_body = {
+        "base_version": 1,
+        "modules": [
+            {
+                "id": "m1",
+                "type_id": "source",
+                "name": "Quelle",
+                "position": {"x": 10, "y": 20},
+                "locked": True,
+            },
+            {
+                "id": "m2",
+                "type_id": "step",
+                "name": "Schritt",
+                "description": "Modulbeschreibung",
+                "position": {"x": 30, "y": 40},
+                "settings": {"duration_s": 5},
+            },
+        ],
+        "connections": [
+            {
+                "source_module_id": "m1",
+                "source_output_id": "success",
+                "target_module_id": "m2",
+            }
+        ],
+    }
+    saved = api_client.put(f"/api/v1/workflows/{source['id']}/graph", json=graph_body)
+    assert saved.status_code == 200
+    source_graph = saved.json()
+
+    duplicated = api_client.post(f"/api/v1/workflows/{source['id']}/duplicate")
+
+    assert duplicated.status_code == 201
+    copy = duplicated.json()
+    assert copy["name"] == "Alpha (Kopie)"
+    assert copy["description"] == "Beschreibung"
+    assert copy["active"] is False
+    assert copy["version"] == 1
+    assert {key: copy["schedule"][key] for key in ("every", "unit", "start")} == {
+        key: source["schedule"][key] for key in ("every", "unit", "start")
+    }
+    copied_graph_response = api_client.get(f"/api/v1/workflows/{copy['id']}/graph")
+    assert copied_graph_response.status_code == 200
+    copied_graph = copied_graph_response.json()
+    module_fields = ("id", "type_id", "name", "description", "position", "settings", "locked")
+    assert [
+        {key: module[key] for key in module_fields} for module in copied_graph["modules"]
+    ] == [
+        {key: module[key] for key in module_fields} for module in source_graph["modules"]
+    ]
+    connection_fields = ("source_module_id", "source_output_id", "target_module_id")
+    assert [
+        {key: item[key] for key in connection_fields} for item in copied_graph["connections"]
+    ] == [
+        {key: item[key] for key in connection_fields} for item in source_graph["connections"]
+    ]
+    source_after = api_client.get(f"/api/v1/workflows/{source['id']}").json()
+    assert source_after["name"] == "Alpha"
+    assert source_after["version"] == 2
+
+
+def test_duplicate_workflow_numbers_copies(api_client):
+    source = api_client.post("/api/v1/workflows", json={"name": "Alpha"}).json()
+
+    first = api_client.post(f"/api/v1/workflows/{source['id']}/duplicate")
+    second = api_client.post(f"/api/v1/workflows/{source['id']}/duplicate")
+
+    assert first.status_code == 201
+    assert first.json()["name"] == "Alpha (Kopie)"
+    assert second.status_code == 201
+    assert second.json()["name"] == "Alpha (Kopie 2)"
+
+
+def test_duplicate_workflow_skips_taken_name_case_insensitive(api_client):
+    source = api_client.post("/api/v1/workflows", json={"name": "Beta"}).json()
+    taken = api_client.post("/api/v1/workflows", json={"name": "beta (kopie)"})
+    assert taken.status_code == 201
+
+    duplicated = api_client.post(f"/api/v1/workflows/{source['id']}/duplicate")
+
+    assert duplicated.status_code == 201
+    assert duplicated.json()["name"] == "Beta (Kopie 2)"
+
+
+def test_duplicate_workflow_keeps_name_limit(api_client):
+    source = api_client.post("/api/v1/workflows", json={"name": "x" * 200}).json()
+
+    duplicated = api_client.post(f"/api/v1/workflows/{source['id']}/duplicate")
+
+    assert duplicated.status_code == 201
+    assert len(duplicated.json()["name"]) == 200
+    assert duplicated.json()["name"].endswith(" (Kopie)")
+
+
+def test_duplicate_active_workflow_gives_paused_copy_without_assets(api_client, db_engine):
+    source = api_client.post("/api/v1/workflows", json={"name": "Aktiv"}).json()
+    activated = api_client.put(f"/api/v1/workflows/{source['id']}/active", json={"active": True})
+    assert activated.status_code == 200
+    with db_engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO assets (id, workflow_id, name, status) "
+                "VALUES ('asset-source', :workflow_id, 'Asset', 'pending')"
+            ),
+            {"workflow_id": source["id"]},
+        )
+
+    duplicated = api_client.post(f"/api/v1/workflows/{source['id']}/duplicate")
+
+    assert duplicated.status_code == 201
+    copy = duplicated.json()
+    assert copy["active"] is False
+    assert all(count == 0 for count in copy["asset_counts"].values())
+    with db_engine.connect() as connection:
+        asset_count = connection.execute(
+            text("SELECT COUNT(*) FROM assets WHERE workflow_id = :id"), {"id": copy["id"]}
+        ).scalar_one()
+    assert asset_count == 0
+
+
+def test_duplicate_unknown_workflow_returns_404(api_client):
+    response = api_client.post("/api/v1/workflows/wf-missing/duplicate")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Workflow nicht gefunden"

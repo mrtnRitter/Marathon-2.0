@@ -2,10 +2,22 @@
 import { notify } from '../components/Toast'
 import type { Asset, AssetDetail, AssetStatus, DashboardData, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Worker, Workflow, WorkflowGraph, WorkflowInput } from './types'
 
+export class ApiError extends Error {
+  readonly status: number
+  readonly detail: string
+
+  constructor(status: number, detail: string) {
+    super(`Fehler ${status}: ${detail}`)
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
 const api_base = '/api/v1'
 
-async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: unknown; allow_404?: boolean } = {}): Promise<T | null> {
-  const { method = 'GET', body, allow_404 = false } = options
+async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: unknown; allow_404?: boolean; quiet?: boolean } = {}): Promise<T | null> {
+  const { method = 'GET', body, allow_404 = false, quiet = false } = options
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (body !== undefined) headers['Content-Type'] = 'application/json'
 
@@ -30,8 +42,8 @@ async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PU
       const response_body = await response.json() as { detail?: unknown }
       if (typeof response_body.detail === 'string') detail = response_body.detail
     } catch {}
-    notify(`Fehler ${response.status}: ${detail}`)
-    throw new Error(`Fehler ${response.status}: ${detail}`)
+    if (!quiet) notify(`Fehler ${response.status}: ${detail}`)
+    throw new ApiError(response.status, detail)
   }
   return await response.json() as T
 }
@@ -83,11 +95,16 @@ export function job_status_csv_url(filter: { start: string; end: string; workflo
   return `/api/v1/reports/job-status.csv?${params}`
 }
 
-export const create_workflow = (input: WorkflowInput): Promise<Workflow> =>
-  request<Workflow>('/workflows', { method: 'POST', body: input }).then(data => data!)
+export const workflow_name_taken_detail = 'Ein Workflow mit diesem Namen existiert bereits'
 
-export const update_workflow = (id: string, input: WorkflowInput): Promise<Workflow> =>
-  request<Workflow>(`/workflows/${encodeURIComponent(id)}`, { method: 'PUT', body: input }).then(data => data!)
+export const create_workflow = (input: WorkflowInput, options: { quiet?: boolean } = {}): Promise<Workflow> =>
+  request<Workflow>('/workflows', { method: 'POST', body: input, quiet: options.quiet }).then(data => data!)
+
+export const update_workflow = (id: string, input: WorkflowInput, options: { quiet?: boolean } = {}): Promise<Workflow> =>
+  request<Workflow>(`/workflows/${encodeURIComponent(id)}`, { method: 'PUT', body: input, quiet: options.quiet }).then(data => data!)
+
+export const duplicate_workflow = (id: string): Promise<Workflow> =>
+  request<Workflow>(`/workflows/${encodeURIComponent(id)}/duplicate`, { method: 'POST' }).then(data => data!)
 
 export const delete_workflow = async (id: string): Promise<void> => {
   await request<null>(`/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' })

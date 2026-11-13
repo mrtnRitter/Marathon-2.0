@@ -23,6 +23,12 @@ class WorkflowConflict(Exception):
 
 
 # VALIDATION
+def _lock_workflow_names(connection: Connection) -> None:
+    """Acquire the transaction lock used to keep workflow names unique."""
+    connection.execute(text("SET LOCAL lock_timeout = '10s'"))
+    connection.execute(text("SELECT pg_advisory_xact_lock(hashtext('marathon.workflow_name'))"))
+
+
 def _validate_workflow_name(connection: Connection, name: str, workflow_id: str) -> str:
     """Return a normalized workflow name or raise its validation message."""
     normalized_name = name.strip()
@@ -30,8 +36,7 @@ def _validate_workflow_name(connection: Connection, name: str, workflow_id: str)
         raise WorkflowValidationError("Name fehlt")
     if len(normalized_name) > 200:
         raise WorkflowValidationError("Name ist zu lang (max. 200 Zeichen)")
-    connection.execute(text("SET LOCAL lock_timeout = '10s'"))
-    connection.execute(text("SELECT pg_advisory_xact_lock(hashtext('marathon.workflow_name'))"))
+    _lock_workflow_names(connection)
     duplicate = connection.execute(
         text(
             "SELECT 1 FROM workflows "
@@ -173,6 +178,86 @@ def create_workflow(
         {"id": workflow_id},
     )
     return workflow_id
+
+
+def duplicate_workflow(
+    connection: Connection,
+    workflow_id: str,
+    now: datetime | None = None,
+) -> str | None:
+    """Duplicate a workflow's current metadata and graph, or return None if missing."""
+    connection.execute(text("SET LOCAL lock_timeout = '10s'"))
+    source = connection.execute(
+        text(
+            "SELECT name, description, current_version, schedule_every, schedule_unit, schedule_start "
+            "FROM workflows WHERE id = :id FOR SHARE"
+        ),
+        {"id": workflow_id},
+    ).mappings().one_or_none()
+    if source is None:
+        return None
+
+    _lock_workflow_names(connection)
+    base_name = source["name"]
+    copy_number = 1
+    while True:
+        suffix = " (Kopie)" if copy_number == 1 else f" (Kopie {copy_number})"
+        candidate = f"{base_name[:200 - len(suffix)].rstrip()}{suffix}"
+        name_taken = connection.execute(
+            text("SELECT 1 FROM workflows WHERE lower(name) = lower(:candidate)"),
+            {"candidate": candidate},
+        ).scalar_one_or_none()
+        if name_taken is None:
+            break
+        copy_number += 1
+
+    schedule = None
+    if source["schedule_every"] is not None:
+        schedule = {
+            "every": source["schedule_every"],
+            "unit": source["schedule_unit"],
+            "start": source["schedule_start"],
+        }
+    schedule_fields = _schedule_values(schedule, now)
+    duplicate_id = f"wf-{uuid4().hex[:12]}"
+    connection.execute(
+        text(
+            "INSERT INTO workflows "
+            "(id, name, description, active, current_version, schedule_every, schedule_unit, "
+            "schedule_start, next_run_at, scheduled_active) "
+            "VALUES (:id, :name, :description, false, 1, :schedule_every, :schedule_unit, "
+            ":schedule_start, :next_run_at, false)"
+        ),
+        {
+            "id": duplicate_id,
+            "name": candidate,
+            "description": source["description"],
+            **schedule_fields,
+        },
+    )
+    connection.execute(
+        text("INSERT INTO workflow_versions (workflow_id, version) VALUES (:id, 1)"),
+        {"id": duplicate_id},
+    )
+    connection.execute(
+        text(
+            "INSERT INTO workflow_modules "
+            "(workflow_id, version, id, type_id, name, description, position_x, position_y, settings, locked) "
+            "SELECT :duplicate_id, 1, id, type_id, name, description, position_x, position_y, settings, locked "
+            "FROM workflow_modules WHERE workflow_id = :workflow_id AND version = :version"
+        ),
+        {"duplicate_id": duplicate_id, "workflow_id": workflow_id, "version": source["current_version"]},
+    )
+    connection.execute(
+        text(
+            "INSERT INTO workflow_connections "
+            "(workflow_id, version, source_module_id, source_output_id, target_module_id) "
+            "SELECT :duplicate_id, 1, source_module_id, source_output_id, target_module_id "
+            "FROM workflow_connections WHERE workflow_id = :workflow_id AND version = :version"
+        ),
+        {"duplicate_id": duplicate_id, "workflow_id": workflow_id, "version": source["current_version"]},
+    )
+    return duplicate_id
 
 
 def update_workflow(

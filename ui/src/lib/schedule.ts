@@ -57,3 +57,10 @@ export function default_schedule(now: Date): ScheduleInput {
   start.setHours(start.getHours() + 1)
   return { every: 1, unit: 'days', start: start.toISOString() }
 }
+
+export function schedule_label(schedule: ScheduleInput): string {
+  if (schedule.every === 1) {
+    return { minutes: 'jede Minute', hours: 'stündlich', days: 'täglich', weeks: 'wöchentlich', months: 'monatlich' }[schedule.unit]
+  }
+  return `alle ${schedule.every} ${schedule_unit_meta[schedule.unit].label}`
+}

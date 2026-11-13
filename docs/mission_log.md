@@ -15,6 +15,13 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [] Das Beschreibungsfeld soll sich automatisch nach unten erweitern, wenn der Inhalt größer wird. Umbrüche sind erlaubt (Enter)
 - [] In der Ansicht „Überwachen“ sollen die Nodes nicht verschoben werden können, auch wenn sie in „Bearbeiten“ nicht gelockt sind
 - [] Assets neu verarbeiten: Option: in einem anderen Workflow
+- [] Dashboard: Play/Pause-Button an Stelle des Buttons „Module“; Klick auf einen Workflow öffnet ihn direkt in „Überwachen“
+- [] Aktivieren/Pausieren funktioniert überall: Workflow-Detailseite, Toolbar der Workflow-Liste (auch bei Mehrfachauswahl), Dashboard
+- [] Workflow-Name schon vergeben: Feld rot mit Hinweis darunter, keine Fehlermeldung unten rechts (auch in „Eigenschaften“)
+- [] Workflow-Beschreibung wächst mit dem Inhalt mit, Umbrüche erlaubt (Enter)
+- [] Spalte „Zeitplan“ statt „Version“ in der Workflow-Liste; Versionsanzeige entfällt überall
+- [] Workflow duplizieren: Kopie „Name (Kopie)“ mit Beschreibung, Zeitplan und Modulen, pausiert, ohne Assets
+- [] Button für Bug-Report (Katzenkopf) unten links über dem Pfeil: Betreff und strukturierter Text, Abbrechen/Senden; Senden schließt nur mit Meldung, noch kein Versand
 
 ---
 ---
@@ -51,12 +58,18 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 ### Assets und Daten
 
 - [ ] Assets hinzufügen: manuell und einfacher Listenimport
+- [ ] Asset-Aktionen im Workflow und in der Asset-Ansicht: Nach oben, Abbrechen, Anhalten/Freigeben, Entfernen
 - [ ] Aufbewahrung der Daten
   - Offen: Daten pro Workflow oder global aufheben?
 
 ### Oberfläche
 
-- [ ] Button für Bug-Report (per Mail) unten links im Seitenmenü über dem Pfeil
+- [ ] Bug-Report: echter Versand per Mail
+  - Empfängeradresse und Mail-Zugang in der Konfiguration (keine Zugangsdaten im Code)
+  - Server-Endpunkt zum Versenden; „Senden“ ruft ihn auf
+  - Meldung bei fehlgeschlagenem Versand statt Erfolgsmeldung, Eingaben bleiben erhalten
+  - Zusatzdaten anhängen: App-Version, aktuelle Seite, Browser, Zeitpunkt
+  - Offen: Screenshot oder Logauszug mitschicken?
 
 ### Reports
 
@@ -72,11 +85,3 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
 
 ### unsortiert von Martin
-- [ ] Play Pause Button bei Workflow gleich auch im Dashboard zwischen an position module-button
-- [ ] mit klick auf Workflow gleich in Ansicht Workflow -> Überwachen - button module entfällt 
-- [ ] button in workflow ansicht "Aktivieren" noch ohne funktion: gleich mit einbauen an allen stellen
-- [ ] neuer workflow: wenn name schon vergeben ist, feld rot markieren mit meldung darunter, dass name schon exitsier - meldung unten rechts mit fehlercode entfällt
-- [ ] neuer workflow -> feld für beschreibung soll sich ebenfalls in größe nach inhalt ändern, wie bei den Modulen schon
-- [ ] zeitplaneinstellungen für workflow mit in ansichtsliste unter workflows anstelle der spalte "version" - spalte "version" entfällt überall, die Workflow hat keine versionierung und ist immer stand von jetzt
-- [ ] funktion dublizieren noch ohne funktion - gleich mit umsetzen
-- [ ] bitte prüfen, welche weiteren workflow-funktionen noch nicht funktionieren, weil noch nicht implementiert

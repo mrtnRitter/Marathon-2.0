@@ -23,5 +23,7 @@
 .sidebar.collapsed .sidebar-link { justify-content: center; }
 .sidebar-link:hover { background: var(--bg-hover); color: var(--text); }
 .sidebar-link.active { background: var(--accent-soft); color: var(--accent); border-left-color: var(--accent); }
-.sidebar-toggle { margin-top: auto; padding: var(--space-3); background: none; border: none; border-top: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
+.sidebar-footer { margin-top: auto; padding: var(--space-2); }
+.sidebar-bug { width: 100%; background: none; border: none; border-left: 2px solid transparent; font: inherit; text-align: left; cursor: pointer; }
+.sidebar-toggle { padding: var(--space-3); background: none; border: none; border-top: 1px solid var(--border); color: var(--text-dim); cursor: pointer; }
 .sidebar-toggle:hover { color: var(--text); }

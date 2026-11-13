@@ -15,6 +15,7 @@ from marathon.server.db.workflow_writes import (
     WorkflowConflict,
     WorkflowValidationError,
     create_workflow,
+    duplicate_workflow,
     delete_workflow,
     set_workflow_active,
     save_graph,
@@ -100,6 +101,23 @@ def post_workflow(
                 datetime.now(timezone.utc),
             )
             workflow = get_workflow(connection, workflow_id)
+    except WorkflowValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return workflow
+
+
+@router.post("/workflows/{workflow_id}/duplicate", status_code=status.HTTP_201_CREATED)
+def post_duplicate_workflow(
+    workflow_id: str,
+    engine: Engine = Depends(get_engine),
+) -> dict[str, Any]:
+    """Duplicate a workflow and return its metadata in the same transaction."""
+    try:
+        with engine.begin() as connection:
+            duplicate_id = duplicate_workflow(connection, workflow_id, datetime.now(timezone.utc))
+            if duplicate_id is None:
+                raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+            workflow = get_workflow(connection, duplicate_id)
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return workflow
