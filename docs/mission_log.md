@@ -32,6 +32,10 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Jedes Modul hat immer die Ausgänge Erfolg und Fehler; ohne Modul am Fehlerausgang ist das Asset fehlgeschlagen und beendet
 - [ ] Jeder Workflow hat seine eigene Asset-Liste; die Assets werden je Workflow verwaltet
 - [ ] Warten ist kein Job für Worker
+  - Warten entspricht `time.sleep(n)` und wird von der Engine gesteuert; das Asset bleibt während der Wartezeit unverändert und läuft danach weiter
+  - Warten hat keinen Ausgang Fehler (Ausnahme von der Pflicht zu Erfolg und Fehler)
+- [ ] `config/server.toml` wird in `config/marathon.toml` umbenannt (mit allen Verweisen in Code und Doku)
+- [ ] Jobsteuerung als endlicher Zustandsautomat: Jedes Asset steht jederzeit an genau einem Modul in genau einem definierten Zustand; es gibt nur festgelegte Übergänge
 
 #### Entschieden
 
@@ -46,6 +50,30 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Verbindungen gehen nur vom Worker zum Server; keine offenen Ports auf Worker-PCs
   - Keine Warteschlange im Worker: nie mehr zugeteilte Jobs als freie Plätze
   - Holt der Worker einen zugeteilten Job nicht innerhalb der Abhol-Frist ab, geht der Job zurück und wird neu vergeben
+- [ ] **Unterbrochene Jobs** (Absturz, Worker offline, Neustart): Das Asset geht zurück auf den Ausgang des vorherigen Moduls (Erfolg oder Fehler, je nachdem, worüber es kam) und wird von dort nach dem Workflow neu verteilt
+  - Nach 3 erfolglosen Versuchen am selben Modul ist das Asset *Fehlgeschlagen*; der Log zeigt die Versuche an diesem Modul
+  - Meldet das Modul selbst einen Fehler, ist das keine Unterbrechung: Ausgang Fehler, kein neuer Versuch
+- [ ] **Worker-Auswahl:** Ist der bevorzugte Worker belegt, geht der Job an einen anderen Worker mit gleichen Fähigkeiten
+  - Reihenfolge nach Vorrang je Worker und Modultyp, z. B. für Transcode: GPU-Rechner → CPU-Rechner → Server-Worker
+  - Keine Sonderregel für den Server-Worker in der Engine; sein Verhalten ergibt sich aus seinen Standardwerten in `config/marathon.toml`
+  - Standard Server-Worker: Dateimodule (Kopieren, Verschieben, Umbenennen) mit normalem Vorrang; rechenintensive Module und Fachmodule (Transcode, QC, alles mit FFmpeg o. Ä.) nur als letzte Wahl
+- [ ] **Verteilung zwischen Workflows:** reihum, keine Workflow-Priorität; einen Workflow bevorzugt man, indem man die anderen pausiert
+- [ ] **Workflow ändern während des Laufs:** jederzeit speichern
+  1. Jedes Speichern erzeugt auf einen Schlag eine neue Version; die Engine sieht nie einen halben Stand
+  2. Module behalten über alle Versionen ihre feste Kennung; Assets merken sich die Kennung
+  3. Laufende Jobs behalten die Einstellungen, mit denen sie gestartet sind
+  4. Wohin ein Asset nach einem Modul geht, bestimmt die Version, die beim Eintreffen des Ergebnisses gilt
+  5. Wird ein Modul gelöscht, an dem Assets stehen: Laufende Jobs werden wie beim Pausieren abgebrochen; die Assets gehen zurück auf den Ausgang des vorherigen Moduls und laufen nach der neuen Version weiter. Fehlt auch das vorherige Modul: *Fehlgeschlagen* mit „Modul nicht mehr im Workflow“
+  6. Vor dem Speichern zeigt der Server die Auswirkungen (z. B. „Transcode gelöscht: 4 Assets warten, 2 Jobs werden abgebrochen“); Speichern erst nach Bestätigung. Ohne Auswirkungen keine Rückfrage
+- [ ] **Erneut verarbeiten:** Das Asset beginnt immer am Anfang des Workflows, als wäre es gerade neu hereingekommen
+  - Hinter dem Quellmodul (Watchfolder, Prioliste) über dessen Ausgang Erfolg
+  - Ohne Quellmodul am Modul ohne eingehende Verbindung; gibt es mehrere solche Module: *Fehlgeschlagen* mit „Startpunkt nicht eindeutig“
+
+#### Offen zur Jobsteuerung
+
+- [ ] Zustandstabelle für Asset, Job und Worker (jeder Zustand, jeder Übergang mit Auslöser) – erstellt CodeZilla nach Prüfung der Punkte „Von CodeZilla entschieden“
+- [ ] Transcode: Wie GPU- und CPU-Verarbeitung je Worker gewählt wird, klärt das Transcode-Modul
+- [ ] Erreichbarkeit der Pfade: Ein Worker darf nur Jobs bekommen, deren Pfade er erreicht (z. B. nur Netzlaufwerk). Vorschlag: je Worker erreichbare Speicherorte, zusammen mit der Pfadzuordnung – spätestens mit dem Worker-Client; solange nur der Server-Worker arbeitet, nicht nötig
 
 #### Konzeptvorschlag (CodeZilla)
 
@@ -62,9 +90,9 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
    - Asset geht zurück auf *fertig* am vorherigen Modul; beim nächsten Start läuft das abgebrochene Modul neu
    - *Pausiert* ist erreicht, wenn jeder Job den Abbruch bestätigt hat oder sein Worker 30 s nichts gemeldet hat
    - Bis der Live-Kanal kommt, fragt die Seite den Zustand im Sekundentakt ab
-7. **Ausfälle** (Worker stürzt ab, ist offline, Server startet neu): wie Pausieren – Asset zurück, Job wird neu vergeben.
-8. **Workflow ändern während des Laufs:** Laufende Jobs behalten ihre Einstellungen; danach gilt die neue Version.
-9. **Erneut verarbeitete Assets** (ohne aktuelles Modul) starten hinter dem Quellmodul.
+7. **Ausfälle:** entschieden (siehe Entschieden: Unterbrochene Jobs)
+8. **Workflow ändern während des Laufs:** entschieden (siehe Entschieden)
+9. **Erneut verarbeitete Assets:** entschieden (siehe Entschieden: Erneut verarbeiten)
 10. **Neue Assets aus Modulen** (z. B. die Kopie aus „Datei kopieren“) werden am erzeugenden Modul angelegt und laufen über dessen Ausgang weiter; das Original ist dort erledigt.
 11. **Datenbank:** Jobs speichern die Einstellungen ihres Moduls, die Ablaufzeit der Zuteilung, den Fehlertext und das Modul, von dem das Asset kam; je Asset im Job der gemeldete Ausgang.
 12. **Schnittstelle für Worker** (versioniert, später auch für den Worker-Client): anmelden, Lebenszeichen, Job holen, Fortschritt und Log melden, Ergebnis melden, Abbruch erfahren.
@@ -73,28 +101,28 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 - [x] **Wo laufen Worker-Module, solange es noch keinen Worker-Client gibt?** → Server-Worker (siehe Entschieden)
 - [x] **Jobverteilung** → Server teilt zu, Worker holt ab (siehe Entschieden)
-- [ ] **Unterbrochene Jobs** (Absturz, Neustart; bei Dateien z. B. eine halbe Kopie)
-  - a) Wie Pausieren neu einreihen, höchstens 3 Versuche am selben Modul, danach Ausgang Fehler (Empfehlung)
-  - b) Sofort Fehlgeschlagen mit Hinweis „unterbrochen“, erneut verarbeiten von Hand
-  - c) Nur „Warten“ neu einreihen, bei Dateimodulen sofort Fehlgeschlagen
-- [ ] **Bevorzugter Worker belegt:** Job geht an einen anderen passenden Worker (Empfehlung) oder wartet auf den bevorzugten?
-- [ ] **Verteilung zwischen Workflows:** reihum (Empfehlung) oder eine Workflow-Priorität wieder einführen?
-- [ ] **Workflow ändern während des Laufs:** speichern erlaubt, neue Version gilt ab dem nächsten Modul (Empfehlung) – oder nur im pausierten Zustand speichern?
-- [ ] **Startmodul erneut verarbeiteter Assets:** hinter dem Quellmodul; gibt es keins, das einzige Modul ohne eingehende Verbindung; nicht eindeutig → Fehlgeschlagen mit Meldung. Passt das?
+- [x] **Unterbrochene Jobs** → siehe Entschieden
+- [x] **Bevorzugter Worker belegt** → siehe Entschieden: Worker-Auswahl
+- [x] **Verteilung zwischen Workflows** → siehe Entschieden
+- [x] **Workflow ändern während des Laufs** → siehe Entschieden
+- [x] **Startmodul beim erneuten Verarbeiten** → siehe Entschieden
 
 #### Von CodeZilla entschieden (zur Prüfung)
 
 - Ein Ergebnis, das vor dem Abbruch schon fertig war, wird übernommen (sonst stünde nach einem erledigten Verschieben der alte Pfad am Asset)
 - Ein spätes Ergebnis eines abgebrochenen Jobs wird verworfen
-- Watchfolder und Prioliste haben keinen Eingang; für sie gilt die Pflicht zu Erfolg und Fehler nicht. „Warten“ bekommt einen Ausgang Fehler
+- Watchfolder und Prioliste haben keinen Eingang; für sie gilt die Pflicht zu Erfolg und Fehler nicht
+- Pausieren während Warten: Das Asset geht wie bei jedem Modul zurück auf den Ausgang des vorherigen Moduls; die Wartezeit beginnt beim nächsten Start neu
 - Ein Modul, das mit einem Fehler abbricht, gibt das Asset über den Ausgang Fehler weiter; die Meldung kommt in den Log
-- Fehlt das Modul eines Assets in der neuen Workflow-Version: Fehlgeschlagen mit „Modul nicht mehr im Workflow“
+- Unterbrochene Jobs: Als Versuch zählt nur ein Job, der schon lief; Pausieren und eine abgelaufene Abhol-Frist zählen nicht
+- Der Zähler der Versuche beginnt neu, sobald das Asset das Modul verlässt oder erneut verarbeitet wird
+- Server-Neustart: Jobs auf anderen Workern laufen weiter; meldet sich der Worker innerhalb von 30 s, wird sein Ergebnis übernommen, sonst gilt der Job als unterbrochen
 - Ein Worker gilt nach 30 s ohne Meldung als ausgefallen
 - Die Prioliste wird von der Engine vorerst übergangen (eigener Backlog-Punkt „Verarbeitung nach Prio“)
-- Erlaubte Aufgaben stellt der Rechner am Client ein (Server-Worker: `config/server.toml`); Vorrang, Parallelität und Sperren in der Worker-Ansicht; es gilt die Schnittmenge
+- Erlaubte Aufgaben stellt der Rechner am Client ein (Server-Worker: `config/marathon.toml`); Vorrang, Parallelität und Sperren in der Worker-Ansicht; es gilt die Schnittmenge
 - Der Server-Worker beendet sich, wenn der Server-Prozess nicht mehr läuft (nie zwei Server-Worker nach einem Neustart)
 - Mit dem Umstieg auf Linux wird die Pfadzuordnung je Worker nötig (Server-Worker sieht `/mnt/...` statt `\\server\freigabe`)
-- Parallelität und Ablaufzeit der Zuteilung stehen im neuen Abschnitt `[engine]` in `config/server.toml`
+- Parallelität und Ablaufzeit der Zuteilung stehen im neuen Abschnitt `[engine]` in `config/marathon.toml`
 - Nicht im Release Engine: Live-Kanal, Worker-Client mit Auto-Update, Asset-Aktionen (Abbrechen, Anhalten, nach oben), Verarbeitung nach Prioliste, Sammeljobs
 - Ersetzt durch Martins Vorgaben: „Warten läuft als normaler Job“, „Pausieren lässt laufende Jobs fertig laufen“, „Jobs über alle Workflows hinweg nach Alter“
 
