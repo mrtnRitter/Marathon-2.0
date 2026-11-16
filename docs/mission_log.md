@@ -33,9 +33,23 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Jeder Workflow hat seine eigene Asset-Liste; die Assets werden je Workflow verwaltet
 - [ ] Warten ist kein Job für Worker
 
+#### Entschieden
+
+- [ ] **Server-Worker:** Das Server-Paket enthält die Worker-Laufzeit; sie läuft als eigener Prozess und spricht wie jeder andere Worker nur über die Worker-Schnittstelle (`localhost`)
+  - Kein Sonderweg in der Engine; Absturz oder Ende des Server-Workers = Worker offline, Jobs werden neu vergeben, der Server läuft weiter
+  - Der Server startet und überwacht ihn selbst (Neustart nach Absturz mit wachsender Wartezeit, geordneter Stopp beim Server-Ende); gleich unter Windows und Linux
+  - Kein Auto-Update; er wird mit dem Server aktualisiert
+  - Worker-Client = Worker-Laufzeit (ohne Oberfläche, plattformunabhängig) + Client-Hülle für Windows-PCs (Starter, Einstellungen, Auto-Update, später Zeitpläne)
+- [ ] **Jobverteilung:** Der Server teilt zu, der Worker holt ab
+  - Der Server verteilt Jobs auf freie Plätze von Workern, die online sind; die Oberfläche zeigt sofort „zugeteilt an Worker X“
+  - Der Worker hält eine Anfrage beim Server offen (ca. 25 s); der Server antwortet sofort mit Job oder Abbruch, sonst mit „nichts“, danach fragt der Worker neu
+  - Verbindungen gehen nur vom Worker zum Server; keine offenen Ports auf Worker-PCs
+  - Keine Warteschlange im Worker: nie mehr zugeteilte Jobs als freie Plätze
+  - Holt der Worker einen zugeteilten Job nicht innerhalb der Abhol-Frist ab, geht der Job zurück und wird neu vergeben
+
 #### Konzeptvorschlag (CodeZilla)
 
-1. **Zuteilung:** Der Server entscheidet, welcher Worker welchen Job bekommt. Die Verbindung baut trotzdem der Worker auf: Er fragt laufend „Habe ich Arbeit?“, der Server antwortet mit dem Job, den er ihm zugeteilt hat. So braucht kein Worker-Rechner offene Ports.
+1. **Zuteilung:** entschieden (siehe Entschieden: Jobverteilung)
 2. **Zwei Modularten:**
    - Server-Module (Warten, später Bedingung, Sammeln) erledigt die Engine selbst. Warten ist nur eine Zeitmarke am Asset und belegt keinen Worker.
    - Worker-Module (Dateien, Transcode, QC …) gehen als Job an einen Worker. Der Modulkatalog kennzeichnet, wo ein Modul läuft.
@@ -57,10 +71,8 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 #### Fragen an Martin
 
-- [ ] **Wo laufen Worker-Module, solange es noch keinen Worker-Client gibt?**
-  - a) Eingebauter Worker „Server“: wird zugeteilt wie jeder andere Worker und lässt sich sperren; Pfade gelten aus Sicht des Servers (Empfehlung)
-  - b) Noch gar nicht: Ausführung erst mit dem Worker-Client
-  - c) Release Engine bringt einen einfachen Worker-Client ohne Auto-Update mit
+- [x] **Wo laufen Worker-Module, solange es noch keinen Worker-Client gibt?** → Server-Worker (siehe Entschieden)
+- [x] **Jobverteilung** → Server teilt zu, Worker holt ab (siehe Entschieden)
 - [ ] **Unterbrochene Jobs** (Absturz, Neustart; bei Dateien z. B. eine halbe Kopie)
   - a) Wie Pausieren neu einreihen, höchstens 3 Versuche am selben Modul, danach Ausgang Fehler (Empfehlung)
   - b) Sofort Fehlgeschlagen mit Hinweis „unterbrochen“, erneut verarbeiten von Hand
@@ -72,7 +84,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 #### Von CodeZilla entschieden (zur Prüfung)
 
-- Zuteilung oder Abholung betrifft nur die Verbindung; die Entscheidung trifft immer der Server
 - Ein Ergebnis, das vor dem Abbruch schon fertig war, wird übernommen (sonst stünde nach einem erledigten Verschieben der alte Pfad am Asset)
 - Ein spätes Ergebnis eines abgebrochenen Jobs wird verworfen
 - Watchfolder und Prioliste haben keinen Eingang; für sie gilt die Pflicht zu Erfolg und Fehler nicht. „Warten“ bekommt einen Ausgang Fehler
@@ -80,7 +91,9 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - Fehlt das Modul eines Assets in der neuen Workflow-Version: Fehlgeschlagen mit „Modul nicht mehr im Workflow“
 - Ein Worker gilt nach 30 s ohne Meldung als ausgefallen
 - Die Prioliste wird von der Engine vorerst übergangen (eigener Backlog-Punkt „Verarbeitung nach Prio“)
-- Fähigkeiten und Vorrang werden in der Worker-Ansicht je Worker eingestellt
+- Erlaubte Aufgaben stellt der Rechner am Client ein (Server-Worker: `config/server.toml`); Vorrang, Parallelität und Sperren in der Worker-Ansicht; es gilt die Schnittmenge
+- Der Server-Worker beendet sich, wenn der Server-Prozess nicht mehr läuft (nie zwei Server-Worker nach einem Neustart)
+- Mit dem Umstieg auf Linux wird die Pfadzuordnung je Worker nötig (Server-Worker sieht `/mnt/...` statt `\\server\freigabe`)
 - Parallelität und Ablaufzeit der Zuteilung stehen im neuen Abschnitt `[engine]` in `config/server.toml`
 - Nicht im Release Engine: Live-Kanal, Worker-Client mit Auto-Update, Asset-Aktionen (Abbrechen, Anhalten, nach oben), Verarbeitung nach Prioliste, Sammeljobs
 - Ersetzt durch Martins Vorgaben: „Warten läuft als normaler Job“, „Pausieren lässt laufende Jobs fertig laufen“, „Jobs über alle Workflows hinweg nach Alter“
@@ -93,7 +106,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 ### Engine und Worker
 
 - [ ] Live-Kanal zum Browser
-- [ ] Worker-Client: Starter, Client-Laufzeit, Auto-Update mit Rückfall
+- [ ] Worker-Client: Client-Hülle für Windows (Starter, Einstellungen, Auto-Update mit Rückfall) um die Worker-Laufzeit aus dem Release Engine
 - [ ] Rollout von Client-Versionen
 
 ### Module
