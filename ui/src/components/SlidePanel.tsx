@@ -10,11 +10,12 @@ interface Props {
   on_close: () => void
   actions?: ToolbarAction[]
   width?: number
+  click_through?: boolean
   children: ReactNode
 }
 
 /** Editor panel that slides in from the right. Escape or the backdrop closes it. */
-export function SlidePanel({ open, title, icon, on_close, actions = [], width = 520, children }: Props) {
+export function SlidePanel({ open, title, icon, on_close, actions = [], width = 520, click_through = false, children }: Props) {
   useEffect(() => {
     if (!open) return
     const on_key = (event: KeyboardEvent) => event.key === 'Escape' && on_close()
@@ -24,7 +25,7 @@ export function SlidePanel({ open, title, icon, on_close, actions = [], width = 
 
   if (!open) return null
   return (
-    <div className="slide-panel-backdrop" onMouseDown={on_close}>
+    <div className={`slide-panel-backdrop${click_through ? ' click-through' : ''}`} onMouseDown={click_through ? undefined : on_close}>
       <aside className="slide-panel" style={{ width }} onMouseDown={event => event.stopPropagation()}>
         <header className="slide-panel-header">
           {icon && <span className="slide-panel-icon"><Icon name={icon} size={16} /></span>}

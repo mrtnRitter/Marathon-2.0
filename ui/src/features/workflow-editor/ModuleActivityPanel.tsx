@@ -42,7 +42,7 @@ export function ModuleActivityPanel({ workflow_id, data, on_close }: { workflow_
   const [tab, set_tab] = useState('jobs')
   const { data: activity } = use_data(() => get_module_activity(workflow_id, data.module.id), [workflow_id, data.module.id])
   return (
-    <SlidePanel open title={data.module.name} icon={data.module_type.icon} on_close={on_close} width={760}>
+    <SlidePanel open title={data.module.name} icon={data.module_type.icon} on_close={on_close} width={760} click_through>
       <Tabs active={tab} on_change={set_tab} items={[
         { id: 'jobs', label: 'Jobs', icon: 'activity', count: activity?.jobs.length },
         { id: 'assets', label: 'Assets', icon: 'files', count: activity?.assets.length },

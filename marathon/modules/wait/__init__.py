@@ -25,7 +25,7 @@ MODULE = {
         "min": 1,
         "max": 86400,
         "unit": "s",
-        "help": "Angabe in Sekunden, z. B. 3600 für eine Stunde",
+        "help": "Angabe in Sekunden",
     }],
     "sort_order": 20,
 }

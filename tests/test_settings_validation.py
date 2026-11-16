@@ -26,7 +26,7 @@ def api_client(db_engine, tmp_path):
 # FUNC
 def _save_watchfolder_settings(api_client, settings):
     workflow = api_client.post("/api/v1/workflows", json={"name": "Watchfolder"}).json()
-    return api_client.put(
+    response = api_client.put(
         f"/api/v1/workflows/{workflow['id']}/graph",
         json={
             "base_version": 1,
@@ -42,31 +42,32 @@ def _save_watchfolder_settings(api_client, settings):
             "connections": [],
         },
     )
+    return workflow["id"], response
 
 
 # TESTS
-def test_rejects_missing_path(api_client):
-    response = _save_watchfolder_settings(api_client, {"path": ""})
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Eingang: Ordner: Ordner fehlt"
+def test_saves_missing_path_with_issue(api_client):
+    workflow_id, response = _save_watchfolder_settings(api_client, {"path": ""})
+    assert response.status_code == 200, response.json()
+    assert api_client.get(f"/api/v1/workflows/{workflow_id}").json()["issues"] == ["Eingang"]
 
 
-def test_rejects_extension_conflict(api_client):
-    response = _save_watchfolder_settings(
+def test_saves_extension_conflict_with_issue(api_client):
+    workflow_id, response = _save_watchfolder_settings(
         api_client, {"path": "/mnt/in", "include": ".mxf", "exclude": ".MXF"}
     )
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Eingang: Exclude-Endungen: .mxf steht bereits in der Include-Liste"
+    assert response.status_code == 200, response.json()
+    assert api_client.get(f"/api/v1/workflows/{workflow_id}").json()["issues"] == ["Eingang"]
 
 
-def test_rejects_wait_below_minimum(api_client):
-    response = _save_watchfolder_settings(api_client, {"path": "/mnt/in", "wait_s": 4})
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Eingang: Wartezeit: Mindestens 5 s"
+def test_saves_wait_below_minimum_with_issue(api_client):
+    workflow_id, response = _save_watchfolder_settings(api_client, {"path": "/mnt/in", "wait_s": 4})
+    assert response.status_code == 200, response.json()
+    assert api_client.get(f"/api/v1/workflows/{workflow_id}").json()["issues"] == ["Eingang"]
 
 
 def test_accepts_valid_settings(api_client):
-    response = _save_watchfolder_settings(
+    _, response = _save_watchfolder_settings(
         api_client,
         {
             "path": "\\\\server\\share",

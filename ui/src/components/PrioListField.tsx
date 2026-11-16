@@ -13,6 +13,8 @@ interface Props {
 export function PrioListField({ value, on_change, disabled = false }: Props) {
   const root_ref = useRef<HTMLDivElement>(null)
   const name_refs = useRef<Array<HTMLInputElement | null>>([])
+  const row_refs = useRef<Array<HTMLTableRowElement | null>>([])
+  const animation_index = useRef<number | null>(null)
   const [open_menu, set_open_menu] = useState<number | null>(null)
   const [focus_index, set_focus_index] = useState<number | null>(null)
 
@@ -42,11 +44,20 @@ export function PrioListField({ value, on_change, disabled = false }: Props) {
     set_focus_index(null)
   }, [focus_index, value])
 
+  useLayoutEffect(() => {
+    if (animation_index.current === null) return
+    const row = row_refs.current[animation_index.current]
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--accent-soft').trim()
+    row?.animate([{ backgroundColor: color }, { backgroundColor: 'transparent' }], { duration: 800, easing: 'ease-out' })
+    animation_index.current = null
+  }, [value])
+
   const move_entry = (index: number, offset: -1 | 1) => {
     const target = index + offset
     if (target < 0 || target >= value.length) return
     const updated = [...value]
     ;[updated[index], updated[target]] = [updated[target], updated[index]]
+    animation_index.current = target
     on_change(updated)
   }
 
@@ -66,7 +77,7 @@ export function PrioListField({ value, on_change, disabled = false }: Props) {
           </thead>
           <tbody>
             {value.map((entry, index) => (
-              <tr key={index}>
+              <tr key={index} ref={element => { row_refs.current[index] = element }}>
                 <td className="priolist-number">{index + 1}</td>
                 <td>
                   <input

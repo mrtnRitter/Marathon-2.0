@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
+import { IssueMark } from '../components/IssueMark'
 import { StatusBadge } from '../components/StatusBadge'
 import { Tabs } from '../components/Tabs'
 import { get_workflow } from '../data/api'
@@ -32,14 +33,14 @@ export function WorkflowDetailPage() {
     <>
       <PageHeader
         breadcrumb={<><Link to="/workflows">Workflows</Link> / {workflow?.name ?? workflow_id}</>}
-        title={<>{workflow?.name ?? (loading ? '…' : 'Workflow nicht gefunden')}{workflow && <StatusBadge meta={active_meta(workflow.active)} />}</>}
+        title={<>{workflow?.name ?? (loading ? '…' : 'Workflow nicht gefunden')}{workflow && <><IssueMark issues={workflow.issues} /><StatusBadge meta={active_meta(workflow.active)} /></>}</>}
         actions={[{ label: workflow?.active ? 'Pausieren' : 'Aktivieren', icon: workflow?.active ? 'pause' : 'play', on_click: toggle, disabled: !workflow || busy }]}
       />
       <div className="workflow-tabs">
         <Tabs active={tab} on_change={id => navigate(`/workflows/${workflow_id}/${id}`)}
           items={[{ id: 'modules', label: 'Module', icon: 'workflow' }, { id: 'assets', label: 'Assets', icon: 'files', count: asset_total }]} />
       </div>
-      {workflow && tab === 'modules' && <div className="page-content flush"><WorkflowCanvas workflow_id={workflow_id} initial_mode={initial_mode} /></div>}
+      {workflow && tab === 'modules' && <div className="page-content flush"><WorkflowCanvas workflow_id={workflow_id} initial_mode={initial_mode} on_saved={reload} /></div>}
       {workflow && tab === 'assets' && <div className="page-content"><AssetList workflow_id={workflow_id} /></div>}
       {!workflow && !loading && <div className="page-content"><p className="muted">Kein Workflow mit dieser Kennung.</p></div>}
     </>

@@ -9,6 +9,7 @@ from threading import Event, Lock, Thread, current_thread
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
+from marathon.server.db.workflow_checks import workflow_invalid_modules
 from marathon.server.schedule import ScheduleError, next_occurrence
 
 
@@ -65,6 +66,21 @@ def run_schedule_tick(connection: Connection, now: datetime, tz: tzinfo | None =
                 {"id": workflow_id, "next_run_at": next_run_at},
             )
         else:
+            invalid = workflow_invalid_modules(connection, workflow_id)
+            if invalid:
+                connection.execute(
+                    text("UPDATE workflows SET next_run_at = :next_run_at WHERE id = :id"),
+                    {"id": workflow_id, "next_run_at": next_run_at},
+                )
+                for module in invalid:
+                    connection.execute(
+                        text(
+                            "INSERT INTO log_lines (workflow_id, module_id, job_id, level, text) "
+                            "VALUES (:workflow_id, :module_id, NULL, 'warn', 'Zeitgesteuerter Start übersprungen: Einstellungen prüfen')"
+                        ),
+                        {"workflow_id": workflow_id, "module_id": module["id"]},
+                    )
+                continue
             connection.execute(
                 text(
                     "UPDATE workflows SET active = true, scheduled_active = true, "

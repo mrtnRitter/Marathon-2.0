@@ -53,7 +53,7 @@ export function create_edge(connection: Connection | Edge, running = false): Edg
     targetHandle: 'in',
     type: 'smoothstep',
     animated: running,
-    className: output === 'failure' ? 'edge-failure' : undefined,
+    className: output === 'success' ? 'edge-success' : output === 'error' ? 'edge-error' : undefined,
   }
 }
 

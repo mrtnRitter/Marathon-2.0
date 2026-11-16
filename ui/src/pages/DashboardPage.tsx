@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataTable, type Column } from '../components/DataTable'
 import { PageHeader } from '../components/PageHeader'
+import { IssueMark } from '../components/IssueMark'
 import { StatusBadge } from '../components/StatusBadge'
 import { StatusBar } from '../components/StatusBar'
 import { StatusTabs } from '../components/StatusTabs'
@@ -25,7 +26,7 @@ function WorkflowRow({ workflow, on_changed }: { workflow: Workflow; on_changed:
   return (
     <div className="dashboard-row" onClick={() => navigate(`/workflows/${workflow.id}/modules`)}>
       <div className="dashboard-row-head">
-        <strong>{workflow.name}</strong>
+        <strong>{workflow.name}</strong><IssueMark issues={workflow.issues} />
         <StatusBadge meta={active_meta(workflow.active)} />
       </div>
       <div className="dashboard-row-desc dim">{workflow.description}</div>

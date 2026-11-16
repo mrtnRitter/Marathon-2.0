@@ -10,7 +10,7 @@ from sqlalchemy import Text, bindparam, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.engine import Connection
 
-from marathon.modules import catalog_module
+from marathon.server.db.workflow_checks import invalid_modules, workflow_issues
 from marathon.server.schedule import ScheduleError, next_occurrence, normalize_interval
 
 
@@ -21,6 +21,14 @@ class WorkflowValidationError(ValueError):
 
 class WorkflowConflict(Exception):
     """Raised when a graph was edited from a stale workflow version."""
+
+
+class WorkflowNotStartable(Exception):
+    """Raised when settings issues prevent workflow activation."""
+
+    def __init__(self, issues: list[str]) -> None:
+        self.issues = issues
+        super().__init__(f"Einstellungen prüfen: {', '.join(issues)}")
 
 
 # VALIDATION
@@ -108,29 +116,6 @@ def _validate_graph(
         if output_key in connected_outputs:
             raise WorkflowValidationError(f"Ausgang {output_id} an Modul {source_id} ist mehrfach verbunden")
         connected_outputs.add(output_key)
-
-
-def _validate_module_settings(modules: list[dict[str, Any]]) -> None:
-    """Validate module settings with the validator registered for each module type."""
-    for module in modules:
-        mod = catalog_module(module["type_id"])
-        validator = getattr(mod, "validate_settings", None) if mod is not None else None
-        if validator is None:
-            continue
-
-        errors = validator(module["settings"])
-        if not errors:
-            continue
-        key = next(iter(errors))
-        label = next(
-            (
-                setting.get("label", key)
-                for setting in mod.MODULE["settings"]
-                if setting.get("key") == key
-            ),
-            key,
-        )
-        raise WorkflowValidationError(f"{module['name']}: {label}: {errors[key]}")
 
 
 def _schedule_values(
@@ -328,6 +313,15 @@ def update_workflow(
 
 def set_workflow_active(connection: Connection, workflow_id: str, active: bool) -> bool:
     """Set a workflow's active state and clear schedule activation."""
+    workflow = connection.execute(
+        text("SELECT id FROM workflows WHERE id = :id FOR UPDATE"), {"id": workflow_id}
+    ).mappings().one_or_none()
+    if workflow is None:
+        return False
+    if active:
+        issues = workflow_issues(connection, workflow_id)
+        if issues:
+            raise WorkflowNotStartable(issues)
     updated = connection.execute(
         text(
             "UPDATE workflows SET active = :active, scheduled_active = false, "
@@ -355,12 +349,14 @@ def save_graph(
 ) -> int | None:
     """Validate and save a new immutable graph version, or return None if missing."""
     connection.execute(text("SET LOCAL lock_timeout = '10s'"))
-    current_version = connection.execute(
-        text("SELECT current_version FROM workflows WHERE id = :id FOR UPDATE"),
+    current_row = connection.execute(
+        text("SELECT current_version, active FROM workflows WHERE id = :id FOR UPDATE"),
         {"id": workflow_id},
-    ).scalar_one_or_none()
-    if current_version is None:
+    ).mappings().one_or_none()
+    if current_row is None:
         return None
+    current_version = current_row["current_version"]
+    workflow_active = current_row["active"]
     if current_version != base_version:
         raise WorkflowConflict
 
@@ -375,7 +371,6 @@ def save_graph(
         ).mappings()
         module_types = {row["id"]: dict(row) for row in rows}
     _validate_graph(modules, connections, module_types)
-    _validate_module_settings(modules)
 
     new_version = current_version + 1
     connection.execute(
@@ -422,4 +417,22 @@ def save_graph(
         text("UPDATE workflows SET current_version = :version, updated_at = now() WHERE id = :id"),
         {"id": workflow_id, "version": new_version},
     )
+    if workflow_active:
+        invalid = invalid_modules(modules)
+        if invalid:
+            connection.execute(
+                text(
+                    "UPDATE workflows SET active = false, scheduled_active = false, "
+                    "updated_at = now() WHERE id = :id"
+                ),
+                {"id": workflow_id},
+            )
+            for module in invalid:
+                connection.execute(
+                    text(
+                        "INSERT INTO log_lines (workflow_id, module_id, job_id, level, text) "
+                        "VALUES (:workflow_id, :module_id, NULL, 'warn', 'Workflow pausiert: Einstellungen prüfen')"
+                    ),
+                    {"workflow_id": workflow_id, "module_id": module["id"]},
+                )
     return new_version

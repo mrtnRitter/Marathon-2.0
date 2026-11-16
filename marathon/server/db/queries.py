@@ -5,6 +5,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from marathon.server.db.workflow_checks import workflow_issues
+
 
 _asset_statuses = ("pending", "in_progress", "done", "failed", "on_hold")
 
@@ -53,6 +55,7 @@ def list_workflows(connection: Connection) -> list[dict[str, Any]]:
     }
     for workflow in workflows:
         workflow["asset_counts"] = counts_by_workflow[workflow["id"]]
+        workflow["issues"] = workflow_issues(connection, workflow["id"])
     return workflows
 
 
@@ -67,6 +70,7 @@ def get_workflow(connection: Connection, workflow_id: str) -> dict[str, Any] | N
         return None
     workflow = _workflow_record(row)
     workflow["asset_counts"] = _asset_counts(connection, workflow_id)
+    workflow["issues"] = workflow_issues(connection, workflow_id)
     return workflow
 
 

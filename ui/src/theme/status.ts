@@ -68,5 +68,5 @@ export const message_kind_color: Record<AssetMessage['kind'], string> = {
   info: 'var(--text-muted)',
 }
 
-/** Color of a module output on the canvas; failure outputs use the failed status color. */
-export const output_color = (output_id: string) => (output_id === 'failure' ? color('failed') : 'var(--text-muted)')
+/** Color of a module output; success and error use status colors. */
+export const output_color = (output_id: string) => output_id === 'success' ? color('done') : output_id === 'error' ? color('failed') : 'var(--text-muted)'

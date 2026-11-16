@@ -2,7 +2,7 @@
 
 Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Version 2.0.0).
 
-**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und pausieren und zeitgesteuert starten (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuert gestarteter Workflow pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Die weitere Verarbeitung der Assets folgt mit der Engine. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
+**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und pausieren und zeitgesteuert starten (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuert gestarteter Workflow pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Die weitere Verarbeitung der Assets folgt mit der Engine. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
 
 ## Voraussetzungen
 
@@ -82,6 +82,14 @@ Datei `config/server.toml`:
 
 `name` und `user` erlauben nur Kleinbuchstaben, Ziffern und `_`. Den Benutzer nach dem Einrichten nicht mehr ändern, sonst die Datenbank zurücksetzen.
 
+## Workflows mit fehlerhaften Einstellungen
+
+- Ein Workflow mit fehlenden oder ungültigen Moduleinstellungen lässt sich speichern. In Workflow-Übersicht, Dashboard und Workflow-Ansicht steht dann ein gelbes Ausrufezeichen; beim Überfahren zeigt es die betroffenen Module.
+- Starten ist gesperrt; ein Startversuch zeigt den Hinweis, die Einstellungen zu prüfen.
+- Wird ein laufender Workflow mit Fehlern gespeichert, pausiert er sich; die betroffenen Module erhalten im Log „Workflow pausiert: Einstellungen prüfen“.
+- Ein zeitgesteuerter Start wird übersprungen; die betroffenen Module erhalten im Log „Zeitgesteuerter Start übersprungen: Einstellungen prüfen“.
+- Fehler im Aufbau (z. B. Verbindung zu einem Modul ohne Eingang) verhindern weiterhin das Speichern.
+
 ## Module
 
 ### Watchfolder (Kategorie „Quelle“)
@@ -97,7 +105,7 @@ Datei `config/server.toml`:
 | Unterordner einbeziehen | Auch Dateien in Unterordnern übernehmen. | aus |
 
 - Pfade gelten aus Sicht des Servers. Das Konto, unter dem der Server läuft, braucht Lesezugriff auf den Ordner bzw. die Netzfreigabe.
-- Das Fenster „Ordner wählen“ zeigt nur Ordnernamen des Servers, keine Dateien. Netzfreigaben lassen sich ab `\\server\freigabe` durchblättern.
+- Das Fenster „Ordner wählen“ zeigt nur Ordnernamen des Servers, keine Dateien. Die Eingabe `\\rechner` (z. B. `\\10.0.77.11`) zeigt die Freigaben dieses Rechners, von dort lässt sich weiter durchblättern (nur auf einem Windows-Server). Den Rechner selbst kann man nicht als Ordner wählen.
 - Jede Datei wird je Pfad einmal übernommen. Eine unter gleichem Namen ersetzte Datei wird derzeit nicht erneut übernommen. Wird ein Asset gelöscht und liegt die Datei noch im Ordner, wird sie erneut übernommen.
 - Ist der Ordner nicht erreichbar (oder antwortet er 60 s nicht), steht das einmal im Modul-Log; danach folgt „Ordner wieder erreichbar“.
 - Zeitgesteuert gestartete Workflows pausieren sich, sobald kein Asset aussteht. Den Watchfolder deshalb in einem dauerhaft gestarteten Workflow verwenden.
@@ -120,11 +128,11 @@ Kopiert die Datei des Assets unter ihrem Originalnamen in den Zielordner. Ausgä
 |---|---|---|
 | Zielordner | Absoluter Pfad, Laufwerksbuchstabe oder Netzpfad | – |
 | Checksumme | `Keine`, `MD5` oder `SHA-256` | Keine |
-| Namenskonflikt mit _n lösen | Ist der Name im Ziel belegt, wird `_1`, `_2` … vor der Endung angehängt | aus |
+| Namenskonflikt lösen | Ist der Name im Ziel belegt, wird `_1`, `_2` … vor der Endung angehängt | aus |
 
 - Ohne Checksumme gilt die Kopie als erfolgreich, sobald das Betriebssystem den Schreibvorgang bestätigt. Mit Checksumme wird die Kopie nachgelesen; stimmen die Prüfsummen nicht, wird die Kopie gelöscht und das Asset geht auf „Fehler“.
 - Erfolg: Das Original ist im Durchlauf beendet (Log „Kopiert nach …“). Die Kopie wird ein neues Asset (Log „Kopie von …“) und läuft über „Erfolg“ weiter.
-- Ohne „_n“ führt ein belegter Name zu „Fehler“. Vorhandene Dateien werden nie überschrieben.
+- Ohne „Namenskonflikt lösen“ führt ein belegter Name zu „Fehler“. Vorhandene Dateien werden nie überschrieben.
 - Bei Abbruch oder Fehler wird eine unvollständige Kopie entfernt.
 
 ### Datei verschieben (Kategorie „Dateien“)
@@ -147,7 +155,7 @@ Setzt ein Präfix vor den Dateinamen und ein Suffix vor die Dateiendung, z. B. `
 |---|---|---|
 | Präfix | Text vor dem Dateinamen | leer |
 | Suffix | Text vor der Dateiendung | leer |
-| Namenskonflikt mit _n lösen | Ist der neue Name belegt, wird `_1`, `_2` … angehängt; sonst „Fehler“ | aus |
+| Namenskonflikt lösen | Ist der neue Name belegt, wird `_1`, `_2` … angehängt; sonst „Fehler“ | aus |
 
 Präfix oder Suffix muss gesetzt sein. Nicht erlaubt sind `/ \ : * ? " < > |` und Steuerzeichen.
 

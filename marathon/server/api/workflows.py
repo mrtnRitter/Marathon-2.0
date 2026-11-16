@@ -13,6 +13,7 @@ from marathon.server.db.detail_queries import get_graph
 from marathon.server.db.queries import get_workflow
 from marathon.server.db.workflow_writes import (
     WorkflowConflict,
+    WorkflowNotStartable,
     WorkflowValidationError,
     create_workflow,
     duplicate_workflow,
@@ -155,11 +156,17 @@ def put_workflow_active(
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
     """Set a workflow's active state and return its metadata."""
-    with engine.begin() as connection:
-        updated = set_workflow_active(connection, workflow_id, payload.active)
-        if not updated:
-            raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
-        workflow = get_workflow(connection, workflow_id)
+    try:
+        with engine.begin() as connection:
+            updated = set_workflow_active(connection, workflow_id, payload.active)
+            if not updated:
+                raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+            workflow = get_workflow(connection, workflow_id)
+    except WorkflowNotStartable as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Workflow kann nicht gestartet werden. " + str(exc),
+        ) from exc
     return workflow
 
 

@@ -26,7 +26,7 @@ MODULE = {
     "settings": [
         {"key": "prefix", "label": "Präfix", "type": "text", "default": "", "help": "Wird vor den Dateinamen gesetzt"},
         {"key": "suffix", "label": "Suffix", "type": "text", "default": "", "help": "Wird vor der Dateiendung eingefügt"},
-        {"key": "numbered", "label": "Namenskonflikt mit _n lösen", "type": "boolean", "default": False, "help": "Ist der neue Name belegt, wird _1, _2 … angehängt; sonst Fehler"},
+        {"key": "numbered", "label": "Namenskonflikt lösen", "type": "boolean", "default": False, "help": "Ist der neue Name belegt, wird _1, _2 … angehängt; sonst Fehler"},
     ],
     "sort_order": 50,
 }
@@ -60,7 +60,7 @@ def run(job: ModuleJob) -> ModuleResult:
     """Rename the asset file and return success or a user-facing error."""
     errors = validate_settings(job.settings)
     if errors:
-        labels = {"prefix": "Präfix", "suffix": "Suffix", "numbered": "Namenskonflikt mit _n lösen"}
+        labels = {"prefix": "Präfix", "suffix": "Suffix", "numbered": "Namenskonflikt lösen"}
         key = next(key for key in ("prefix", "suffix", "numbered") if key in errors)
         raise ValueError(f"{labels[key]}: {errors[key]}")
 

@@ -103,6 +103,7 @@ export interface Workflow {
   name: string
   description: string
   active: boolean
+  issues: string[]
   version: number
   schedule?: WorkflowSchedule | null
   asset_counts: Record<AssetStatus, number>

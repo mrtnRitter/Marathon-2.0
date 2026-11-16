@@ -1,0 +1,1 @@
+.issue-mark { display: inline-flex; align-items: center; margin-left: var(--space-1); color: var(--status-on-hold); vertical-align: middle; }

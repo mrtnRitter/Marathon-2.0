@@ -19,20 +19,20 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ## Geplant
 
-### Release: Feinschliff
+### Release: Feinschliff (eingebaut, Abnahme offen)
 
-- [ ] Ordner wählen: Eingabe `\\rechner` (z. B. `\\10.0.77.11`) zeigt alle Freigaben dieses Rechners, von dort weiter navigieren (Server unter Windows)
+- [] Ordner wählen: Eingabe `\\rechner` (z. B. `\\10.0.77.11`) zeigt alle Freigaben dieses Rechners, von dort weiter navigieren (Server unter Windows)
   - Browser-eigene Dialoge liefern keinen Pfad und zeigen den Rechner des Browsers statt des Servers; darum bleibt der eigene Dialog
-- [ ] Warten: Hilfetext nur „Angabe in Sekunden“
-- [ ] Prioliste: Zeile mit geänderter Prio leuchtet kurz auf
-- [ ] Workflow mit Fehlern oder unvollständigen Einstellungen lässt sich speichern
+- [] Warten: Hilfetext nur „Angabe in Sekunden“
+- [] Prioliste: Zeile mit geänderter Prio leuchtet kurz auf
+- [] Workflow mit Fehlern oder unvollständigen Einstellungen lässt sich speichern
   - Starten gesperrt, auch zeitgesteuert (Hinweis im Log)
   - Ausrufezeichen in Workflow-Übersicht, Dashboard und Workflow-Ansicht
   - Startversuch zeigt den Hinweis, die Einstellungen zu prüfen
-- [ ] Beschriftung „Namenskonflikt lösen“ (ohne „mit _n“) in Datei kopieren und Umbenennen
-- [ ] Ausgänge Erfolg und Fehler in Grün und Rot aus der Farbpalette, ihre Verbindungslinien in derselben Farbe
-- [ ] Workflow überwachen: Ist ein Modul markiert, öffnet ein Klick auf ein anderes direkt dessen Modulsicht mit Jobs
-- [ ] Katzenkopf-Icon mit Schnurrhaaren
+- [] Beschriftung „Namenskonflikt lösen“ (ohne „mit _n“) in Datei kopieren und Umbenennen
+- [] Ausgänge Erfolg und Fehler in Grün und Rot aus der Farbpalette, ihre Verbindungslinien in derselben Farbe
+- [] Workflow überwachen: Ist ein Modul markiert, öffnet ein Klick auf ein anderes direkt dessen Modulsicht mit Jobs
+- [] Katzenkopf-Icon mit Schnurrhaaren
 
 ### Release: Engine (Detailkonzept, Entscheidungen offen) – nach dem Feinschliff
 

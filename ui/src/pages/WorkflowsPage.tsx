@@ -7,6 +7,7 @@ import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/PageHeader'
 import { SlidePanel } from '../components/SlidePanel'
 import { StatusBadge } from '../components/StatusBadge'
+import { IssueMark } from '../components/IssueMark'
 import { StatusBar } from '../components/StatusBar'
 import { ScheduleFields } from '../features/workflows/ScheduleFields'
 import { notify } from '../components/Toast'
@@ -156,7 +157,7 @@ export function WorkflowsPage() {
   }
 
   const columns: Column<Workflow>[] = [
-    { key: 'name', label: 'Name', render: row => <strong>{row.name}</strong> },
+    { key: 'name', label: 'Name', render: row => <><strong>{row.name}</strong><IssueMark issues={row.issues} /></> },
     { key: 'active', label: 'Status', render: row => <StatusBadge meta={active_meta(row.active)} />, sort_value: row => Number(row.active) },
     { key: 'run', label: '', width: '48px', sort_value: row => Number(row.active), render: row => <button type="button" className="button" title={row.active ? 'Pausieren' : 'Starten'} aria-label={row.active ? 'Pausieren' : 'Starten'} disabled={busy_ids.includes(row.id)} onClick={event => { event.stopPropagation(); toggle_active(row) }} onDoubleClick={event => event.stopPropagation()}><Icon name={row.active ? 'pause' : 'play'} size={14} /></button> },
     { key: 'schedule', label: 'Zeitplan', render: row => row.schedule ? <span>{schedule_label(row.schedule)} <span className="dim">· nächster Start {format_datetime(row.schedule.next_run_at)}</span></span> : <span className="dim">–</span>, sort_value: row => row.schedule ? new Date(row.schedule.next_run_at).getTime() : Number.MAX_SAFE_INTEGER },

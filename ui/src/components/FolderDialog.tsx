@@ -85,17 +85,19 @@ export function FolderDialog({ open, initial_path, on_select, on_close }: Props)
 
   if (!open) return null
 
+  const is_host_root = listing?.path !== null && listing?.path !== undefined && /^\\\\[^\\/]+[\\/]?$/.test(listing.path)
+
   const actions = [
     { label: 'Abbrechen', icon: 'close', on_click: on_close },
     {
       label: 'Diesen Ordner wählen',
       icon: 'folder-open',
       on_click: () => {
-        if (!listing || listing.path === null) return
+        if (!listing || listing.path === null || is_host_root) return
         on_select(listing.path)
         on_close()
       },
-      disabled: !listing || listing.path === null,
+      disabled: !listing || listing.path === null || is_host_root,
       primary: true,
     },
   ]
@@ -119,6 +121,7 @@ export function FolderDialog({ open, initial_path, on_select, on_close }: Props)
               ref={path_input_ref}
               className="input folder-dialog-path"
               aria-label="Pfad"
+              placeholder={'z. B. D:\\Ingest oder \\\\server'}
               value={path_input}
               onChange={event => set_path_input(event.target.value)}
               onKeyDown={event => {

@@ -39,7 +39,8 @@
 .workflow-editor .react-flow__attribution a { color: var(--text-dim); }
 .workflow-editor .react-flow__minimap { border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .workflow-editor .react-flow__controls { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
-.workflow-editor .react-flow__edge.edge-failure .react-flow__edge-path { stroke: var(--status-failed); stroke-dasharray: 5 4; }
+.workflow-editor .react-flow__edge.edge-success .react-flow__edge-path { stroke: var(--status-done); }
+.workflow-editor .react-flow__edge.edge-error .react-flow__edge-path { stroke: var(--status-failed); stroke-dasharray: 5 4; }
 .workflow-editor .react-flow__edge.selected .react-flow__edge-path { stroke: var(--accent); }
 
 .module-node {

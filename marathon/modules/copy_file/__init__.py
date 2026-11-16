@@ -41,7 +41,7 @@ MODULE = {
         },
         {
             "key": "numbered",
-            "label": "Namenskonflikt mit _n lösen",
+            "label": "Namenskonflikt lösen",
             "type": "boolean",
             "default": False,
             "help": "Ist der Name im Ziel belegt, wird _1, _2 … angehängt; sonst Fehler",
@@ -74,7 +74,7 @@ def run(job: ModuleJob) -> ModuleResult:
     labels = {
         "target": "Zielordner",
         "checksum": "Checksumme",
-        "numbered": "Namenskonflikt mit _n lösen",
+        "numbered": "Namenskonflikt lösen",
     }
     for key, label in labels.items():
         if key in errors:

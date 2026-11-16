@@ -1,6 +1,7 @@
 import { notify } from '../components/Toast'
 import { set_workflow_active } from '../data/api'
 import type { Workflow } from '../data/types'
+import { blocked_message, split_startable } from './workflow_issues'
 
 export function name_taken(workflows: Workflow[], name: string, own_id: string | null): boolean {
   const normalized_name = name.trim().toLowerCase()
@@ -10,8 +11,16 @@ export function name_taken(workflows: Workflow[], name: string, own_id: string |
 }
 
 export async function set_workflows_active(workflows: Workflow[], active: boolean): Promise<number> {
+  let targets = workflows
+  if (active) {
+    const split = split_startable(workflows)
+    targets = split.startable
+    const message = blocked_message(split.blocked)
+    if (message) notify(message)
+  }
+
   let count = 0
-  for (const workflow of workflows) {
+  for (const workflow of targets) {
     if (workflow.active === active) continue
     await set_workflow_active(workflow.id, active)
     count += 1

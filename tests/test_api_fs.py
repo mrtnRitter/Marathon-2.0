@@ -167,3 +167,84 @@ def test_saturated_pool_still_times_out(api_client, monkeypatch, tmp_path):
         assert monotonic() - started < 2
     finally:
         release.set()
+
+
+def test_visible_shares_filters_and_sorts():
+    result = fs._visible_shares(
+        [("Media", 0), ("C$", 0x80000000), ("print", 1), ("IPC$", 0x80000003), ("archiv", 0)],
+        "srv",
+    )
+
+    assert result == [
+        {"name": "archiv", "path": r"\\srv\archiv"},
+        {"name": "Media", "path": r"\\srv\Media"},
+    ]
+
+
+def test_host_lists_shares(api_client, monkeypatch):
+    expected_dirs = [{"name": "Media", "path": r"\\srv\Media"}]
+    monkeypatch.setattr(fs, "os_name", "nt")
+    monkeypatch.setattr(fs, "_list_shares", lambda host: (expected_dirs, False), raising=False)
+
+    for path in (r"\\srv", "\\\\srv\\"):
+        response = api_client.get("/api/v1/fs/dirs", params={"path": path})
+        assert response.status_code == 200
+        assert response.json() == {
+            "path": r"\\srv",
+            "parent": None,
+            "dirs": expected_dirs,
+            "truncated": False,
+        }
+
+
+def test_host_on_posix_422(api_client, monkeypatch):
+    monkeypatch.setattr(fs, "os_name", "posix")
+    monkeypatch.setattr(fs._executor, "submit", lambda *args, **kwargs: pytest.fail("executor must not start"))
+
+    response = api_client.get("/api/v1/fs/dirs", params={"path": r"\\srv"})
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Freigaben eines Rechners lassen sich nur auf einem Windows-Server anzeigen"
+
+
+def test_host_hanging_returns_504_quickly(api_client, monkeypatch):
+    release = Event()
+    monkeypatch.setattr(fs, "os_name", "nt")
+    monkeypatch.setattr(fs, "list_timeout_s", 0.2)
+    monkeypatch.setattr(fs, "_list_shares", lambda host: (release.wait(), False), raising=False)
+    started = monotonic()
+    try:
+        response = api_client.get("/api/v1/fs/dirs", params={"path": r"\\srv"})
+        assert response.status_code == 504
+        assert response.json()["detail"] == r"Rechner antwortet nicht: \\srv"
+        assert monotonic() - started < 2
+    finally:
+        release.set()
+
+
+def test_host_errors_map_status(api_client, monkeypatch):
+    monkeypatch.setattr(fs, "os_name", "nt")
+    cases = (
+        (PermissionError("denied"), 403, r"Kein Zugriff auf \\srv"),
+        (FileNotFoundError("missing"), 404, r"Rechner nicht gefunden: \\srv"),
+        (OSError("failure"), 502, r"Freigaben nicht lesbar: \\srv"),
+    )
+    for error, status_code, detail in cases:
+        def raise_error(host, error=error):
+            raise error
+
+        monkeypatch.setattr(fs, "_list_shares", raise_error, raising=False)
+        response = api_client.get("/api/v1/fs/dirs", params={"path": r"\\srv"})
+        assert response.status_code == status_code
+        assert response.json()["detail"] == detail
+
+
+def test_share_root_parent_is_host_on_windows(api_client, monkeypatch):
+    monkeypatch.setattr(fs, "os_name", "nt")
+    monkeypatch.setattr(fs, "_list_dirs", lambda path: ([], False))
+
+    response = api_client.get("/api/v1/fs/dirs", params={"path": r"\\srv\Media"})
+
+    assert response.status_code == 200
+    assert response.json()["path"] == r"\\srv\Media"
+    assert response.json()["parent"] == r"\\srv"

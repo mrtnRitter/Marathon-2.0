@@ -37,7 +37,7 @@ function read_settings_width(): number {
 const minimap_color = (node: ModuleFlowNode) =>
   node.data.module.counters.failed > 0 ? 'var(--status-failed)' : node.data.module.counters.running > 0 ? 'var(--status-in-progress)' : 'var(--border-strong)'
 
-export function WorkflowCanvas({ workflow_id, initial_mode }: { workflow_id: string; initial_mode?: EditorMode }) {
+export function WorkflowCanvas({ workflow_id, initial_mode, on_saved }: { workflow_id: string; initial_mode?: EditorMode; on_saved?: () => void }) {
   const [mode, set_mode] = useState<EditorMode>(initial_mode ?? 'monitor')
   const { data, reload } = use_data(() => Promise.all([get_workflow_graph(workflow_id), get_module_types()]), [workflow_id])
   if (!data) return <div className="loading">Lade Workflow</div>
@@ -45,7 +45,7 @@ export function WorkflowCanvas({ workflow_id, initial_mode }: { workflow_id: str
   if (!graph) return <div className="loading">Kein Graph für diesen Workflow</div>
   return (
     <ReactFlowProvider>
-      <Editor key={`${workflow_id}-${graph.version}`} graph={graph} module_types={module_types} mode={mode} on_mode_change={set_mode} on_saved={reload} />
+      <Editor key={`${workflow_id}-${graph.version}`} graph={graph} module_types={module_types} mode={mode} on_mode_change={set_mode} on_saved={() => { reload(); on_saved?.() }} />
     </ReactFlowProvider>
   )
 }
@@ -97,11 +97,11 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
   const inspected_node = nodes.find(node => node.id === inspected_id && node.data.module.locked)
 
   const save = async () => {
-    if (saving || invalid.length > 0) return
+    if (saving) return
     set_saving(true)
     try {
       await save_workflow_graph(graph.workflow_id, to_graph_input(graph.version, nodes, edges))
-      notify('Gespeichert')
+      notify(invalid.length > 0 ? 'Gespeichert. Einstellungen prüfen – so lässt sich der Workflow nicht starten' : 'Gespeichert')
       on_saved()
     } catch {
       // The request already displays the error.
@@ -194,7 +194,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
           <div className="workflow-editor-bar">
             <div className="mode-switch" role="tablist">
               {(['monitor', 'edit'] as const).map(item => (
-                <button key={item} type="button" role="tab" aria-selected={mode === item} className={mode === item ? 'active' : undefined} onClick={() => { on_mode_change(item); set_inspected_id(null) }}>
+                <button key={item} type="button" role="tab" aria-selected={mode === item} className={mode === item ? 'active' : undefined} onClick={() => { on_mode_change(item); set_inspected_id(null); set_activity_node(null) }}>
                   {item === 'monitor' ? 'Überwachen' : 'Bearbeiten'}
                 </button>
               ))}
@@ -206,7 +206,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
               {editing ? (
                 <>
                   <Button label="Verwerfen" icon="undo" on_click={reset} disabled={!dirty} />
-                  <Button label="Speichern" icon="save" primary on_click={save} disabled={!dirty || saving || invalid.length > 0} />
+                  <Button label="Speichern" icon="save" primary on_click={save} disabled={!dirty || saving} />
                 </>
               ) : null}
             </div>
@@ -232,7 +232,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
                 onConnect={on_connect}
                 isValidConnection={is_valid_connection}
                 onNodeClick={on_node_click}
-                onPaneClick={() => set_inspected_id(null)}
+                onPaneClick={() => { set_inspected_id(null); if (!editing) set_activity_node(null) }}
                 onSelectionChange={({ nodes: selection }) => { if (selection.length > 0) set_inspected_id(null) }}
                 onBeforeDelete={on_before_delete}
                 nodesDraggable={editing}
@@ -261,7 +261,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
             )}
           </div>
         </div>
-        {activity_node && <ModuleActivityPanel workflow_id={graph.workflow_id} data={activity_node} on_close={() => set_activity_node(null)} />}
+        {activity_node && <ModuleActivityPanel key={activity_node.module.id} workflow_id={graph.workflow_id} data={activity_node} on_close={() => set_activity_node(null)} />}
       </EditorModeContext.Provider>
     </EditorActionsContext.Provider>
   )
