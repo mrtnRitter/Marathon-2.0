@@ -82,7 +82,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
 
 ### unsortiert von Martin
-- [ ] Orner öffnen - bekommen wir irgendwie die Netzlaufwerke angezeigt (zb. im Windows Explorer gebe ich in \\10.0.77.11 enter - sehe alle Shares und navigiere von da aus)  
+- [ ] Orner öffnen - bekommen wir irgendwie die Netzlaufwerke angezeigt (zb. im Windows Explorer gebe ich in \\10.0.77.11 enter - sehe alle Shares und navigiere von da aus)  - im Browser gibt es Öffnen und Speicherndialoge im Stil vom OS mit allem, was ich hier brauche
 - [ ] Warten: nur "Angabe in Sekunden", Rest weg
 - [ ] wenn Prio verändert wird, Zeile kurz aufleuchten lassen
 - [ ] Workflow mit fehlern, unvollständigen angaben soll dennoch gespeichert werden können - workflow lässt sich aber nicht starten, ausrufezeichen in workflowübersicht (dashboard und workflow), beim versuch, zu starten hinweis, dass einstellungen geprüft werden müssen.
@@ -90,3 +90,9 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] module: erfolg und fehler bekommen grun und rot als textfarbe im stil unserer Farbpalette, linien von diesen Punkten bekommen die gleiche farbe (grün oder rot)
 - [ ] workflow überwachen: wenn ein node markiert ist und ich einen anderen node anklicke, soll gleich dessen nodeansicht mit jobs angezeigt werden (aktuell geht erst das seitenpanel zu)
 - [ ] Cat Icon mit Schnurrhaare?
+- [ ] zur Engine:
+  - [ ] Sollte der Worker den Job nicht lieber zugeteilt bekommen - damit hat Marathon mehr Kontrolle über die Worker (zb. ein Worker gut beim Transcode, einer schnell bei Fileoperationen - das können wir dann gezielt ansteuern).
+  - [ ] Workflow pausieren bricht alle Bearbeitungen sofort ab. Dateien, die nur zum Teil fertiggestellt sind, werden verworfen. Das Assets rutscht zum vorherigen Modul zurück, in dem es als Fertig stand. Wenn das Abbrechen der Jobkette länger als 1 Sekunde dauert, gibt es einen Meldung, dass der Workflow gerade beendet wird. Alle Buttons mit Play-Pause stehen dann auf "Wird pausiert" und lassen sich nicht klicken.
+  - [ ] Jedes Modul hat immer den Ausgang Fehler und Erfolg. Falls am Fehlerausgang kein weiteres Modul angelegt ist, gilt das Assets als Fehlgeschlagen und Beendet.
+  - [ ] Jeder Workflow hat seine eigenen Asset-Liste und pro Workflow werden die Assets verweilt. 
+  - [ ] Warten sollte kein normaler Job sein, zumindest keinen, den wir für worker rauslegen. 
