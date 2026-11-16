@@ -6,7 +6,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - `[ ]` geplant · `[]` eingebaut, Abnahme offen · `[x]` eingebaut und abgenommen
 - Grundlage: `docs/m2_architektur_vorueberlegungen.md`
 
-
 ### Abnahme offen
 
 - [] Assets neu verarbeiten: Option: in einem anderen Workflow
@@ -18,11 +17,96 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 ---
 ---
 
+## Geplant
+
+### Release: Feinschliff
+
+- [ ] Ordner wählen: Eingabe `\\rechner` (z. B. `\\10.0.77.11`) zeigt alle Freigaben dieses Rechners, von dort weiter navigieren (Server unter Windows)
+  - Browser-eigene Dialoge liefern keinen Pfad und zeigen den Rechner des Browsers statt des Servers; darum bleibt der eigene Dialog
+- [ ] Warten: Hilfetext nur „Angabe in Sekunden“
+- [ ] Prioliste: Zeile mit geänderter Prio leuchtet kurz auf
+- [ ] Workflow mit Fehlern oder unvollständigen Einstellungen lässt sich speichern
+  - Starten gesperrt, auch zeitgesteuert (Hinweis im Log)
+  - Ausrufezeichen in Workflow-Übersicht, Dashboard und Workflow-Ansicht
+  - Startversuch zeigt den Hinweis, die Einstellungen zu prüfen
+- [ ] Beschriftung „Namenskonflikt lösen“ (ohne „mit _n“) in Datei kopieren und Umbenennen
+- [ ] Ausgänge Erfolg und Fehler in Grün und Rot aus der Farbpalette, ihre Verbindungslinien in derselben Farbe
+- [ ] Workflow überwachen: Ist ein Modul markiert, öffnet ein Klick auf ein anderes direkt dessen Modulsicht mit Jobs
+- [ ] Katzenkopf-Icon mit Schnurrhaaren
+
+### Release: Engine (Detailkonzept, Entscheidungen offen) – nach dem Feinschliff
+
+#### Vorgaben von Martin
+
+- [ ] Engine: Jobs veröffentlichen, zuteilen, Ergebnisse auswerten
+- [ ] Zuteilung durch den Server: Marathon entscheidet, welcher Worker welchen Job bekommt (z. B. Transcode gezielt an einen Worker, Dateioperationen an einen anderen)
+- [ ] Workflow pausieren bricht alle Bearbeitungen sofort ab
+  - Teilweise fertige Dateien werden verworfen
+  - Das Asset rutscht zum vorherigen Modul zurück, an dem es als fertig stand
+  - Dauert das Abbrechen länger als 1 s: Meldung, dass der Workflow gerade pausiert wird; alle Play/Pause-Buttons zeigen „Wird pausiert“ und sind gesperrt
+- [ ] Jedes Modul hat immer die Ausgänge Erfolg und Fehler; ohne Modul am Fehlerausgang ist das Asset fehlgeschlagen und beendet
+- [ ] Jeder Workflow hat seine eigene Asset-Liste; die Assets werden je Workflow verwaltet
+- [ ] Warten ist kein Job für Worker
+
+#### Konzeptvorschlag (CodeZilla)
+
+1. **Zuteilung:** Der Server entscheidet, welcher Worker welchen Job bekommt. Die Verbindung baut trotzdem der Worker auf: Er fragt laufend „Habe ich Arbeit?“, der Server antwortet mit dem Job, den er ihm zugeteilt hat. So braucht kein Worker-Rechner offene Ports.
+2. **Zwei Modularten:**
+   - Server-Module (Warten, später Bedingung, Sammeln) erledigt die Engine selbst. Warten ist nur eine Zeitmarke am Asset und belegt keinen Worker.
+   - Worker-Module (Dateien, Transcode, QC …) gehen als Job an einen Worker. Der Modulkatalog kennzeichnet, wo ein Modul läuft.
+3. **Worker-Einstellungen:** erlaubte Modultypen (Fähigkeiten), Anzahl paralleler Jobs, optional Vorrang je Modultyp (z. B. „bevorzugt für Transcode“).
+4. **Reihenfolge:** Wird bei einem Worker ein Platz frei, kommen die gestarteten Workflows reihum dran. Innerhalb eines Workflows ist das Asset zuerst dran, das am weitesten oben in der Liste steht.
+5. **Weg eines Assets:** Ein Asset steht immer an einem Modul und ist dort *wartet*, *läuft* oder *fertig*. Ist es fertig, bestimmt der Ausgang das nächste Modul. Hängt am Ausgang nichts mehr: nach Erfolg *Erledigt*, nach Fehler *Fehlgeschlagen*.
+6. **Pausieren:** Zustände *Läuft* → *Wird pausiert* → *Pausiert*.
+   - Sofort keine neuen Jobs, Abbruchsignal an alle laufenden Jobs
+   - Module verwerfen halb fertige Dateien (Kopieren und Verschieben tun das schon)
+   - Asset geht zurück auf *fertig* am vorherigen Modul; beim nächsten Start läuft das abgebrochene Modul neu
+   - *Pausiert* ist erreicht, wenn jeder Job den Abbruch bestätigt hat oder sein Worker 30 s nichts gemeldet hat
+   - Bis der Live-Kanal kommt, fragt die Seite den Zustand im Sekundentakt ab
+7. **Ausfälle** (Worker stürzt ab, ist offline, Server startet neu): wie Pausieren – Asset zurück, Job wird neu vergeben.
+8. **Workflow ändern während des Laufs:** Laufende Jobs behalten ihre Einstellungen; danach gilt die neue Version.
+9. **Erneut verarbeitete Assets** (ohne aktuelles Modul) starten hinter dem Quellmodul.
+10. **Neue Assets aus Modulen** (z. B. die Kopie aus „Datei kopieren“) werden am erzeugenden Modul angelegt und laufen über dessen Ausgang weiter; das Original ist dort erledigt.
+11. **Datenbank:** Jobs speichern die Einstellungen ihres Moduls, die Ablaufzeit der Zuteilung, den Fehlertext und das Modul, von dem das Asset kam; je Asset im Job der gemeldete Ausgang.
+12. **Schnittstelle für Worker** (versioniert, später auch für den Worker-Client): anmelden, Lebenszeichen, Job holen, Fortschritt und Log melden, Ergebnis melden, Abbruch erfahren.
+
+#### Fragen an Martin
+
+- [ ] **Wo laufen Worker-Module, solange es noch keinen Worker-Client gibt?**
+  - a) Eingebauter Worker „Server“: wird zugeteilt wie jeder andere Worker und lässt sich sperren; Pfade gelten aus Sicht des Servers (Empfehlung)
+  - b) Noch gar nicht: Ausführung erst mit dem Worker-Client
+  - c) Release Engine bringt einen einfachen Worker-Client ohne Auto-Update mit
+- [ ] **Unterbrochene Jobs** (Absturz, Neustart; bei Dateien z. B. eine halbe Kopie)
+  - a) Wie Pausieren neu einreihen, höchstens 3 Versuche am selben Modul, danach Ausgang Fehler (Empfehlung)
+  - b) Sofort Fehlgeschlagen mit Hinweis „unterbrochen“, erneut verarbeiten von Hand
+  - c) Nur „Warten“ neu einreihen, bei Dateimodulen sofort Fehlgeschlagen
+- [ ] **Bevorzugter Worker belegt:** Job geht an einen anderen passenden Worker (Empfehlung) oder wartet auf den bevorzugten?
+- [ ] **Verteilung zwischen Workflows:** reihum (Empfehlung) oder eine Workflow-Priorität wieder einführen?
+- [ ] **Workflow ändern während des Laufs:** speichern erlaubt, neue Version gilt ab dem nächsten Modul (Empfehlung) – oder nur im pausierten Zustand speichern?
+- [ ] **Startmodul erneut verarbeiteter Assets:** hinter dem Quellmodul; gibt es keins, das einzige Modul ohne eingehende Verbindung; nicht eindeutig → Fehlgeschlagen mit Meldung. Passt das?
+
+#### Von CodeZilla entschieden (zur Prüfung)
+
+- Zuteilung oder Abholung betrifft nur die Verbindung; die Entscheidung trifft immer der Server
+- Ein Ergebnis, das vor dem Abbruch schon fertig war, wird übernommen (sonst stünde nach einem erledigten Verschieben der alte Pfad am Asset)
+- Ein spätes Ergebnis eines abgebrochenen Jobs wird verworfen
+- Watchfolder und Prioliste haben keinen Eingang; für sie gilt die Pflicht zu Erfolg und Fehler nicht. „Warten“ bekommt einen Ausgang Fehler
+- Ein Modul, das mit einem Fehler abbricht, gibt das Asset über den Ausgang Fehler weiter; die Meldung kommt in den Log
+- Fehlt das Modul eines Assets in der neuen Workflow-Version: Fehlgeschlagen mit „Modul nicht mehr im Workflow“
+- Ein Worker gilt nach 30 s ohne Meldung als ausgefallen
+- Die Prioliste wird von der Engine vorerst übergangen (eigener Backlog-Punkt „Verarbeitung nach Prio“)
+- Fähigkeiten und Vorrang werden in der Worker-Ansicht je Worker eingestellt
+- Parallelität und Ablaufzeit der Zuteilung stehen im neuen Abschnitt `[engine]` in `config/server.toml`
+- Nicht im Release Engine: Live-Kanal, Worker-Client mit Auto-Update, Asset-Aktionen (Abbrechen, Anhalten, nach oben), Verarbeitung nach Prioliste, Sammeljobs
+- Ersetzt durch Martins Vorgaben: „Warten läuft als normaler Job“, „Pausieren lässt laufende Jobs fertig laufen“, „Jobs über alle Workflows hinweg nach Alter“
+
+---
+---
+
 ## Backlog (Reihenfolge offen)
 
 ### Engine und Worker
 
-- [ ] Engine: Jobs veröffentlichen, zuteilen, Ergebnisse auswerten
 - [ ] Live-Kanal zum Browser
 - [ ] Worker-Client: Starter, Client-Laufzeit, Auto-Update mit Rückfall
 - [ ] Rollout von Client-Versionen
@@ -82,17 +166,3 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
 
 ### unsortiert von Martin
-- [ ] Orner öffnen - bekommen wir irgendwie die Netzlaufwerke angezeigt (zb. im Windows Explorer gebe ich in \\10.0.77.11 enter - sehe alle Shares und navigiere von da aus)  - im Browser gibt es Öffnen und Speicherndialoge im Stil vom OS mit allem, was ich hier brauche
-- [ ] Warten: nur "Angabe in Sekunden", Rest weg
-- [ ] wenn Prio verändert wird, Zeile kurz aufleuchten lassen
-- [ ] Workflow mit fehlern, unvollständigen angaben soll dennoch gespeichert werden können - workflow lässt sich aber nicht starten, ausrufezeichen in workflowübersicht (dashboard und workflow), beim versuch, zu starten hinweis, dass einstellungen geprüft werden müssen.
-- [ ] Beschreibung "Namenskonflikt lösen" (ohne "mit _n")
-- [ ] module: erfolg und fehler bekommen grun und rot als textfarbe im stil unserer Farbpalette, linien von diesen Punkten bekommen die gleiche farbe (grün oder rot)
-- [ ] workflow überwachen: wenn ein node markiert ist und ich einen anderen node anklicke, soll gleich dessen nodeansicht mit jobs angezeigt werden (aktuell geht erst das seitenpanel zu)
-- [ ] Cat Icon mit Schnurrhaare?
-- [ ] zur Engine:
-  - [ ] Sollte der Worker den Job nicht lieber zugeteilt bekommen - damit hat Marathon mehr Kontrolle über die Worker (zb. ein Worker gut beim Transcode, einer schnell bei Fileoperationen - das können wir dann gezielt ansteuern).
-  - [ ] Workflow pausieren bricht alle Bearbeitungen sofort ab. Dateien, die nur zum Teil fertiggestellt sind, werden verworfen. Das Assets rutscht zum vorherigen Modul zurück, in dem es als Fertig stand. Wenn das Abbrechen der Jobkette länger als 1 Sekunde dauert, gibt es einen Meldung, dass der Workflow gerade beendet wird. Alle Buttons mit Play-Pause stehen dann auf "Wird pausiert" und lassen sich nicht klicken.
-  - [ ] Jedes Modul hat immer den Ausgang Fehler und Erfolg. Falls am Fehlerausgang kein weiteres Modul angelegt ist, gilt das Assets als Fehlgeschlagen und Beendet.
-  - [ ] Jeder Workflow hat seine eigenen Asset-Liste und pro Workflow werden die Assets verweilt. 
-  - [ ] Warten sollte kein normaler Job sein, zumindest keinen, den wir für worker rauslegen. 
