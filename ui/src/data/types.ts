@@ -3,7 +3,8 @@
 export type AssetStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'on_hold'
 export type StepStatus = 'waiting' | 'running'
 export type WorkerStatus = 'new' | 'ready' | 'busy' | 'offline' | 'locked' | 'updating'
-export type JobStatus = 'open' | 'assigned' | 'succeeded' | 'failed' | 'cancelled'
+export type JobStatus = 'open' | 'assigned' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+export type WorkerPriority = 'preferred' | 'normal' | 'last' | 'off'
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export interface PrioEntry { name: string; metadata: Record<string, unknown> }
 
@@ -103,6 +104,7 @@ export interface Workflow {
   name: string
   description: string
   active: boolean
+  pausing: boolean
   issues: string[]
   version: number
   schedule?: WorkflowSchedule | null
@@ -168,6 +170,8 @@ export interface Worker {
   status: WorkerStatus
   capabilities: string[]
   max_parallel: number
+  priorities: Record<string, WorkerPriority>
+  client_slots: number
   running_jobs: number
   client_version: string
   last_seen: string
@@ -202,6 +206,18 @@ export interface JobStatusReport {
   end: string
   rows: JobStatusReportRow[]
   totals: JobStatusCounts
+}
+
+export interface GraphImpact {
+  removed_modules: { id: string; name: string; assets: number; jobs: number }[]
+  assets: number
+  jobs: number
+}
+
+export interface WorkerInput {
+  name: string
+  max_parallel: number
+  priorities: Record<string, WorkerPriority>
 }
 
 export interface WorkflowInput {

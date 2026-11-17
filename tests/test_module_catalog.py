@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from marathon.modules import CatalogError, build_catalog, catalog_module, load_catalog, required_keys
-from marathon.modules import watchfolder
+from marathon.modules import priolist, watchfolder
 from marathon.server.app import create_app
 from marathon.server.db.catalog_writes import sync_module_types
 
@@ -33,12 +33,49 @@ def _spec(type_id: str, sort_order: int = 0) -> dict[str, Any]:
 def test_load_catalog_contains_watchfolder():
     spec = next(spec for spec in load_catalog() if spec["id"] == "watchfolder")
 
-    assert spec == {key: watchfolder.MODULE[key] for key in required_keys}
+    assert spec == {key: watchfolder.MODULE[key] for key in (*required_keys, "execution")}
     assert [setting["key"] for setting in spec["settings"]] == [
         "path", "include", "exclude", "wait_s", "recursive",
     ]
     assert spec["has_input"] is False
     assert [output["id"] for output in spec["outputs"]] == ["success"]
+
+
+def test_execution_defaults_to_none():
+    module = SimpleNamespace(__name__="x", MODULE=_spec("a"))
+
+    assert build_catalog([module])[0]["execution"] == "none"
+
+
+def test_invalid_execution_raises():
+    module = SimpleNamespace(__name__="x", MODULE={**_spec("a"), "execution": "gpu"})
+
+    with pytest.raises(CatalogError, match="Modul x: ungültige execution: gpu"):
+        build_catalog([module])
+
+
+def test_catalog_execution_values():
+    catalog = {spec["id"]: spec["execution"] for spec in load_catalog()}
+
+    assert {module_id: catalog[module_id] for module_id in (
+        "watchfolder", "wait", "copy_file", "move_file", "rename_file", "priolist"
+    )} == {
+        "watchfolder": "none",
+        "wait": "engine",
+        "copy_file": "worker",
+        "move_file": "worker",
+        "rename_file": "worker",
+        "priolist": "none",
+    }
+    from marathon.modules import execution_values
+
+    assert execution_values == ("worker", "engine", "none")
+
+
+def test_priolist_list_output_is_data():
+    output = next(output for output in priolist.MODULE["outputs"] if output["id"] == "list")
+
+    assert output["data"] is True
 
 
 def test_build_catalog_rejects_missing_key():
@@ -100,6 +137,18 @@ def test_sync_module_types_upserts(db_engine):
     assert row["settings"] == spec["settings"]
     assert source_name == "Quelle"
     assert count == 2
+
+
+def test_sync_writes_execution(db_engine):
+    wait_spec = next(spec for spec in load_catalog() if spec["id"] == "wait")
+
+    with db_engine.begin() as connection:
+        assert sync_module_types(connection, [wait_spec]) == 1
+        execution = connection.execute(
+            text("SELECT execution FROM module_types WHERE id = 'wait'")
+        ).scalar_one()
+
+    assert execution == "engine"
 
 
 def test_app_syncs_catalog_only_when_enabled(db_engine, tmp_path):

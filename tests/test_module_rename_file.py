@@ -20,7 +20,7 @@ def test_catalog_entry():
 
     assert spec == {key: MODULE[key] for key in (
         "id", "name", "category", "icon", "description", "has_input",
-        "outputs", "settings", "sort_order",
+        "outputs", "settings", "sort_order", "execution",
     )}
     assert spec["has_input"] is True
     assert [item["id"] for item in spec["outputs"]] == ["success", "error"]

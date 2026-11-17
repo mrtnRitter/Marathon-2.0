@@ -45,7 +45,7 @@ def _workflow_record(row: Any) -> dict[str, Any]:
 def list_workflows(connection: Connection) -> list[dict[str, Any]]:
     """List workflows by case-insensitive name with counts for every asset status."""
     rows = connection.execute(text(
-        "SELECT id, name, description, active, current_version AS version, "
+        "SELECT id, name, description, active, pausing, current_version AS version, "
         "schedule_every, schedule_unit, schedule_start, next_run_at "
         "FROM workflows ORDER BY lower(name), id"
     )).mappings()
@@ -62,7 +62,7 @@ def list_workflows(connection: Connection) -> list[dict[str, Any]]:
 def get_workflow(connection: Connection, workflow_id: str) -> dict[str, Any] | None:
     """Return one workflow and its asset counts, or None when it does not exist."""
     row = connection.execute(text(
-        "SELECT id, name, description, active, current_version AS version, "
+        "SELECT id, name, description, active, pausing, current_version AS version, "
         "schedule_every, schedule_unit, schedule_start, next_run_at "
         "FROM workflows WHERE id = :workflow_id"
     ), {"workflow_id": workflow_id}).mappings().one_or_none()
@@ -79,16 +79,27 @@ def asset_totals(connection: Connection) -> dict[str, int]:
     return _asset_counts(connection)
 
 
+_worker_select = (
+    "SELECT worker.id, worker.name, worker.status, worker.capabilities, worker.max_parallel, "
+    "(SELECT COUNT(*) FROM jobs WHERE jobs.status IN ('assigned', 'running', 'cancelling') "
+    "AND jobs.worker_id = worker.id) AS running_jobs, worker.client_version, "
+    "COALESCE(worker.last_seen, worker.created_at) AS last_seen, worker.ip_address, "
+    "worker.priorities, worker.client_slots FROM workers AS worker "
+)
+
+
 def list_workers(connection: Connection) -> list[dict[str, Any]]:
-    """List workers alphabetically with assigned-job counts and a non-null last-seen time."""
-    rows = connection.execute(text(
-        "SELECT worker.id, worker.name, worker.status, worker.capabilities, worker.max_parallel, "
-        "(SELECT COUNT(*) FROM jobs WHERE jobs.status = 'assigned' "
-        "AND jobs.worker_id = worker.id) AS running_jobs, worker.client_version, "
-        "COALESCE(worker.last_seen, worker.created_at) AS last_seen, worker.ip_address "
-        "FROM workers AS worker ORDER BY worker.name"
-    )).mappings()
+    """List workers alphabetically with active-job counts and a non-null last-seen time."""
+    rows = connection.execute(text(_worker_select + "ORDER BY worker.name")).mappings()
     return [dict(row) for row in rows]
+
+
+def get_worker(connection: Connection, worker_id: str) -> dict[str, Any] | None:
+    """Return one worker in the list format, or None when it does not exist."""
+    row = connection.execute(
+        text(_worker_select + "WHERE worker.id = :worker_id"), {"worker_id": worker_id}
+    ).mappings().one_or_none()
+    return dict(row) if row is not None else None
 
 
 def list_module_types(connection: Connection) -> list[dict[str, Any]]:

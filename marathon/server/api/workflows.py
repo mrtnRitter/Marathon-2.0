@@ -5,15 +5,18 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import text
 from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy.engine import Engine
 
 from marathon.server.api.deps import get_engine
 from marathon.server.db.detail_queries import get_graph
+from marathon.server.engine.jobs import graph_impact
 from marathon.server.db.queries import get_workflow
 from marathon.server.db.workflow_writes import (
     WorkflowConflict,
     WorkflowNotStartable,
+    WorkflowPausing,
     WorkflowValidationError,
     create_workflow,
     duplicate_workflow,
@@ -167,6 +170,8 @@ def put_workflow_active(
             status_code=409,
             detail="Workflow kann nicht gestartet werden. " + str(exc),
         ) from exc
+    except WorkflowPausing as exc:
+        raise HTTPException(status_code=409, detail="Workflow wird gerade pausiert") from exc
     return workflow
 
 
@@ -207,3 +212,19 @@ def put_workflow_graph(
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return graph
+
+
+@router.post("/workflows/{workflow_id}/graph/impact")
+def post_workflow_graph_impact(
+    workflow_id: str,
+    payload: GraphInput,
+    engine: Engine = Depends(get_engine),
+) -> dict[str, Any]:
+    """Return the impact of removing modules in a proposed graph."""
+    with engine.begin() as connection:
+        exists = connection.execute(
+            text("SELECT id FROM workflows WHERE id = :id FOR SHARE"), {"id": workflow_id}
+        ).scalar_one_or_none()
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+        return graph_impact(connection, workflow_id, [module.id for module in payload.modules])

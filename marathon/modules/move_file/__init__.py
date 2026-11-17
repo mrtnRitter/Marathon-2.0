@@ -13,6 +13,7 @@ from marathon.modules.watchfolder.rules import validate_path
 # CONFIG
 defaults = {"target": ""}
 MODULE = {
+    "execution": "worker",
     "id": "move_file",
     "name": "Datei verschieben",
     "category": "Dateien",

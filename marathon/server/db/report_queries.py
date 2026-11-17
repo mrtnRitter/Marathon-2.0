@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 
-_job_statuses = ("open", "assigned", "succeeded", "failed", "cancelled")
+_job_statuses = ("open", "assigned", "running", "cancelling", "succeeded", "failed", "cancelled", "interrupted")
 
 
 def job_status_report(

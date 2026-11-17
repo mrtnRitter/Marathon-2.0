@@ -5,9 +5,10 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Button } from '../../components/Toolbar'
+import { SlidePanel } from '../../components/SlidePanel'
 import { notify } from '../../components/Toast'
-import { get_module_types, get_workflow_graph, save_workflow_graph } from '../../data/api'
-import type { ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
+import { get_graph_impact, get_module_types, get_workflow_graph, save_workflow_graph } from '../../data/api'
+import type { GraphImpact, GraphInput, ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
 import { has_setting_errors } from '../../lib/module_settings'
 import { use_data } from '../../data/use_data'
 import { EditorActionsContext, EditorModeContext, drag_mime, type EditorMode, type ModuleFlowNode, type ModuleNodeData } from './editor_types'
@@ -61,6 +62,8 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
   const [edges, set_edges, on_edges_change] = useEdgesState<Edge>(lock_edges(to_edges(graph), locked_ids(initial_nodes)))
   const [dirty, set_dirty] = useState(false)
   const [saving, set_saving] = useState(false)
+  const [impact, set_impact] = useState<GraphImpact | null>(null)
+  const [pending_graph_input, set_pending_graph_input] = useState<GraphInput | null>(null)
   const [activity_node, set_activity_node] = useState<ModuleNodeData | null>(null)
   const [inspected_id, set_inspected_id] = useState<string | null>(null)
   const { screenToFlowPosition } = useReactFlow()
@@ -96,18 +99,48 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
   const invalid = nodes.filter(node => has_setting_errors(node.data.module_type, node.data.module.settings))
   const inspected_node = nodes.find(node => node.id === inspected_id && node.data.module.locked)
 
+  const save_graph_input = async (input: GraphInput) => {
+    await save_workflow_graph(graph.workflow_id, input)
+    set_impact(null)
+    set_pending_graph_input(null)
+    notify(invalid.length > 0 ? 'Gespeichert. Einstellungen prüfen – so lässt sich der Workflow nicht starten' : 'Gespeichert')
+    on_saved()
+  }
+
   const save = async () => {
     if (saving) return
+    const input = to_graph_input(graph.version, nodes, edges)
     set_saving(true)
     try {
-      await save_workflow_graph(graph.workflow_id, to_graph_input(graph.version, nodes, edges))
-      notify(invalid.length > 0 ? 'Gespeichert. Einstellungen prüfen – so lässt sich der Workflow nicht starten' : 'Gespeichert')
-      on_saved()
+      const graph_impact = await get_graph_impact(graph.workflow_id, input)
+      if (graph_impact.assets > 0) {
+        set_impact(graph_impact)
+        set_pending_graph_input(input)
+        return
+      }
+      await save_graph_input(input)
     } catch {
       // The request already displays the error.
     } finally {
       set_saving(false)
     }
+  }
+
+  const confirm_save = async () => {
+    if (!pending_graph_input || saving) return
+    set_saving(true)
+    try {
+      await save_graph_input(pending_graph_input)
+    } catch {
+      // The request already displays the error.
+    } finally {
+      set_saving(false)
+    }
+  }
+
+  const close_impact = () => {
+    set_impact(null)
+    set_pending_graph_input(null)
   }
 
   const reset = () => {
@@ -261,6 +294,13 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
             )}
           </div>
         </div>
+        <SlidePanel open={impact !== null} title="Änderung betrifft laufende Assets" on_close={close_impact}
+          actions={[
+            { label: 'Abbrechen', icon: 'close', on_click: close_impact, disabled: saving },
+            { label: 'Speichern', icon: 'save', primary: true, on_click: confirm_save, disabled: saving || pending_graph_input === null },
+          ]}>
+          {impact?.removed_modules.map(module => <p key={module.id}>{module.name}: {module.assets} Assets, {module.jobs} laufende Jobs werden abgebrochen</p>)}
+        </SlidePanel>
         {activity_node && <ModuleActivityPanel key={activity_node.module.id} workflow_id={graph.workflow_id} data={activity_node} on_close={() => set_activity_node(null)} />}
       </EditorModeContext.Provider>
     </EditorActionsContext.Provider>

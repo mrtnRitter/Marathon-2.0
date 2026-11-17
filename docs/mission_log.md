@@ -21,6 +21,8 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### Release: Engine (Detailkonzept, Entscheidungen offen) – nach dem Feinschliff
 
+Umsetzungsvertrag: `docs/engine_spec.md`
+
 #### Vorgaben von Martin
 
 - [ ] Engine: Jobs veröffentlichen, zuteilen, Ergebnisse auswerten
@@ -71,7 +73,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 #### Offen zur Jobsteuerung
 
-- [ ] Zustandstabelle für Asset, Job und Worker (jeder Zustand, jeder Übergang mit Auslöser) – erstellt CodeZilla nach Prüfung der Punkte „Von CodeZilla entschieden“
+- [] Zustandstabelle für Asset, Job, Worker und Workflow: `docs/engine_spec.md`, Abschnitt 4
 - [ ] Transcode: Wie GPU- und CPU-Verarbeitung je Worker gewählt wird, klärt das Transcode-Modul
 - [ ] Erreichbarkeit der Pfade: Ein Worker darf nur Jobs bekommen, deren Pfade er erreicht (z. B. nur Netzlaufwerk). Vorschlag: je Worker erreichbare Speicherorte, zusammen mit der Pfadzuordnung – spätestens mit dem Worker-Client; solange nur der Server-Worker arbeitet, nicht nötig
 

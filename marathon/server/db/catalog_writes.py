@@ -14,13 +14,14 @@ def sync_module_types(connection: Connection, specs: list[dict[str, Any]]) -> in
     connection.execute(text("SET LOCAL lock_timeout = '10s'"))
     statement = text(
         "INSERT INTO module_types "
-        "(id, name, category, icon, description, has_input, outputs, settings, sort_order) "
-        "VALUES (:id, :name, :category, :icon, :description, :has_input, :outputs, :settings, :sort_order) "
+        "(id, name, category, icon, description, has_input, outputs, settings, sort_order, execution) "
+        "VALUES (:id, :name, :category, :icon, :description, :has_input, :outputs, :settings, :sort_order, :execution) "
         "ON CONFLICT (id) DO UPDATE SET "
         "name = EXCLUDED.name, category = EXCLUDED.category, icon = EXCLUDED.icon, "
         "description = EXCLUDED.description, has_input = EXCLUDED.has_input, "
-        "outputs = EXCLUDED.outputs, settings = EXCLUDED.settings, sort_order = EXCLUDED.sort_order"
+        "outputs = EXCLUDED.outputs, settings = EXCLUDED.settings, sort_order = EXCLUDED.sort_order, "
+        "execution = EXCLUDED.execution"
     ).bindparams(bindparam("outputs", type_=JSONB), bindparam("settings", type_=JSONB))
     for spec in specs:
-        connection.execute(statement, spec)
+        connection.execute(statement, {**spec, "execution": spec.get("execution", "none")})
     return len(specs)

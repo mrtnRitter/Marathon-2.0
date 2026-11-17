@@ -5,12 +5,12 @@ import { IssueMark } from '../components/IssueMark'
 import { StatusBadge } from '../components/StatusBadge'
 import { Tabs } from '../components/Tabs'
 import { get_workflow } from '../data/api'
-import { set_workflows_active } from '../lib/workflows'
+import { set_workflows_active, use_pausing_reload } from '../lib/workflows'
 import { use_data } from '../data/use_data'
 import { AssetList } from '../features/assets/AssetList'
 import { WorkflowCanvas } from '../features/workflow-editor/WorkflowCanvas'
 import type { EditorMode } from '../features/workflow-editor/editor_types'
-import { active_meta, asset_statuses } from '../theme/status'
+import { workflow_state_meta, asset_statuses } from '../theme/status'
 import './WorkflowDetailPage.css'
 
 const tabs = ['modules', 'assets']
@@ -21,6 +21,7 @@ export function WorkflowDetailPage() {
   const location = useLocation()
   const initial_mode: EditorMode | undefined = (location.state as { mode?: string } | null)?.mode === 'edit' ? 'edit' : undefined
   const { data: workflow, loading, reload } = use_data(() => get_workflow(workflow_id), [workflow_id])
+  use_pausing_reload(workflow ? [workflow] : undefined, reload)
   const [busy, set_busy] = useState(false)
   const toggle = async () => {
     if (!workflow || busy) return
@@ -33,8 +34,8 @@ export function WorkflowDetailPage() {
     <>
       <PageHeader
         breadcrumb={<><Link to="/workflows">Workflows</Link> / {workflow?.name ?? workflow_id}</>}
-        title={<>{workflow?.name ?? (loading ? '…' : 'Workflow nicht gefunden')}{workflow && <><IssueMark issues={workflow.issues} /><StatusBadge meta={active_meta(workflow.active)} /></>}</>}
-        actions={[{ label: workflow?.active ? 'Pausieren' : 'Aktivieren', icon: workflow?.active ? 'pause' : 'play', on_click: toggle, disabled: !workflow || busy }]}
+        title={<>{workflow?.name ?? (loading ? '…' : 'Workflow nicht gefunden')}{workflow && <><IssueMark issues={workflow.issues} /><StatusBadge meta={workflow_state_meta(workflow)} /></>}</>}
+        actions={[{ label: workflow?.pausing ? 'Wird pausiert' : workflow?.active ? 'Pausieren' : 'Aktivieren', icon: workflow?.active || workflow?.pausing ? 'pause' : 'play', on_click: toggle, disabled: !workflow || busy || workflow.pausing }]}
       />
       <div className="workflow-tabs">
         <Tabs active={tab} on_change={id => navigate(`/workflows/${workflow_id}/${id}`)}

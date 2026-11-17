@@ -5,6 +5,7 @@ from marathon.modules.watchfolder.rules import validate_settings
 
 # CONFIG
 MODULE = {
+    "execution": "none",
     "id": "watchfolder",
     "name": "Watchfolder",
     "category": "Quelle",

@@ -13,6 +13,7 @@ from marathon.modules._job import ModuleJob, ModuleResult, check_stop
 # CONFIG
 defaults = {"prefix": "", "suffix": "", "numbered": False}
 MODULE = {
+    "execution": "worker",
     "id": "rename_file",
     "name": "Umbenennen",
     "category": "Dateien",

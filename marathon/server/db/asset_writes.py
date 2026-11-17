@@ -68,6 +68,7 @@ def reprocess_assets(
             connection.execute(
                 text(
                     "UPDATE assets SET status = 'pending', current_module_id = NULL, step_status = NULL, "
+                    "from_module_id = NULL, from_output_id = NULL, wait_until = NULL, attempts = 0, "
                     "updated_at = now() WHERE id = :id"
                 ),
                 {"id": asset_id},

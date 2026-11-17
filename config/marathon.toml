@@ -1,0 +1,21 @@
+# Marathon settings
+host = "127.0.0.1"
+port = 8080
+
+[database]
+host = "127.0.0.1" # PostgreSQL-Serveradresse
+port = 5433 # PostgreSQL-Port
+name = "marathon" # Datenbankname
+user = "marathon" # Datenbanknutzer
+
+[engine]
+tick_interval_s = 0.5   # Takt der Engine in Sekunden (0.05–10)
+poll_timeout_s = 25     # So lange hält der Server die Anfrage eines Workers offen (1–60)
+worker_timeout_s = 30   # Ohne Meldung gilt ein Worker danach als ausgefallen (10–600)
+pickup_timeout_s = 10   # Abhol-Frist für zugeteilte Jobs (1–600)
+max_attempts = 3        # Unterbrochene Versuche je Asset und Modul (1–10)
+
+[server_worker]
+enabled = true          # Server-Worker mit dem Server starten
+max_parallel = 2        # Parallele Jobs des Server-Workers (1–64)
+last_choice = []        # Modultypen, für die der Server-Worker nur letzte Wahl ist, z. B. ["transcode", "qc"]

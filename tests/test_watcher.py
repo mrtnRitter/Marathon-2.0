@@ -18,7 +18,7 @@ from marathon.modules.watchfolder import scan
 from marathon.modules.watchfolder.scan import FileStat
 from marathon.server import __main__ as server_main
 from marathon.server.app import create_app
-from marathon.server.config import DatabaseConfig
+from marathon.server.config import DatabaseConfig, ServerConfig
 from marathon.server.db.catalog_writes import sync_module_types
 from marathon.server import watcher
 
@@ -265,7 +265,7 @@ def test_server_main_starts_and_stops_watcher_with_test_database(db_engine, tmp_
     monkeypatch.setattr(
         server_main,
         "load_server_config",
-        lambda: DatabaseConfig(host="127.0.0.1", port=1, name="test", user="test"),
+        lambda: ServerConfig(host="127.0.0.1", port=1, database=DatabaseConfig(name="test", user="test")),
     )
     original_create_app = server_main.create_app
 

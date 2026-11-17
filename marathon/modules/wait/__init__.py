@@ -10,6 +10,7 @@ from marathon.modules._job import JobStopped, ModuleJob, ModuleResult, check_sto
 # CONFIG
 defaults = {"wait_s": 60}
 MODULE = {
+    "execution": "engine",
     "id": "wait",
     "name": "Warten",
     "category": "Steuerung",

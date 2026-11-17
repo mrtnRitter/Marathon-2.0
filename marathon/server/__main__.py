@@ -11,6 +11,7 @@ from marathon.server.app import create_app
 from marathon.server.config import ConfigError, load_server_config
 from marathon.server.scheduler import tick_interval_s
 from marathon.server.ui import default_static_dir
+from marathon.server.worker_supervisor import server_url
 
 
 # MAIN
@@ -30,6 +31,10 @@ def main() -> int:
             scheduler_interval_s=tick_interval_s,
             sync_catalog=True,
             watch_interval_s=watcher.tick_interval_s,
+            engine_config=config.engine,
+            run_engine=True,
+            server_worker=config.server_worker,
+            server_url=server_url(config.host, config.port),
         ),
         host=config.host,
         port=config.port,

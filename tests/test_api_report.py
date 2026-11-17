@@ -11,7 +11,7 @@ from records import insert_records
 
 
 fixed_now = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
-job_statuses = ("open", "assigned", "succeeded", "failed", "cancelled")
+job_statuses = ("open", "assigned", "running", "cancelling", "succeeded", "failed", "cancelled", "interrupted")
 
 
 @pytest.fixture

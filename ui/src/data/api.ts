@@ -1,6 +1,6 @@
 // Single data access point for all pages; talks to the server API.
 import { notify } from '../components/Toast'
-import type { Asset, AssetDetail, AssetStatus, DashboardData, DirListing, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Worker, Workflow, WorkflowGraph, WorkflowInput } from './types'
+import type { Asset, AssetDetail, AssetStatus, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput } from './types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -84,6 +84,15 @@ export function get_asset_detail(id: string): Promise<AssetDetail | null> {
 
 export const get_workers = (): Promise<Worker[]> => request<Worker[]>('/workers').then(data => data!)
 
+export const update_worker = (id: string, input: WorkerInput): Promise<Worker> =>
+  request<Worker>(`/workers/${encodeURIComponent(id)}`, { method: 'PUT', body: input }).then(data => data!)
+
+export const approve_worker = (id: string): Promise<Worker> =>
+  request<Worker>(`/workers/${encodeURIComponent(id)}/approve`, { method: 'POST' }).then(data => data!)
+
+export const lock_worker = (id: string): Promise<Worker> =>
+  request<Worker>(`/workers/${encodeURIComponent(id)}/lock`, { method: 'POST' }).then(data => data!)
+
 export const get_dashboard = (): Promise<DashboardData> => request<DashboardData>('/dashboard').then(data => data!)
 
 export function get_job_status_report(filter: { start: string; end: string; workflow_id?: string }): Promise<JobStatusReport> {
@@ -112,6 +121,9 @@ export const duplicate_workflow = (id: string): Promise<Workflow> =>
 export const delete_workflow = async (id: string): Promise<void> => {
   await request<null>(`/workflows/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
+
+export const get_graph_impact = (id: string, input: GraphInput): Promise<GraphImpact> =>
+  request<GraphImpact>(`/workflows/${encodeURIComponent(id)}/graph/impact`, { method: 'POST', body: input }).then(data => data!)
 
 export const save_workflow_graph = (id: string, input: GraphInput): Promise<WorkflowGraph> =>
   request<WorkflowGraph>(`/workflows/${encodeURIComponent(id)}/graph`, { method: 'PUT', body: input }).then(data => data!)

@@ -45,8 +45,66 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0004"
-    assert upgrade_database(db_engine) == "0004"
+    assert upgrade_database(db_engine) == "0005"
+    assert upgrade_database(db_engine) == "0005"
+
+
+def test_engine_columns_exist(db_engine):
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO module_types (id, name, category, icon, has_input) VALUES ('type', 'Type', 'test', 'box', false)"))
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-engine', 'Engine')"))
+        connection.execute(text("INSERT INTO workers (id, name, status) VALUES ('worker-engine', 'Worker', 'ready')"))
+        connection.execute(text("INSERT INTO assets (id, workflow_id, name, status) VALUES ('asset-engine', 'wf-engine', 'Asset', 'pending')"))
+        connection.execute(text("INSERT INTO jobs (id, workflow_id, module_id, status) VALUES ('job-running', 'wf-engine', 'module', 'running')"))
+        connection.execute(text("INSERT INTO job_assets (job_id, asset_id) VALUES ('job-running', 'asset-engine')"))
+        defaults = connection.execute(text(
+            "SELECT assets.attempts, workflows.pausing, workers.priorities, workers.client_slots, "
+            "jobs.settings, job_assets.output_id, module_types.execution "
+            "FROM assets CROSS JOIN workflows CROSS JOIN workers CROSS JOIN jobs "
+            "CROSS JOIN job_assets CROSS JOIN module_types "
+            "WHERE assets.id = 'asset-engine' AND workflows.id = 'wf-engine' "
+            "AND workers.id = 'worker-engine' AND jobs.id = 'job-running' "
+            "AND job_assets.job_id = 'job-running' AND module_types.id = 'type'"
+        )).mappings().one()
+
+    assert defaults == {
+        "attempts": 0,
+        "pausing": False,
+        "priorities": {},
+        "client_slots": 1,
+        "settings": {},
+        "output_id": None,
+        "execution": "none",
+    }
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO jobs (id, workflow_id, module_id, status) "
+                "VALUES ('job-bogus', 'wf-engine', 'module', 'bogus')"
+            ))
+
+
+def test_downgrade_0005(db_engine):
+    from alembic import command
+    from alembic.config import Config
+
+    from marathon.server.db.engine import migrations_dir
+
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-downgrade', 'Downgrade')"))
+        connection.execute(text(
+            "INSERT INTO jobs (id, workflow_id, module_id, status) "
+            "VALUES ('job-downgrade', 'wf-downgrade', 'module', 'running')"
+        ))
+        config = Config()
+        config.set_main_option("script_location", str(migrations_dir))
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0004")
+
+    with db_engine.connect() as connection:
+        assert connection.execute(text("SELECT status FROM jobs WHERE id = 'job-downgrade'")).scalar_one() == "cancelled"
+    assert "attempts" not in {column["name"] for column in inspect(db_engine).get_columns("assets")}
+    assert upgrade_database(db_engine) == "0005"
 
 
 def test_ensure_database_creates_then_reuses(db_config):
@@ -130,7 +188,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0004" in captured.out
+    assert "Revision 0005" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 

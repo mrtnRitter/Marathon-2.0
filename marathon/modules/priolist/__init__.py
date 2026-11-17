@@ -7,6 +7,7 @@ from typing import Any
 
 # CONFIG
 MODULE = {
+    "execution": "none",
     "id": "priolist",
     "name": "Prioliste",
     "category": "Daten",
@@ -15,6 +16,7 @@ MODULE = {
     "has_input": False,
     "outputs": [{
         "id": "list",
+        "data": True,
         "label": "Prioliste",
         "description": "Zusätzlich zum Asset-Fluss mit dem Eingang eines Moduls verbinden",
     }],

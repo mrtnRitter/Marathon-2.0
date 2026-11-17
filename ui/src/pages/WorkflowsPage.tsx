@@ -15,9 +15,9 @@ import { ApiError, create_workflow, delete_workflow, duplicate_workflow, get_wor
 import type { FieldSpec, Workflow, WorkflowInput } from '../data/types'
 import { schedule_error, schedule_label } from '../lib/schedule'
 import { format_datetime } from '../lib/format'
-import { name_taken, set_workflows_active } from '../lib/workflows'
+import { name_taken, set_workflows_active, use_pausing_reload } from '../lib/workflows'
 import { use_data } from '../data/use_data'
-import { active_meta, asset_statuses } from '../theme/status'
+import { workflow_state_meta, asset_statuses } from '../theme/status'
 
 const total = (workflow: Workflow) => asset_statuses.reduce((sum, status) => sum + workflow.asset_counts[status], 0)
 
@@ -28,6 +28,7 @@ export function WorkflowsPage() {
   const navigate = useNavigate()
   const [search_params] = useSearchParams()
   const { data, reload } = use_data(get_workflows)
+  use_pausing_reload(data, reload)
   const [selected, set_selected] = useState<string[]>([])
   const [panel_open, set_panel_open] = useState(false)
   const [editing, set_editing] = useState<Workflow | null>(null)
@@ -48,6 +49,7 @@ export function WorkflowsPage() {
 
   const selected_workflows = data?.filter(workflow => selected.includes(workflow.id)) ?? []
   const activate = selected_workflows.length === 0 || selected_workflows.some(workflow => !workflow.active)
+  const selected_pausing = selected_workflows.some(workflow => workflow.pausing)
   const name_error = data && name_taken(data, form.name, editing?.id ?? null) ? workflow_name_taken_detail : server_name_error
 
   const open = () => selected[0] && navigate(`/workflows/${selected[0]}/modules`)
@@ -158,8 +160,8 @@ export function WorkflowsPage() {
 
   const columns: Column<Workflow>[] = [
     { key: 'name', label: 'Name', render: row => <><strong>{row.name}</strong><IssueMark issues={row.issues} /></> },
-    { key: 'active', label: 'Status', render: row => <StatusBadge meta={active_meta(row.active)} />, sort_value: row => Number(row.active) },
-    { key: 'run', label: '', width: '48px', sort_value: row => Number(row.active), render: row => <button type="button" className="button" title={row.active ? 'Pausieren' : 'Starten'} aria-label={row.active ? 'Pausieren' : 'Starten'} disabled={busy_ids.includes(row.id)} onClick={event => { event.stopPropagation(); toggle_active(row) }} onDoubleClick={event => event.stopPropagation()}><Icon name={row.active ? 'pause' : 'play'} size={14} /></button> },
+    { key: 'active', label: 'Status', render: row => <StatusBadge meta={workflow_state_meta(row)} />, sort_value: row => Number(row.active) },
+    { key: 'run', label: '', width: '48px', sort_value: row => Number(row.active), render: row => <button type="button" className="button" title={row.pausing ? 'Wird pausiert' : row.active ? 'Pausieren' : 'Starten'} aria-label={row.pausing ? 'Wird pausiert' : row.active ? 'Pausieren' : 'Starten'} disabled={busy_ids.includes(row.id) || row.pausing} onClick={event => { event.stopPropagation(); toggle_active(row) }} onDoubleClick={event => event.stopPropagation()}><Icon name={row.active || row.pausing ? 'pause' : 'play'} size={14} /></button> },
     { key: 'schedule', label: 'Zeitplan', render: row => row.schedule ? <span>{schedule_label(row.schedule)} <span className="dim">· nächster Start {format_datetime(row.schedule.next_run_at)}</span></span> : <span className="dim">–</span>, sort_value: row => row.schedule ? new Date(row.schedule.next_run_at).getTime() : Number.MAX_SAFE_INTEGER },
     { key: 'assets', label: 'Assets', render: row => total(row), sort_value: total, align: 'right' },
     { key: 'distribution', label: 'Verteilung', render: row => <StatusBar counts={row.asset_counts} />, width: '22%' },
@@ -173,7 +175,7 @@ export function WorkflowsPage() {
         { label: 'Öffnen', icon: 'pencil', on_click: open, disabled: selected.length !== 1 },
         { label: 'Eigenschaften', icon: 'settings', on_click: open_properties, disabled: selected.length !== 1 },
         { label: 'Duplizieren', icon: 'copy', on_click: duplicate_selected, disabled: selected.length !== 1 || duplicating },
-        { label: activate ? 'Aktivieren' : 'Pausieren', icon: activate ? 'play' : 'pause', on_click: toggle_selected, disabled: !selected.length || toggling },
+        { label: selected_pausing ? 'Wird pausiert' : activate ? 'Aktivieren' : 'Pausieren', icon: activate && !selected_pausing ? 'play' : 'pause', on_click: toggle_selected, disabled: !selected.length || toggling || selected_pausing },
         { label: 'Löschen', icon: 'trash', on_click: delete_selected, disabled: !selected.length },
       ]} />
       <div className="page-content">

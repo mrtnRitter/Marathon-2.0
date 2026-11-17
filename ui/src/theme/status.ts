@@ -1,4 +1,4 @@
-import type { AssetMessage, AssetStatus, JobStatus, LogLevel, StepStatus, Worker, WorkerStatus } from '../data/types'
+import type { AssetMessage, AssetStatus, JobStatus, LogLevel, StepStatus, Worker, WorkerStatus, Workflow } from '../data/types'
 
 export interface StatusMeta {
   label: string
@@ -33,10 +33,13 @@ export const worker_status_meta: Record<WorkerStatus, StatusMeta> = {
 
 export const job_status_meta: Record<JobStatus, StatusMeta> = {
   open: { label: 'offen', color: color('pending') },
-  assigned: { label: 'läuft', color: color('in-progress') },
+  assigned: { label: 'zugeteilt', color: color('pending') },
+  running: { label: 'läuft', color: color('in-progress') },
+  cancelling: { label: 'wird abgebrochen', color: color('on-hold') },
   succeeded: { label: 'erfolgreich', color: color('done') },
   failed: { label: 'fehlgeschlagen', color: color('failed') },
   cancelled: { label: 'abgebrochen', color: color('offline') },
+  interrupted: { label: 'unterbrochen', color: color('failed') },
 }
 
 export const job_statuses = Object.keys(job_status_meta) as JobStatus[]
@@ -57,6 +60,9 @@ export const log_level_color: Record<LogLevel, string> = {
 
 export const active_meta = (active: boolean): StatusMeta =>
   active ? { label: 'aktiv', color: color('done') } : { label: 'pausiert', color: color('on-hold') }
+
+export const workflow_state_meta = (workflow: Pick<Workflow, 'active' | 'pausing'>): StatusMeta =>
+  workflow.pausing ? { label: 'Wird pausiert', color: color('on-hold') } : active_meta(workflow.active)
 
 export const is_online = (worker: Worker) => worker.status !== 'offline'
 

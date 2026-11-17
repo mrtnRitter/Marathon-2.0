@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.engine import Connection
 
 from marathon.server.db.workflow_checks import invalid_modules, workflow_issues
+from marathon.server.engine.jobs import remove_missing_modules, request_pause
 from marathon.server.schedule import ScheduleError, next_occurrence, normalize_interval
 
 
@@ -29,6 +30,10 @@ class WorkflowNotStartable(Exception):
     def __init__(self, issues: list[str]) -> None:
         self.issues = issues
         super().__init__(f"Einstellungen prüfen: {', '.join(issues)}")
+
+
+class WorkflowPausing(Exception):
+    """Raised when a workflow is still stopping active jobs."""
 
 
 # VALIDATION
@@ -313,21 +318,25 @@ def update_workflow(
 
 def set_workflow_active(connection: Connection, workflow_id: str, active: bool) -> bool:
     """Set a workflow's active state and clear schedule activation."""
+    if not active:
+        return request_pause(connection, workflow_id, datetime.now(timezone.utc))
+
     workflow = connection.execute(
-        text("SELECT id FROM workflows WHERE id = :id FOR UPDATE"), {"id": workflow_id}
+        text("SELECT id, pausing FROM workflows WHERE id = :id FOR UPDATE"), {"id": workflow_id}
     ).mappings().one_or_none()
     if workflow is None:
         return False
-    if active:
-        issues = workflow_issues(connection, workflow_id)
-        if issues:
-            raise WorkflowNotStartable(issues)
+    if workflow["pausing"]:
+        raise WorkflowPausing
+    issues = workflow_issues(connection, workflow_id)
+    if issues:
+        raise WorkflowNotStartable(issues)
     updated = connection.execute(
         text(
-            "UPDATE workflows SET active = :active, scheduled_active = false, "
+            "UPDATE workflows SET active = true, scheduled_active = false, "
             "updated_at = now() WHERE id = :id RETURNING id"
         ),
-        {"id": workflow_id, "active": active},
+        {"id": workflow_id},
     ).scalar_one_or_none()
     return updated is not None
 
@@ -417,16 +426,11 @@ def save_graph(
         text("UPDATE workflows SET current_version = :version, updated_at = now() WHERE id = :id"),
         {"id": workflow_id, "version": new_version},
     )
+    remove_missing_modules(connection, workflow_id, datetime.now(timezone.utc))
     if workflow_active:
         invalid = invalid_modules(modules)
         if invalid:
-            connection.execute(
-                text(
-                    "UPDATE workflows SET active = false, scheduled_active = false, "
-                    "updated_at = now() WHERE id = :id"
-                ),
-                {"id": workflow_id},
-            )
+            request_pause(connection, workflow_id, datetime.now(timezone.utc))
             for module in invalid:
                 connection.execute(
                     text(

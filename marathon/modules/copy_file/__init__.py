@@ -13,6 +13,7 @@ from marathon.modules.watchfolder.rules import validate_path
 # CONFIG
 defaults = {"target": "", "checksum": "Keine", "numbered": False}
 MODULE = {
+    "execution": "worker",
     "id": "copy_file",
     "name": "Datei kopieren",
     "category": "Dateien",

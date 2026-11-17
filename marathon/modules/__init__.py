@@ -13,6 +13,7 @@ from typing import Any
 required_keys = (
     "id", "name", "category", "icon", "description", "has_input", "outputs", "settings", "sort_order",
 )
+execution_values = ("worker", "engine", "none")
 
 
 # EXCEPTIONS
@@ -45,7 +46,10 @@ def build_catalog(modules: Iterable[ModuleType]) -> list[dict[str, Any]]:
         if type_id in seen_ids:
             raise CatalogError(f"Modultyp-ID doppelt: {type_id}")
         seen_ids.add(type_id)
-        specs.append(deepcopy({key: descriptor[key] for key in required_keys}))
+        execution = descriptor.get("execution", "none")
+        if execution not in execution_values:
+            raise CatalogError(f"Modul {module.__name__}: ungültige execution: {execution}")
+        specs.append({**deepcopy({key: descriptor[key] for key in required_keys}), "execution": execution})
     return sorted(specs, key=lambda spec: (spec["sort_order"], spec["id"]))
 
 

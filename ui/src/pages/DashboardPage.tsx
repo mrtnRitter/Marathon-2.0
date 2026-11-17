@@ -8,10 +8,10 @@ import { StatusBar } from '../components/StatusBar'
 import { StatusTabs } from '../components/StatusTabs'
 import { Button } from '../components/Toolbar'
 import { get_dashboard } from '../data/api'
-import { set_workflows_active } from '../lib/workflows'
+import { set_workflows_active, use_pausing_reload } from '../lib/workflows'
 import type { Worker, Workflow } from '../data/types'
 import { use_data } from '../data/use_data'
-import { active_meta, asset_status_meta, asset_statuses, is_online, online_meta } from '../theme/status'
+import { workflow_state_meta, asset_status_meta, asset_statuses, is_online, online_meta } from '../theme/status'
 import './DashboardPage.css'
 
 function WorkflowRow({ workflow, on_changed }: { workflow: Workflow; on_changed: () => void }) {
@@ -27,7 +27,7 @@ function WorkflowRow({ workflow, on_changed }: { workflow: Workflow; on_changed:
     <div className="dashboard-row" onClick={() => navigate(`/workflows/${workflow.id}/modules`)}>
       <div className="dashboard-row-head">
         <strong>{workflow.name}</strong><IssueMark issues={workflow.issues} />
-        <StatusBadge meta={active_meta(workflow.active)} />
+        <StatusBadge meta={workflow_state_meta(workflow)} />
       </div>
       <div className="dashboard-row-desc dim">{workflow.description}</div>
       <StatusBar counts={workflow.asset_counts} />
@@ -39,7 +39,7 @@ function WorkflowRow({ workflow, on_changed }: { workflow: Workflow; on_changed:
         ))}
       </div>
       <div className="dashboard-row-actions" onClick={event => event.stopPropagation()}>
-        <Button label={workflow.active ? 'Pausieren' : 'Aktivieren'} icon={workflow.active ? 'pause' : 'play'} on_click={toggle} disabled={busy} />
+        <Button label={workflow.pausing ? 'Wird pausiert' : workflow.active ? 'Pausieren' : 'Aktivieren'} icon={workflow.active || workflow.pausing ? 'pause' : 'play'} on_click={toggle} disabled={busy || workflow.pausing} />
         <Button label="Assets" icon="files" on_click={() => open('assets')} />
       </div>
     </div>
@@ -55,6 +55,7 @@ const worker_columns: Column<Worker>[] = [
 export function DashboardPage() {
   const navigate = useNavigate()
   const { data, reload } = use_data(get_dashboard)
+  use_pausing_reload(data?.workflows, reload)
   return (
     <>
       <PageHeader title="Dashboard" />

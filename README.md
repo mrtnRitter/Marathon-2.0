@@ -2,7 +2,7 @@
 
 Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Version 2.0.0).
 
-**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und pausieren und zeitgesteuert starten (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuert gestarteter Workflow pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Die weitere Verarbeitung der Assets folgt mit der Engine. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
+**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und pausieren und zeitgesteuert starten (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuert gestarteter Workflow pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Gestartete Workflows verarbeiten ihre Assets: Die Engine teilt Jobs an Worker zu; der Server bringt dafür einen eigenen Server-Worker mit (siehe [Engine und Worker](#engine-und-worker)). Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
 
 ## Voraussetzungen
 
@@ -69,7 +69,7 @@ Löscht alle Daten: Server beenden, Ordner `.data` löschen, `python build.py` a
 
 ## Konfiguration
 
-Datei `config/server.toml`:
+Datei `config/marathon.toml`:
 
 | Eintrag | Bedeutung | Standard |
 |---|---|---|
@@ -80,7 +80,27 @@ Datei `config/server.toml`:
 | `[database] name` | Name der Datenbank | `marathon` |
 | `[database] user` | Datenbank-Benutzer; wird beim ersten `build.py` angelegt | `marathon` |
 
+| `[engine] tick_interval_s` | Takt der Engine in Sekunden (0.05–10) | `0.5` |
+| `[engine] poll_timeout_s` | So lange hält der Server die Anfrage eines Workers offen (1–60 s) | `25` |
+| `[engine] worker_timeout_s` | Ohne Meldung gilt ein Worker danach als ausgefallen (10–600 s) | `30` |
+| `[engine] pickup_timeout_s` | Abhol-Frist für zugeteilte Jobs (1–600 s) | `10` |
+| `[engine] max_attempts` | Unterbrochene Versuche je Asset und Modul (1–10) | `3` |
+| `[server_worker] enabled` | Server-Worker mit dem Server starten | `true` |
+| `[server_worker] max_parallel` | Parallele Jobs des Server-Workers (1–64) | `2` |
+| `[server_worker] last_choice` | Modultypen, für die der Server-Worker nur letzte Wahl ist, z. B. `["transcode", "qc"]` | `[]` |
+
 `name` und `user` erlauben nur Kleinbuchstaben, Ziffern und `_`. Den Benutzer nach dem Einrichten nicht mehr ändern, sonst die Datenbank zurücksetzen.
+
+## Engine und Worker
+
+- **Server-Worker:** startet mit `python run.py` als eigener Prozess und meldet sich wie jeder Worker beim Server an (Worker-ID `server-worker`, Name „Server“). Stürzt er ab, startet der Server ihn neu. Ausgaben: `.data/server-worker.log`.
+- **Zugang:** Worker melden sich mit dem Token aus `.data/worker.token` an; der Server legt die Datei beim ersten Bedarf an.
+- **Zuteilung:** Der Server teilt Jobs an Worker mit freiem Platz zu, die den Modultyp anbieten; laufende Workflows kommen reihum dran, im Workflow das oberste Asset zuerst. Worker holen ihre Jobs über eine offen gehaltene Anfrage ab.
+- **Worker-Seite:** Neue Worker freigeben, Worker sperren (laufende Jobs laufen weiter), bearbeiten: Name, parallele Jobs und Vorrang je Modultyp (Bevorzugt, Normal, Letzte Wahl, Aus).
+- **Pausieren:** bricht laufende Jobs ab; das Asset geht zurück an den Ausgang des vorherigen Moduls. Bis alle Jobs abgebrochen sind, zeigt der Workflow „Wird pausiert“ und lässt sich nicht starten.
+- **Ausfälle:** Meldet sich ein Worker 30 s nicht oder startet er neu, wird sein Job erneut vergeben. Nach 3 unterbrochenen Versuchen am selben Modul ist das Asset fehlgeschlagen.
+- **Workflow ändern:** jederzeit speichern. Betrifft die Änderung laufende Assets (z. B. gelöschtes Modul), zeigt die Workflow-Ansicht vorher die Auswirkungen und speichert erst nach Bestätigung.
+- **Erneut verarbeiten:** Das Asset beginnt am Anfang des Workflows, hinter Watchfolder bzw. am Modul ohne eingehende Verbindung.
 
 ## Workflows mit fehlerhaften Einstellungen
 
@@ -110,7 +130,7 @@ Datei `config/server.toml`:
 - Ist der Ordner nicht erreichbar (oder antwortet er 60 s nicht), steht das einmal im Modul-Log; danach folgt „Ordner wieder erreichbar“.
 - Zeitgesteuert gestartete Workflows pausieren sich, sobald kein Asset aussteht. Den Watchfolder deshalb in einem dauerhaft gestarteten Workflow verwenden.
 
-Warten, Datei kopieren, Datei verschieben und Umbenennen lassen sich im Workflow platzieren und einstellen. Ausgeführt werden sie, sobald Engine und Worker folgen; Pfade gelten dann aus Sicht des Workers.
+Warten, Datei kopieren, Datei verschieben und Umbenennen lassen sich im Workflow platzieren und einstellen. Datei kopieren, Datei verschieben und Umbenennen führt ein Worker aus (zunächst der Server-Worker); Pfade gelten aus Sicht des Workers. Warten erledigt die Engine selbst.
 
 ### Warten (Kategorie „Steuerung“)
 
@@ -190,11 +210,13 @@ Die Datenbank-Tests starten eine eigene, temporäre PostgreSQL-Instanz mit den P
 ```
 build.py               Einrichten und Bauen
 run.py                 Starten
-config/server.toml     Server- und Datenbank-Einstellungen
+config/marathon.toml   Server-, Datenbank-, Engine- und Server-Worker-Einstellungen
 requirements/          Python-Abhängigkeiten (server.txt)
 marathon/common/       Gemeinsame Grundlage (Version)
+marathon/worker/       Worker-Laufzeit (python -m marathon.worker)
 marathon/modules/      Module (je Ordner ein Modultyp, z. B. watchfolder/; _job.py Ausführungsvertrag, _files.py Datei-Helfer)
 marathon/server/       Server; static/ enthält die gebaute Oberfläche
+  engine/              Engine: Weiterleiten, Jobs, Takt, Worker-Protokoll
   api/                 API-Bereiche (/api/v1)
   db/                  Datenbank: Verbindung, Migrationen, Abfragen
 ui/                    Quellcode der Oberfläche
