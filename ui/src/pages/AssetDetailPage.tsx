@@ -8,7 +8,7 @@ import { get_asset_detail, get_workflow } from '../data/api'
 import { use_data } from '../data/use_data'
 import { useState } from 'react'
 import { AssetTimeline } from '../features/assets/AssetTimeline'
-import { format_datetime } from '../lib/format'
+import { format_datetime, format_metadata } from '../lib/format'
 import { asset_status_meta, message_kind_color, step_status_meta } from '../theme/status'
 import './AssetDetailPage.css'
 
@@ -64,7 +64,7 @@ export function AssetDetailPage() {
         </section>
         <section className="panel asset-detail-meta">
           <h2 className="panel-title">Metadaten</h2>
-          <div className="panel-body"><KeyValue entries={Object.entries(asset.metadata)} /></div>
+          <div className="panel-body"><KeyValue entries={format_metadata(asset.metadata)} /></div>
         </section>
         <section className="panel asset-detail-timeline">
           <h2 className="panel-title">Zeitstrahl</h2>
@@ -74,7 +74,7 @@ export function AssetDetailPage() {
           <h2 className="panel-title">Meldungen</h2>
           <div className="panel-body">
             {asset.messages.map((message, index) => (
-              <div key={index} className="asset-message" style={{ borderLeftColor: message_kind_color[message.kind] }}>
+              <div key={index} className={`asset-message${message.kind === 'error' ? ' error' : ''}`} style={{ borderLeftColor: message_kind_color[message.kind] }}>
                 <span className="dim">{format_datetime(message.ts)}</span> {message.text}
               </div>
             ))}

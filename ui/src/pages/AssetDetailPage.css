@@ -8,3 +8,4 @@
 .live-dot { margin-left: var(--space-2); color: var(--status-in-progress); text-transform: none; letter-spacing: 0; }
 .live-dot::before { content: '● '; animation: pulse 1.2s infinite; }
 @media (max-width: 1100px) { .page-content.asset-detail { grid-template-columns: 1fr; grid-template-areas: 'head' 'meta' 'timeline' 'messages' 'log'; } }
+.asset-message.error { color: var(--status-failed); }

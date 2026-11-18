@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ApiError, list_dirs } from '../data/api'
+import { filter_dirs } from '../lib/folder_filter'
 import type { DirListing } from '../data/types'
 import { Icon } from './Icon'
 import { Toolbar } from './Toolbar'
@@ -86,6 +87,7 @@ export function FolderDialog({ open, initial_path, on_select, on_close }: Props)
   if (!open) return null
 
   const is_host_root = listing?.path !== null && listing?.path !== undefined && /^\\\\[^\\/]+[\\/]?$/.test(listing.path)
+  const visible_dirs = listing ? filter_dirs(listing.dirs, listing.path, path_input) : []
 
   const actions = [
     { label: 'Abbrechen', icon: 'close', on_click: on_close },
@@ -140,9 +142,10 @@ export function FolderDialog({ open, initial_path, on_select, on_close }: Props)
           {loading && <div className="folder-dialog-loading" role="status">Lade …</div>}
           {error && <div className="form-field-error" role="alert">{error}</div>}
           {listing?.truncated && <div className="folder-dialog-truncated">Nur die ersten 1000 Ordner werden angezeigt</div>}
+          {listing && listing.dirs.length > 0 && visible_dirs.length === 0 ? <div className="folder-dialog-truncated">Kein passender Ordner</div> : null}
           <div className="folder-dialog-list-scroll">
             <ul className="folder-dialog-list">
-              {listing?.dirs.map(dir => (
+              {visible_dirs.map(dir => (
                 <li key={dir.path}>
                   <button type="button" className="folder-dialog-entry" onClick={() => void load_dirs(dir.path)} disabled={loading}>
                     <Icon name="folder" size={16} /><span>{dir.name}</span>

@@ -44,7 +44,8 @@ export const job_status_meta: Record<JobStatus, StatusMeta> = {
 
 export const job_statuses = Object.keys(job_status_meta) as JobStatus[]
 
-export const module_counter_meta: Record<'waiting' | 'running' | 'done' | 'failed', StatusMeta> = {
+export const module_counter_meta: Record<'discovered' | 'waiting' | 'running' | 'done' | 'failed', StatusMeta> = {
+  discovered: { label: 'erfasst', color: 'var(--accent)' },
   waiting: { label: 'wartet', color: color('pending') },
   running: { label: 'läuft', color: color('in-progress') },
   done: { label: 'erledigt', color: color('done') },

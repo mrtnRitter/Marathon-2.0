@@ -56,8 +56,7 @@ export const set_workflow_active = (id: string, active: boolean): Promise<Workfl
 export const get_workflow = (id: string): Promise<Workflow | null> =>
   request<Workflow>(`/workflows/${encodeURIComponent(id)}`, { allow_404: true })
 
-export const get_workflow_graph = (id: string): Promise<WorkflowGraph | null> =>
-  request<WorkflowGraph>(`/workflows/${encodeURIComponent(id)}/graph`, { allow_404: true })
+export const get_workflow_graph = (id: string, options: { quiet?: boolean } = {}): Promise<WorkflowGraph | null> => request<WorkflowGraph>(`/workflows/${encodeURIComponent(id)}/graph`, { allow_404: true, quiet: options.quiet })
 
 export const get_module_types = (): Promise<ModuleType[]> => request<ModuleType[]>('/module-types').then(data => data!)
 

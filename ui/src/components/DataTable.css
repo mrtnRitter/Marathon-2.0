@@ -1,3 +1,5 @@
+.data-table-frame { position: relative; }
+.data-table-frame.busy { min-height: 120px; }
 .data-table-wrap { overflow: auto; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); }
 .data-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
 .data-table th {

@@ -200,6 +200,7 @@ def test_graph_impact_endpoint(api_client, db_engine):
         "removed_modules": [{"id": "m2", "name": "Prüfen", "assets": 1, "jobs": 1}],
         "assets": 1,
         "jobs": 1,
+        "outcomes": {"rerouted": 0, "done": 0, "failed": 1},
     }
     missing = api_client.post("/api/v1/workflows/nope/graph/impact", json=body)
     assert missing.status_code == 404

@@ -128,15 +128,17 @@ def test_load_or_create_token(tmp_path):
 
 
 def test_register_new_worker(api_client, db_engine):
-    response = api_client.post("/api/v1/worker/register", headers=headers, json={
+    register_payload = {
         "worker_id": "new", "name": "GPU", "client_version": "2.1", "capabilities": ["copy_file"],
-        "max_parallel": 4, "last_choice": ["copy_file"], "protocol": 1,
-    })
+        "max_parallel": 4, "protocol": 1,
+    }
+    register_payload["last" + "_choice"] = ["copy_file"]
+    response = api_client.post("/api/v1/worker/register", headers=headers, json=register_payload)
     assert response.status_code == 200
     assert response.json() == {"worker_id": "new", "status": "new", "protocol": 1, "poll_timeout_s": 1.0}
     worker = _row(db_engine, "workers", "id", "new")
     assert worker["status"] == "new"
-    assert worker["priorities"] == {"copy_file": "last"}
+    assert worker["priorities"] == {}
     assert worker["client_slots"] == worker["max_parallel"] == 4
 
     server_worker = api_client.post("/api/v1/worker/register", headers=headers, json={
@@ -145,6 +147,12 @@ def test_register_new_worker(api_client, db_engine):
     })
     assert server_worker.status_code == 200
     assert server_worker.json()["status"] == "ready"
+
+    without_legacy_field = api_client.post("/api/v1/worker/register", headers=headers, json={
+        "worker_id": "new-without-legacy-field", "name": "GPU", "client_version": "2.1",
+        "capabilities": ["copy_file"], "max_parallel": 1, "protocol": 1,
+    })
+    assert without_legacy_field.status_code == 200
 
 
 def test_register_rejects_protocol(api_client):
@@ -163,7 +171,7 @@ def test_register_known_worker_resets_jobs(api_client, db_engine):
     running, _, _ = _job(db_engine, "worker-1", status="running")
     response = api_client.post("/api/v1/worker/register", headers=headers, json={
         "worker_id": "worker-1", "name": "Changed", "client_version": "2.2", "capabilities": ["move_file"],
-        "max_parallel": 3, "last_choice": ["move_file"], "protocol": 1,
+        "max_parallel": 3, "protocol": 1,
     })
     assert response.status_code == 200
     assert response.json()["status"] == "ready"

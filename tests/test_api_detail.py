@@ -15,6 +15,23 @@ fixed_now = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
 
 def test_graph_returns_current_workflow_modules_and_counters(db_engine, tmp_path):
     insert_records(db_engine, fixed_now)
+    with db_engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO module_types (id, name, category, icon, description, has_input, outputs, settings, sort_order) "
+            "VALUES ('watchfolder', 'Watchfolder', 'Input', 'folder', '', false, '[]'::jsonb, '[]'::jsonb, 2)"
+        ))
+        connection.execute(text(
+            "UPDATE workflow_modules SET type_id = 'watchfolder' "
+            "WHERE workflow_id = 'wf-a' AND version = 2 AND id = 'm1'"
+        ))
+        connection.execute(text(
+            "INSERT INTO watch_modules (workflow_id, module_id, next_scan_at) VALUES ('wf-a', 'm1', :next_scan_at)"
+        ), {"next_scan_at": fixed_now})
+        connection.execute(text(
+            "INSERT INTO watch_files (workflow_id, module_id, path, size, mtime_ns, stable_since, asset_id) "
+            "VALUES ('wf-a', 'm1', '/one.mov', 10, 1, :stable_since, 'a-running'), "
+            "('wf-a', 'm1', '/two.mov', 20, 2, :stable_since, NULL)"
+        ), {"stable_since": fixed_now})
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
     with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
         response = client.get("/api/v1/workflows/wf-a/graph")
@@ -24,6 +41,9 @@ def test_graph_returns_current_workflow_modules_and_counters(db_engine, tmp_path
         assert len(graph["modules"]) == 3
         assert len(graph["connections"]) == 2
         assert all(module["description"] == "" for module in graph["modules"])
+        assert {module["id"]: module["counters"]["discovered"] for module in graph["modules"]} == {
+            "m1": 1, "m2": 0, "m3": 0
+        }
         assert {module["id"]: module["locked"] for module in graph["modules"]} == {
             "m1": True, "m2": False, "m3": False
         }

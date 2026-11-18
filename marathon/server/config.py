@@ -16,7 +16,6 @@ pg_data_dir = data_dir / "postgres"
 pg_password_file = data_dir / "postgres.pass"
 pg_log_file = data_dir / "postgres.log"
 _database_identifier = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
-_module_type_identifier = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
 # FUNC
@@ -44,8 +43,7 @@ class EngineConfig:
 @dataclass(frozen=True)
 class ServerWorkerConfig:
     enabled: bool = True
-    max_parallel: int = 2
-    last_choice: tuple[str, ...] = ()
+    max_parallel: int = 1
 
 
 @dataclass(frozen=True)
@@ -123,13 +121,7 @@ def load_server_config(config_file: Path = default_config_file) -> ServerConfig:
     if not isinstance(enabled, bool):
         raise ConfigError(f"[server_worker] enabled in {config_file} muss true oder false sein")
     max_parallel = _validated_value(
-        worker_data, "server_worker", "max_parallel", 2, 1, 64, config_file, integer=True
+        worker_data, "server_worker", "max_parallel", 1, 1, 64, config_file, integer=True
     )
-    last_choice = worker_data.get("last_choice", [])
-    if not isinstance(last_choice, list) or any(
-        not isinstance(module_type, str) or not _module_type_identifier.fullmatch(module_type)
-        for module_type in last_choice
-    ):
-        raise ConfigError(f"[server_worker] last_choice in {config_file} muss eine Liste von Modultyp-IDs sein")
-    server_worker = ServerWorkerConfig(enabled, max_parallel, tuple(last_choice))
+    server_worker = ServerWorkerConfig(enabled, max_parallel)
     return ServerConfig(config.host, config.port, database, engine, server_worker)

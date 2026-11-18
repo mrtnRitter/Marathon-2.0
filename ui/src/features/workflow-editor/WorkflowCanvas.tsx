@@ -1,18 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import {
-  Background, BackgroundVariant, Controls, MiniMap, ReactFlow, ReactFlowProvider, SelectionMode, addEdge, useEdgesState, useNodesState, useReactFlow, useStore, useStoreApi,
-  type Connection, type Edge, type IsValidConnection, type NodeMouseHandler, type OnBeforeDelete,
+  Background, BackgroundVariant, Controls, MiniMap, ReactFlow, ReactFlowProvider, SelectionMode, addEdge, reconnectEdge, useEdgesState, useNodesState, useReactFlow, useStore, useStoreApi,
+  type Connection, type Edge, type FinalConnectionState, type IsValidConnection, type NodeMouseHandler, type OnBeforeDelete,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Button } from '../../components/Toolbar'
 import { SlidePanel } from '../../components/SlidePanel'
+import { Icon } from '../../components/Icon'
 import { notify } from '../../components/Toast'
 import { get_graph_impact, get_module_types, get_workflow_graph, save_workflow_graph } from '../../data/api'
 import type { GraphImpact, GraphInput, ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
 import { has_setting_errors } from '../../lib/module_settings'
+import { impact_lines } from '../../lib/graph_impact'
+import { merge_counters } from './live_counters'
 import { use_data } from '../../data/use_data'
 import { EditorActionsContext, EditorModeContext, drag_mime, type EditorMode, type ModuleFlowNode, type ModuleNodeData } from './editor_types'
 import { apply_lock, create_edge, create_node, locked_ids, lock_edges, lock_targets, new_module, to_edges, to_graph_input, to_nodes, view_nodes } from './graph_mapping'
+import { is_valid_connection as check_valid_connection, reconnectable_edge_ids } from './connections'
 import { ModuleActivityPanel } from './ModuleActivityPanel'
 import { ModuleNode } from './ModuleNode'
 import { ModulePalette } from './ModulePalette'
@@ -46,12 +50,12 @@ export function WorkflowCanvas({ workflow_id, initial_mode, on_saved }: { workfl
   if (!graph) return <div className="loading">Kein Graph für diesen Workflow</div>
   return (
     <ReactFlowProvider>
-      <Editor key={`${workflow_id}-${graph.version}`} graph={graph} module_types={module_types} mode={mode} on_mode_change={set_mode} on_saved={() => { reload(); on_saved?.() }} />
+      <Editor key={`${workflow_id}-${graph.version}`} graph={graph} module_types={module_types} mode={mode} on_mode_change={set_mode} on_saved={() => { reload(); on_saved?.() }} on_stale={reload} />
     </ReactFlowProvider>
   )
 }
 
-function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph: WorkflowGraph; module_types: ModuleType[]; mode: EditorMode; on_mode_change: (mode: EditorMode) => void; on_saved: () => void }) {
+function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale }: { graph: WorkflowGraph; module_types: ModuleType[]; mode: EditorMode; on_mode_change: (mode: EditorMode) => void; on_saved: () => void; on_stale: () => void }) {
   const [settings_width, set_settings_width] = useState(read_settings_width)
   useEffect(() => {
     try { localStorage.setItem(settings_width_key, String(settings_width)) } catch {}
@@ -60,6 +64,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
   const [nodes, set_nodes, on_nodes_change] = useNodesState<ModuleFlowNode>(initial_nodes)
   const locked_module_ids = useRef(locked_ids(initial_nodes))
   const [edges, set_edges, on_edges_change] = useEdgesState<Edge>(lock_edges(to_edges(graph), locked_ids(initial_nodes)))
+  const reconnecting_edge_id = useRef<string | null>(null)
   const [dirty, set_dirty] = useState(false)
   const [saving, set_saving] = useState(false)
   const [impact, set_impact] = useState<GraphImpact | null>(null)
@@ -71,6 +76,33 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
   const selection_rect = useStore(state => state.userSelectionRect)
   const transform = useStore(state => state.transform)
   const editing = mode === 'edit'
+
+  useEffect(() => {
+    if (mode !== 'monitor') return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+
+    const poll = async () => {
+      try {
+        const result = await get_workflow_graph(graph.workflow_id, { quiet: true })
+        if (cancelled || result === null) return
+        if (result.version !== graph.version) {
+          on_stale()
+          return
+        }
+        set_nodes(current => merge_counters(current, result.modules) ?? current)
+      } catch {
+        if (cancelled) return
+      }
+      if (!cancelled) timer = setTimeout(() => { void poll() }, 2000)
+    }
+
+    timer = setTimeout(() => { void poll() }, 2000)
+    return () => {
+      cancelled = true
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [mode, graph.workflow_id, graph.version, on_stale, set_nodes])
 
   useEffect(() => {
     if (!(editing && selection_rect && (selection_rect.width > 0 || selection_rect.height > 0))) return
@@ -95,6 +127,10 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
     }))
   }, [selection_rect, transform, editing])
   const display_nodes = useMemo(() => view_nodes(nodes, editing), [nodes, editing])
+  const reconnectable_ids = useMemo(() => reconnectable_edge_ids(edges, locked_ids(nodes)), [edges, nodes])
+  const display_edges = useMemo(() => editing
+    ? edges.map(edge => reconnectable_ids.has(edge.id) ? { ...edge, reconnectable: 'target' as const, zIndex: 1001 } : { ...edge, reconnectable: false })
+    : edges, [edges, editing, reconnectable_ids])
   const selected_nodes = nodes.filter(node => node.selected)
   const invalid = nodes.filter(node => has_setting_errors(node.data.module_type, node.data.module.settings))
   const inspected_node = nodes.find(node => node.id === inspected_id && node.data.module.locked)
@@ -172,18 +208,44 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
   }
 
   // Each output carries at most one connection, an input accepts many
-  const is_valid_connection: IsValidConnection = connection => {
-    const current_locked_ids = locked_ids(nodes)
-    return connection.source !== connection.target
-      && !current_locked_ids.has(connection.source)
-      && !current_locked_ids.has(connection.target)
-      && !edges.some(edge => edge.source === connection.source && edge.sourceHandle === connection.sourceHandle)
-  }
+  const is_valid_connection: IsValidConnection = connection => editing && check_valid_connection(
+    connection,
+    locked_ids(nodes),
+    edges,
+    reconnecting_edge_id.current ?? undefined,
+  )
 
   const on_connect = useCallback((connection: Connection) => {
     set_edges(current => addEdge(create_edge(connection), current))
     set_dirty(true)
   }, [set_edges])
+
+  const on_reconnect_start = useCallback((_event: ReactMouseEvent, edge: Edge) => {
+    reconnecting_edge_id.current = edge.id
+  }, [])
+
+  const on_reconnect = useCallback((old_edge: Edge, connection: Connection) => {
+    const current_edge = edges.find(edge => edge.id === old_edge.id)
+    if (!current_edge) return
+    const unchanged = current_edge.source === connection.source
+      && (current_edge.sourceHandle ?? null) === (connection.sourceHandle ?? null)
+      && current_edge.target === connection.target
+      && (current_edge.targetHandle ?? null) === (connection.targetHandle ?? null)
+    if (unchanged) return
+    set_edges(current => {
+      const edge = current.find(item => item.id === old_edge.id)
+      return edge ? reconnectEdge(edge, connection, current) : current
+    })
+    set_dirty(true)
+  }, [edges, set_edges])
+
+  const on_reconnect_end = useCallback((_event: MouseEvent | TouchEvent, edge: Edge, _handle_type: 'source' | 'target', connection_state: FinalConnectionState) => {
+    const started_edge_id = reconnecting_edge_id.current
+    reconnecting_edge_id.current = null
+    if (started_edge_id !== edge.id || connection_state.isValid === true || !edges.some(item => item.id === edge.id)) return
+    set_edges(current => current.filter(item => item.id !== edge.id))
+    set_dirty(true)
+  }, [edges, set_edges])
 
   const on_before_delete: OnBeforeDelete<ModuleFlowNode, Edge> = async ({ nodes: delete_nodes, edges: delete_edges }) => {
     const current_locked_ids = locked_ids(nodes)
@@ -250,7 +312,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
               <ReactFlow
                 colorMode="dark"
                 nodes={display_nodes}
-                edges={edges}
+                edges={display_edges}
                 nodeTypes={node_types}
                 onNodesChange={changes => {
                   const filtered_changes = ignore_select_changes(store.getState().userSelectionRect) ? changes.filter(change => change.type !== 'select') : changes
@@ -263,6 +325,10 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
                   if (filtered_changes.some(change => change.type === 'remove')) set_dirty(true)
                 }}
                 onConnect={on_connect}
+                onReconnectStart={on_reconnect_start}
+                onReconnect={on_reconnect}
+                onReconnectEnd={on_reconnect_end}
+                edgesReconnectable={editing}
                 isValidConnection={is_valid_connection}
                 onNodeClick={on_node_click}
                 onPaneClick={() => { set_inspected_id(null); if (!editing) set_activity_node(null) }}
@@ -294,12 +360,12 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved }: { graph
             )}
           </div>
         </div>
-        <SlidePanel open={impact !== null} title="Änderung betrifft laufende Assets" on_close={close_impact}
+        <SlidePanel open={impact !== null} title={<><span className="issue-mark"><Icon name="alert" size={16} /></span> Warnung</>} on_close={close_impact}
           actions={[
             { label: 'Abbrechen', icon: 'close', on_click: close_impact, disabled: saving },
             { label: 'Speichern', icon: 'save', primary: true, on_click: confirm_save, disabled: saving || pending_graph_input === null },
           ]}>
-          {impact?.removed_modules.map(module => <p key={module.id}>{module.name}: {module.assets} Assets, {module.jobs} laufende Jobs werden abgebrochen</p>)}
+          {impact && impact_lines(impact).map((line, index) => <p key={index}>{line}</p>)}
         </SlidePanel>
         {activity_node && <ModuleActivityPanel key={activity_node.module.id} workflow_id={graph.workflow_id} data={activity_node} on_close={() => set_activity_node(null)} />}
       </EditorModeContext.Provider>

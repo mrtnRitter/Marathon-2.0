@@ -60,6 +60,7 @@ export interface ModuleCounters {
   running: number
   done: number
   failed: number
+  discovered: number
 }
 
 export interface WorkflowModule {
@@ -212,6 +213,7 @@ export interface GraphImpact {
   removed_modules: { id: string; name: string; assets: number; jobs: number }[]
   assets: number
   jobs: number
+  outcomes: { rerouted: number; done: number; failed: number }
 }
 
 export interface WorkerInput {

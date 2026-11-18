@@ -28,7 +28,6 @@ class RegisterInput(BaseModel):
     client_version: str
     capabilities: list[str]
     max_parallel: int = Field(ge=1)
-    last_choice: list[str] = Field(default_factory=list)
     protocol: int
 
 

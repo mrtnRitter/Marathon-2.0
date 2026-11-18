@@ -86,20 +86,21 @@ Datei `config/marathon.toml`:
 | `[engine] pickup_timeout_s` | Abhol-Frist für zugeteilte Jobs (1–600 s) | `10` |
 | `[engine] max_attempts` | Unterbrochene Versuche je Asset und Modul (1–10) | `3` |
 | `[server_worker] enabled` | Server-Worker mit dem Server starten | `true` |
-| `[server_worker] max_parallel` | Parallele Jobs des Server-Workers (1–64) | `2` |
-| `[server_worker] last_choice` | Modultypen, für die der Server-Worker nur letzte Wahl ist, z. B. `["transcode", "qc"]` | `[]` |
+| `[server_worker] max_parallel` | Parallele Jobs des Server-Workers (1–64); gilt auch für den schon angemeldeten Server-Worker | `1` |
 
 `name` und `user` erlauben nur Kleinbuchstaben, Ziffern und `_`. Den Benutzer nach dem Einrichten nicht mehr ändern, sonst die Datenbank zurücksetzen.
 
 ## Engine und Worker
 
-- **Server-Worker:** startet mit `python run.py` als eigener Prozess und meldet sich wie jeder Worker beim Server an (Worker-ID `server-worker`, Name „Server“). Stürzt er ab, startet der Server ihn neu. Ausgaben: `.data/server-worker.log`.
+- **Server-Worker:** startet mit `python run.py` als eigener Prozess und meldet sich wie jeder Worker beim Server an (Worker-ID `server-worker`, Name „Server-Worker“; der Name gilt bei der ersten Anmeldung, danach auf der Worker-Seite änderbar). Stürzt er ab, startet der Server ihn neu. Ausgaben: `.data/server-worker.log`.
 - **Zugang:** Worker melden sich mit dem Token aus `.data/worker.token` an; der Server legt die Datei beim ersten Bedarf an.
 - **Zuteilung:** Der Server teilt Jobs an Worker mit freiem Platz zu, die den Modultyp anbieten; laufende Workflows kommen reihum dran, im Workflow das oberste Asset zuerst. Worker holen ihre Jobs über eine offen gehaltene Anfrage ab.
 - **Worker-Seite:** Neue Worker freigeben, Worker sperren (laufende Jobs laufen weiter), bearbeiten: Name, parallele Jobs und Vorrang je Modultyp (Bevorzugt, Normal, Letzte Wahl, Aus).
 - **Pausieren:** bricht laufende Jobs ab; das Asset geht zurück an den Ausgang des vorherigen Moduls. Bis alle Jobs abgebrochen sind, zeigt der Workflow „Wird pausiert“ und lässt sich nicht starten.
 - **Ausfälle:** Meldet sich ein Worker 30 s nicht oder startet er neu, wird sein Job erneut vergeben. Nach 3 unterbrochenen Versuchen am selben Modul ist das Asset fehlgeschlagen.
-- **Workflow ändern:** jederzeit speichern. Betrifft die Änderung laufende Assets (z. B. gelöschtes Modul), zeigt die Workflow-Ansicht vorher die Auswirkungen und speichert erst nach Bestätigung.
+- **Workflow ändern:** jederzeit speichern. Betrifft die Änderung laufende Assets (z. B. gelöschtes Modul), zeigt die Workflow-Ansicht vorher eine Warnung und speichert erst nach Bestätigung. Die Warnung nennt, wie viele Assets ab dem vorherigen Modul neu verteilt, als erledigt abgeschlossen oder als fehlgeschlagen markiert werden und wie viele Jobs abgebrochen werden.
+- **Überwachen:** Die Zähler in den Modulen aktualisieren sich alle 2 s. Ein Klick auf ein Modul zeigt Jobs, Assets, Worker, Logs und im Reiter „Einstellungen“ die Moduleinstellungen (nur lesen).
+- **Verbinden (Bearbeiten):** Verbindungen von einem Ausgang („Erfolg“, „Fehler“ …) ziehen und über dem Ziel-Modul loslassen; die Linie rastet am Eingang ein. Ziehen am verbundenen Eingang löst die zuletzt angelegte Verbindung: auf einem anderen Eingang loslassen verbindet neu, sonst wird sie entfernt.
 - **Erneut verarbeiten:** Das Asset beginnt am Anfang des Workflows, hinter Watchfolder bzw. am Modul ohne eingehende Verbindung.
 
 ## Workflows mit fehlerhaften Einstellungen
@@ -127,6 +128,8 @@ Datei `config/marathon.toml`:
 - Pfade gelten aus Sicht des Servers. Das Konto, unter dem der Server läuft, braucht Lesezugriff auf den Ordner bzw. die Netzfreigabe.
 - Das Fenster „Ordner wählen“ zeigt nur Ordnernamen des Servers, keine Dateien. Die Eingabe `\\rechner` (z. B. `\\10.0.77.11`) zeigt die Freigaben dieses Rechners, von dort lässt sich weiter durchblättern (nur auf einem Windows-Server). Den Rechner selbst kann man nicht als Ordner wählen.
 - Jede Datei wird je Pfad einmal übernommen. Eine unter gleichem Namen ersetzte Datei wird derzeit nicht erneut übernommen. Wird ein Asset gelöscht und liegt die Datei noch im Ordner, wird sie erneut übernommen.
+- Das Modul zeigt in „Überwachen“, wie viele Dateien es erfasst hat (Assets, die noch existieren) und wie viele warten.
+- Im Fenster „Ordner wählen“ filtert das Weitertippen im Adressfeld die Liste auf passende Ordner.
 - Ist der Ordner nicht erreichbar (oder antwortet er 60 s nicht), steht das einmal im Modul-Log; danach folgt „Ordner wieder erreichbar“.
 - Zeitgesteuert gestartete Workflows pausieren sich, sobald kein Asset aussteht. Den Watchfolder deshalb in einem dauerhaft gestarteten Workflow verwenden.
 
@@ -199,8 +202,8 @@ Liste von Einträgen mit Namen, z. B. „Kollektion Defa“, „Kollektion Cinte
 Prüfregeln der Oberfläche:
 
 ```bash
-.tools\node\node.exe --test ui/tests/module_settings.test.mjs ui/tests/selection.test.mjs   # Windows
-.tools/node/bin/node --test ui/tests/module_settings.test.mjs ui/tests/selection.test.mjs     # Linux
+.tools\node\node.exe --test "ui/tests/*.test.mjs"   # Windows
+.tools/node/bin/node --test ui/tests/*.test.mjs       # Linux
 ```
 
 Die Datenbank-Tests starten eine eigene, temporäre PostgreSQL-Instanz mit den Programmen aus `.tools/postgres` und räumen sie danach wieder ab.

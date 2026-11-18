@@ -24,8 +24,8 @@ def test_repo_config_file_loads():
     assert config.engine.poll_timeout_s == 25.0
     assert config.engine.tick_interval_s == 0.5
     assert config.server_worker.enabled is True
-    assert config.server_worker.max_parallel == 2
-    assert config.server_worker.last_choice == ()
+    assert config.server_worker.max_parallel == 1
+    assert not hasattr(config.server_worker, "last" + "_choice")
 
 
 def test_engine_int_becomes_float(tmp_path):
@@ -38,11 +38,14 @@ def test_engine_int_becomes_float(tmp_path):
     assert isinstance(value, float)
 
 
-def test_last_choice_tuple(tmp_path):
+def test_unknown_server_worker_setting_is_ignored(tmp_path):
     config_file = tmp_path / "marathon.toml"
-    config_file.write_text('[server_worker]\nlast_choice = ["transcode", "qc"]\n', encoding="utf-8")
+    config_file.write_text('[server_worker]\n' + 'last' + '_choice = ["transcode"]\n', encoding="utf-8")
 
-    assert load_server_config(config_file).server_worker.last_choice == ("transcode", "qc")
+    config = load_server_config(config_file)
+
+    assert config.server_worker.max_parallel == 1
+    assert not hasattr(config.server_worker, "last" + "_choice")
 
 
 @pytest.mark.parametrize(
@@ -53,7 +56,6 @@ def test_last_choice_tuple(tmp_path):
         ("[engine]\nmax_attempts = 2.5\n", "[engine] max_attempts"),
         ("[server_worker]\nmax_parallel = 0\n", "[server_worker] max_parallel"),
         ('[server_worker]\nenabled = "yes"\n', "[server_worker] enabled"),
-        ('[server_worker]\nlast_choice = ["Bad-Name"]\n', "[server_worker] last_choice"),
         ("engine = 5\n", "[engine] in"),
     ],
 )

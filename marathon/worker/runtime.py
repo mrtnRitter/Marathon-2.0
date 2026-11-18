@@ -47,7 +47,6 @@ class WorkerRuntime:
         name: str,
         max_parallel: int,
         capabilities: Sequence[str],
-        last_choice: Sequence[str] = (),
         resolve_module: Callable[[str], Any | None] = catalog_module,
         request_timeout_s: float = 10.0,
         retry_delays_s: Sequence[float] = (1, 2, 5, 10),
@@ -67,7 +66,6 @@ class WorkerRuntime:
         self.name = name
         self.max_parallel = max_parallel
         self.capabilities = list(capabilities)
-        self.last_choice = list(last_choice)
         self.resolve_module = resolve_module
         self.request_timeout_s = request_timeout_s
         self.retry_delays_s = tuple(retry_delays_s)
@@ -134,7 +132,6 @@ class WorkerRuntime:
             "client_version": app_version,
             "capabilities": self.capabilities,
             "max_parallel": self.max_parallel,
-            "last_choice": self.last_choice,
             "protocol": 1,
         }
         attempt = 0

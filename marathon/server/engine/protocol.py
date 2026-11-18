@@ -37,7 +37,7 @@ def register_worker(
     worker = connection.execute(
         text("SELECT status FROM workers WHERE id = :worker_id"), {"worker_id": worker_id}
     ).mappings().one_or_none()
-    priorities = {module_type: "last" for module_type in payload.get("last_choice", [])}
+    priorities = {}
     statement = text(
         "INSERT INTO workers (id, name, status, capabilities, priorities, max_parallel, client_slots, "
         "client_version, ip_address, last_seen, created_at) VALUES (:worker_id, :name, :status, "

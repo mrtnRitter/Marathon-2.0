@@ -98,7 +98,7 @@ export function new_module(module_type: ModuleType, position: { x: number; y: nu
     description: '',
     position,
     settings: Object.fromEntries(module_type.settings.flatMap(spec => (spec.default === undefined ? [] : [[spec.key, spec.default]]))),
-    counters: { waiting: 0, running: 0, done: 0, failed: 0 },
+    counters: { waiting: 0, running: 0, done: 0, failed: 0, discovered: 0 },
     locked: false,
   }
 }

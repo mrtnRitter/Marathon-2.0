@@ -12,6 +12,7 @@ import { use_data } from '../../data/use_data'
 import { format_relative } from '../../lib/format'
 import { asset_status_meta, job_status_meta, step_status_meta, worker_status_meta } from '../../theme/status'
 import type { ModuleNodeData } from './editor_types'
+import { ModuleSettingsForm } from './ModuleSettingsPanel'
 
 const job_columns: Column<Job>[] = [
   { key: 'id', label: 'Job' },
@@ -48,9 +49,10 @@ export function ModuleActivityPanel({ workflow_id, data, on_close }: { workflow_
         { id: 'assets', label: 'Assets', icon: 'files', count: activity?.assets.length },
         { id: 'workers', label: 'Worker', icon: 'server', count: activity?.workers.length },
         { id: 'logs', label: 'Logs', icon: 'cpu' },
+        { id: 'settings', label: 'Einstellungen', icon: 'settings' },
       ]} />
       <div className="module-activity-body">
-        {!activity ? <div className="loading">Lade</div> : {
+        {tab === 'settings' ? <ModuleSettingsForm data={data} read_only /> : !activity ? <div className="loading">Lade</div> : {
           jobs: <DataTable columns={job_columns} rows={activity.jobs} row_key={row => row.id} empty_text="Keine Jobs an diesem Modul" />,
           assets: <DataTable columns={asset_columns} rows={activity.assets} row_key={row => row.id} on_row_open={row => navigate(`/assets/${row.id}`)} empty_text="Keine Assets an diesem Modul" />,
           workers: <DataTable columns={worker_columns} rows={activity.workers} row_key={row => row.id} empty_text="Keine Worker beteiligt" />,

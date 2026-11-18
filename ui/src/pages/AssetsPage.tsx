@@ -9,7 +9,7 @@ export function AssetsPage() {
   const [params, set_params] = useSearchParams()
   const workflow_id = params.get('workflow') ?? ''
   const status_param = params.get('status')
-  const initial_status = asset_statuses.find(status => status === status_param)
+  const initial_status = status_param === 'all' ? 'all' : asset_statuses.find(status => status === status_param)
   const { data: workflows = [] } = use_data(get_workflows)
   return (
     <>

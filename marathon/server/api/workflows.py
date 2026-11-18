@@ -227,4 +227,9 @@ def post_workflow_graph_impact(
         ).scalar_one_or_none()
         if exists is None:
             raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
-        return graph_impact(connection, workflow_id, [module.id for module in payload.modules])
+        return graph_impact(
+            connection,
+            workflow_id,
+            [module.id for module in payload.modules],
+            [(item.source_module_id, item.source_output_id, item.target_module_id) for item in payload.connections],
+        )

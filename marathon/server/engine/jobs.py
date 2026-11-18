@@ -613,23 +613,30 @@ def remove_missing_modules(connection: Connection, workflow_id: str, now: dateti
             return_asset(connection, asset_id, graph)
 
 
-def graph_impact(connection: Connection, workflow_id: str, module_ids: Iterable[str]) -> dict[str, Any]:
-    """Count in-progress assets and active jobs on modules absent from a proposed graph."""
+def graph_impact(
+    connection: Connection,
+    workflow_id: str,
+    module_ids: Iterable[str],
+    connections: Iterable[tuple[str, str, str]] = (),
+) -> dict[str, Any]:
+    """Count removed-module work and predict each affected asset's outcome."""
     _lock_workflow(connection, workflow_id)
     graph = load_graph(connection, workflow_id)
     remaining = set(module_ids)
+    routes = {(source_id, output_id) for source_id, output_id, target_id in connections if target_id in remaining}
     removed = []
+    outcomes = {"rerouted": 0, "done": 0, "failed": 0}
     for module_id, module in sorted((graph.modules if graph is not None else {}).items()):
         if module_id in remaining:
             continue
         params = {"workflow_id": workflow_id, "module_id": module_id}
-        asset_count = connection.execute(
+        assets = connection.execute(
             text(
-                "SELECT COUNT(*) FROM assets WHERE workflow_id = :workflow_id "
+                "SELECT from_module_id, from_output_id FROM assets WHERE workflow_id = :workflow_id "
                 "AND current_module_id = :module_id AND status = 'in_progress'"
             ),
             params,
-        ).scalar_one()
+        ).mappings().all()
         job_count = connection.execute(
             text(
                 "SELECT COUNT(*) FROM jobs WHERE workflow_id = :workflow_id AND module_id = :module_id "
@@ -637,7 +644,19 @@ def graph_impact(connection: Connection, workflow_id: str, module_ids: Iterable[
             ),
             params,
         ).scalar_one()
-        asset_count = int(asset_count)
+        asset_count = len(assets)
+        for asset in assets:
+            source_id = asset["from_module_id"]
+            output_id = asset["from_output_id"]
+            if source_id is None or source_id not in remaining:
+                outcome = "failed"
+            elif (source_id, output_id) in routes:
+                outcome = "rerouted"
+            elif output_id == "error":
+                outcome = "failed"
+            else:
+                outcome = "done"
+            outcomes[outcome] += 1
         job_count = int(job_count)
         if asset_count:
             removed.append({"id": module_id, "name": module.name, "assets": asset_count, "jobs": job_count})
@@ -645,4 +664,5 @@ def graph_impact(connection: Connection, workflow_id: str, module_ids: Iterable[
         "removed_modules": removed,
         "assets": sum(item["assets"] for item in removed),
         "jobs": sum(item["jobs"] for item in removed),
+        "outcomes": outcomes,
     }

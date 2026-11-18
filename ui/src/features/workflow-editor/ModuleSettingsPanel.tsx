@@ -15,10 +15,8 @@ interface Props {
 }
 
 /** Settings form generated from the module type description. */
-export function ModuleSettingsPanel({ data, on_change, read_only = false, width, on_width_change }: Props) {
-  const drag = useRef<{ pointer_id: number; start_x: number; start_width: number } | null>(null)
+export function ModuleSettingsForm({ data, on_change, read_only = false, width }: { data: ModuleNodeData; on_change?: (module: WorkflowModule) => void; read_only?: boolean; width?: number }) {
   const description_ref = useRef<HTMLTextAreaElement>(null)
-  const [resizing, set_resizing] = useState(false)
   const [focus_key, set_focus_key] = useState<string | null>(null)
 
   useLayoutEffect(() => {
@@ -28,16 +26,90 @@ export function ModuleSettingsPanel({ data, on_change, read_only = false, width,
     element.style.height = `${element.scrollHeight}px`
   }, [data.module.description, width])
 
+  const errors = setting_errors(data.module_type, data.module.settings, focus_key)
+  const update_settings = (key: string, value: FieldValue) => {
+    if (!read_only) on_change?.({ ...data.module, settings: { ...data.module.settings, [key]: value } })
+  }
+
+  return (
+    <>
+      <p className="muted">{data.module_type.description}</p>
+      <FormSection title="Allgemein">
+        <div onBlur={read_only ? undefined : () => {
+          if (!data.module.name.trim()) on_change?.({ ...data.module, name: data.module_type.name })
+        }}>
+          <FormField
+            spec={{ key: 'module_name', label: 'Name', type: 'text' }}
+            value={data.module.name}
+            disabled={read_only}
+            on_change={value => { if (!read_only) on_change?.({ ...data.module, name: String(value) }) }}
+          />
+        </div>
+        <div className="form-field">
+          <label htmlFor="field-module_description" className="form-field-label">Beschreibung</label>
+          <div className="form-field-control">
+            <textarea
+              ref={description_ref}
+              id="field-module_description"
+              className="input module-settings-description"
+              rows={1}
+              value={data.module.description ?? ''}
+              disabled={read_only}
+              onChange={event => { if (!read_only) on_change?.({ ...data.module, description: event.target.value }) }}
+            />
+          </div>
+        </div>
+      </FormSection>
+      <FormSection title={`Einstellungen · ${data.module_type.name}`}>
+        {data.module_type.settings.map(spec => {
+          const field = (
+            <FormField
+              spec={spec}
+              value={data.module.settings[spec.key]}
+              disabled={read_only}
+              error={errors[spec.key]}
+              on_change={value => {
+                if (spec.type === 'extensions') set_focus_key(spec.key)
+                update_settings(spec.key, value)
+              }}
+            />
+          )
+          if (spec.type !== 'extensions') return <div key={spec.key}>{field}</div>
+          return (
+            <div key={spec.key} onBlur={event => {
+              if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget as Node)) return
+              if (read_only) return
+              const raw = String(data.module.settings[spec.key] ?? spec.default ?? '')
+              const normalized = parse_extensions(raw)
+              if (normalized.invalid !== null) return
+              const value = normalized.values.join(', ')
+              if (value !== raw) update_settings(spec.key, value)
+            }}>
+              {field}
+            </div>
+          )
+        })}
+      </FormSection>
+      <FormSection title="Ausgänge">
+        {data.module_type.outputs.map(output => (
+          <div key={output.id} className="module-settings-output">
+            <b style={{ color: output_color(output.id) }}>{output.label}</b>
+            <span className="dim">{output.description}</span>
+          </div>
+        ))}
+      </FormSection>
+    </>
+  )
+}
+
+export function ModuleSettingsPanel({ data, on_change, read_only = false, width, on_width_change }: Props) {
+  const drag = useRef<{ pointer_id: number; start_x: number; start_width: number } | null>(null)
+  const [resizing, set_resizing] = useState(false)
+
   const end_drag = (event: PointerEvent<HTMLDivElement>) => {
     if (drag.current?.pointer_id !== event.pointerId) return
     drag.current = null
     set_resizing(false)
-  }
-
-  const errors = setting_errors(data.module_type, data.module.settings, focus_key)
-
-  const update_settings = (key: string, value: FieldValue) => {
-    if (!read_only) on_change({ ...data.module, settings: { ...data.module.settings, [key]: value } })
   }
 
   return (
@@ -68,71 +140,7 @@ export function ModuleSettingsPanel({ data, on_change, read_only = false, width,
         {read_only && <Icon name="lock" size={14} />}
       </header>
       <div className="module-settings-body">
-        <p className="muted">{data.module_type.description}</p>
-        <FormSection title="Allgemein">
-          <div onBlur={read_only ? undefined : () => {
-            if (!data.module.name.trim()) on_change({ ...data.module, name: data.module_type.name })
-          }}>
-            <FormField
-              spec={{ key: 'module_name', label: 'Name', type: 'text' }}
-              value={data.module.name}
-              disabled={read_only}
-              on_change={value => { if (!read_only) on_change({ ...data.module, name: String(value) }) }}
-            />
-          </div>
-          <div className="form-field">
-            <label htmlFor="field-module_description" className="form-field-label">Beschreibung</label>
-            <div className="form-field-control">
-              <textarea
-                ref={description_ref}
-                id="field-module_description"
-                className="input module-settings-description"
-                rows={1}
-                value={data.module.description ?? ''}
-                disabled={read_only}
-                onChange={event => { if (!read_only) on_change({ ...data.module, description: event.target.value }) }}
-              />
-            </div>
-          </div>
-        </FormSection>
-        <FormSection title={`Einstellungen · ${data.module_type.name}`}>
-          {data.module_type.settings.map(spec => {
-            const field = (
-              <FormField
-                spec={spec}
-                value={data.module.settings[spec.key]}
-                disabled={read_only}
-                error={errors[spec.key]}
-                on_change={value => {
-                  if (spec.type === 'extensions') set_focus_key(spec.key)
-                  update_settings(spec.key, value)
-                }}
-              />
-            )
-            if (spec.type !== 'extensions') return <div key={spec.key}>{field}</div>
-            return (
-              <div key={spec.key} onBlur={event => {
-                if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget as Node)) return
-                if (read_only) return
-                const raw = String(data.module.settings[spec.key] ?? spec.default ?? '')
-                const normalized = parse_extensions(raw)
-                if (normalized.invalid !== null) return
-                const value = normalized.values.join(', ')
-                if (value !== raw) update_settings(spec.key, value)
-              }}>
-                {field}
-              </div>
-            )
-          })}
-        </FormSection>
-        <FormSection title="Ausgänge">
-          {data.module_type.outputs.map(output => (
-            <div key={output.id} className="module-settings-output">
-              <b style={{ color: output_color(output.id) }}>{output.label}</b>
-              <span className="dim">{output.description}</span>
-            </div>
-          ))}
-        </FormSection>
+        <ModuleSettingsForm data={data} on_change={on_change} read_only={read_only} width={width} />
       </div>
     </aside>
   )

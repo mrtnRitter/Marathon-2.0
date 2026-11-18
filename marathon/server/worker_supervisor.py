@@ -38,13 +38,11 @@ def server_worker_command(url: str, config: ServerWorkerConfig) -> list[str]:
         "--worker-id",
         "server-worker",
         "--name",
-        "Server",
+        "Server-Worker",
         "--max-parallel",
         str(config.max_parallel),
         "--exit-on-stdin-eof",
     ]
-    if config.last_choice:
-        command.extend(("--last-choice", ",".join(config.last_choice)))
     return command
 
 

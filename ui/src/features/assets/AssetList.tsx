@@ -6,8 +6,9 @@ import { StatusTabs } from '../../components/StatusTabs'
 import { Toolbar } from '../../components/Toolbar'
 import { ReprocessPanel } from './ReprocessPanel'
 import { get_assets } from '../../data/api'
-import type { Asset, AssetStatus, Workflow } from '../../data/types'
+import type { Asset, Workflow } from '../../data/types'
 import { use_data } from '../../data/use_data'
+import { filter_assets, type AssetFilter } from '../../lib/asset_filter'
 import { format_datetime, format_relative } from '../../lib/format'
 import { asset_status_meta, asset_statuses, step_status_meta } from '../../theme/status'
 import './AssetList.css'
@@ -15,7 +16,7 @@ import './AssetList.css'
 interface Props {
   workflow_id?: string
   /** Status tab shown first; defaults to pending. */
-  initial_status?: AssetStatus
+  initial_status?: AssetFilter
   /** When given, a workflow column is shown (global asset view). */
   workflows?: Workflow[]
 }
@@ -24,13 +25,12 @@ interface Props {
 export function AssetList({ workflow_id, workflows, initial_status }: Props) {
   const navigate = useNavigate()
   const { data: assets = [], loading, reload } = use_data(() => get_assets({ workflow_id }), [workflow_id])
-  const [status, set_status] = useState<AssetStatus>(initial_status ?? 'pending')
+  const [status, set_status] = useState<AssetFilter>(initial_status ?? 'pending')
   const [selected, set_selected] = useState<string[]>([])
   const [search, set_search] = useState('')
   const [reprocess_open, set_reprocess_open] = useState(false)
 
-  const visible = useMemo(() => assets.filter(asset =>
-    asset.status === status && asset.name.toLowerCase().includes(search.trim().toLowerCase())), [assets, status, search])
+  const visible = useMemo(() => filter_assets(assets, status, search), [assets, status, search])
 
   const workflow_name = (id: string) => workflows?.find(workflow => workflow.id === id)?.name ?? id
   const open = (id: string) => navigate(`/assets/${id}`)
@@ -47,8 +47,11 @@ export function AssetList({ workflow_id, workflows, initial_status }: Props) {
 
   return (
     <div className="asset-list">
-      <StatusTabs active={status} on_change={id => { set_status(id as AssetStatus); set_selected([]) }}
-        items={asset_statuses.map(item => ({ id: item, ...asset_status_meta[item], count: assets.filter(asset => asset.status === item).length }))} />
+      <StatusTabs active={status} on_change={id => { set_status(id as AssetFilter); set_selected([]) }}
+        items={[
+          { id: 'all', label: 'Alle', color: 'var(--text-muted)', count: assets.length },
+          ...asset_statuses.map(item => ({ id: item, ...asset_status_meta[item], count: assets.filter(asset => asset.status === item).length })),
+        ]} />
       <div className="asset-list-bar">
         <Toolbar actions={[
           { label: 'Ansehen', icon: 'eye', disabled: selected.length !== 1, on_click: () => open(selected[0]) },
@@ -62,11 +65,9 @@ export function AssetList({ workflow_id, workflows, initial_status }: Props) {
         ]} />
         <input className="input asset-list-search" placeholder="Suchen …" value={search} onChange={event => set_search(event.target.value)} />
       </div>
-      {loading && !assets.length ? <div className="loading">Lade</div> : (
-        <DataTable columns={columns} rows={visible} row_key={row => row.id} selected={selected}
-          on_selection_change={set_selected} on_row_open={row => open(row.id)}
-          empty_text={`Keine Assets mit Status „${asset_status_meta[status].label}“`} />
-      )}
+      <DataTable columns={columns} rows={visible} row_key={row => row.id} selected={selected} loading={loading}
+        on_selection_change={set_selected} on_row_open={row => open(row.id)}
+        empty_text={status === 'all' ? 'Keine Assets' : `Keine Assets mit Status „${asset_status_meta[status].label}“`} />
       <ReprocessPanel open={reprocess_open} asset_ids={selected} current_workflow_id={workflow_id}
         on_close={() => set_reprocess_open(false)} on_done={() => { set_reprocess_open(false); set_selected([]); reload() }} />
     </div>

@@ -20,6 +20,8 @@ def get_graph(connection: Connection, workflow_id: str) -> dict[str, Any] | None
     modules = connection.execute(text(
         "SELECT module.id, module.type_id, module.name, module.description, module.position_x, module.position_y, "
         "module.settings, module.locked, "
+        "(SELECT COUNT(*) FROM watch_files AS watch_file WHERE watch_file.workflow_id = module.workflow_id "
+        "AND watch_file.module_id = module.id AND watch_file.asset_id IS NOT NULL) AS discovered, "
         "(SELECT COUNT(*) FROM assets AS asset WHERE asset.workflow_id = module.workflow_id "
         "AND asset.current_module_id = module.id AND asset.step_status = 'waiting') AS waiting, "
         "(SELECT COUNT(*) FROM assets AS asset WHERE asset.workflow_id = module.workflow_id "
@@ -35,7 +37,7 @@ def get_graph(connection: Connection, workflow_id: str) -> dict[str, Any] | None
     for row in modules:
         module = dict(row)
         module["position"] = {"x": module.pop("position_x"), "y": module.pop("position_y")}
-        module["counters"] = {key: module.pop(key) for key in ("waiting", "running", "done", "failed")}
+        module["counters"] = {key: module.pop(key) for key in ("waiting", "running", "done", "failed", "discovered")}
         module_list.append(module)
 
     connections = connection.execute(text(

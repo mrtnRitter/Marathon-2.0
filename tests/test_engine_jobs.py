@@ -504,10 +504,23 @@ def test_graph_impact(db_engine):
     _asset(db_engine, workflow_id, current_module_id="copy")
     _job(db_engine, workflow_id, status="running")
     _asset(db_engine, workflow_id, "move-asset", current_module_id="move", list_position=2)
+
     with db_engine.begin() as connection:
-        impact = graph_impact(connection, workflow_id, ["watch", "move"])
-    assert impact == {
-        "removed_modules": [{"id": "copy", "name": "Kopieren", "assets": 1, "jobs": 1}],
-        "assets": 1,
-        "jobs": 1,
-    }
+        rerouted = graph_impact(connection, workflow_id, ["watch", "move"], [("watch", "success", "move")])
+    assert rerouted["outcomes"] == {"rerouted": 1, "done": 0, "failed": 0}
+    assert rerouted["assets"] == sum(rerouted["outcomes"].values()) == 1
+
+    with db_engine.begin() as connection:
+        completed = graph_impact(connection, workflow_id, ["watch", "move"], [])
+    assert completed["outcomes"] == {"rerouted": 0, "done": 1, "failed": 0}
+
+    with db_engine.begin() as connection:
+        failed_source = graph_impact(connection, workflow_id, ["move"], [])
+    assert failed_source["outcomes"] == {"rerouted": 0, "done": 0, "failed": 1}
+
+    _asset(db_engine, workflow_id, "missing-source", current_module_id="copy", from_module_id=None, list_position=3)
+    _asset(db_engine, workflow_id, "error-output", current_module_id="copy", from_output_id="error", list_position=4)
+    with db_engine.begin() as connection:
+        edge_cases = graph_impact(connection, workflow_id, ["watch", "move"], [("watch", "success", "move")])
+    assert edge_cases["outcomes"] == {"rerouted": 1, "done": 0, "failed": 2}
+    assert edge_cases["assets"] == sum(edge_cases["outcomes"].values()) == 3

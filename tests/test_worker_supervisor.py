@@ -39,20 +39,13 @@ def test_server_url():
     assert server_url("10.0.0.5", 9000) == "http://10.0.0.5:9000"
 
 
-def test_command_without_last_choice():
+def test_server_worker_command():
     command = server_worker_command("http://127.0.0.1:8080", ServerWorkerConfig(max_parallel=2))
     assert command == [
         sys.executable, "-m", "marathon.worker", "--server", "http://127.0.0.1:8080",
-        "--worker-id", "server-worker", "--name", "Server", "--max-parallel", "2",
+        "--worker-id", "server-worker", "--name", "Server-Worker", "--max-parallel", "2",
         "--exit-on-stdin-eof",
     ]
-
-
-def test_command_with_last_choice():
-    command = server_worker_command(
-        "http://127.0.0.1:8080", ServerWorkerConfig(max_parallel=2, last_choice=("transcode", "qc"))
-    )
-    assert command[-2:] == ["--last-choice", "transcode,qc"]
 
 
 def test_restarts_after_crash(tmp_path):

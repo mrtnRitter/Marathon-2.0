@@ -3,6 +3,42 @@ const time = new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digi
 
 export const format_datetime = (iso: string) => date_time.format(new Date(iso))
 
+const size_number = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1, useGrouping: false })
+const size_units = ['B', 'KB', 'MB', 'GB', 'TB']
+const known_metadata = new Set(['source_path', 'size', 'mtime'])
+
+/** Formats a byte count with binary units. */
+export function format_size(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return String(bytes)
+  let unit_index = 0
+  let value = bytes
+  while (value >= 1024 && unit_index < size_units.length - 1) {
+    value /= 1024
+    unit_index++
+  }
+  return `${size_number.format(value)} ${size_units[unit_index]}`
+}
+
+/** Formats known asset metadata first, followed by remaining keys in input order. */
+export function format_metadata(metadata: Record<string, string>): [string, string][] {
+  const entries: [string, string][] = []
+  if (Object.prototype.hasOwnProperty.call(metadata, 'source_path')) entries.push(['Quellpfad', metadata.source_path])
+  if (Object.prototype.hasOwnProperty.call(metadata, 'size')) {
+    const value = metadata.size
+    entries.push(['Größe', /^\d+$/.test(value) ? format_size(Number(value)) : value])
+  }
+  if (Object.prototype.hasOwnProperty.call(metadata, 'mtime')) {
+    const value = metadata.mtime
+    entries.push(['Datei geändert', Number.isFinite(Date.parse(value)) ? format_datetime(value) : value])
+  }
+  for (const [key, value] of Object.entries(metadata)) {
+    if (known_metadata.has(key)) continue
+    const label = key.replaceAll('_', ' ')
+    entries.push([label ? `${label.charAt(0).toUpperCase()}${label.slice(1)}` : label, value])
+  }
+  return entries
+}
+
 export const format_time = (iso: string) => time.format(new Date(iso))
 
 export function format_relative(iso: string): string {

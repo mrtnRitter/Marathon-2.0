@@ -16,8 +16,7 @@ max_attempts = 3        # Unterbrochene Versuche je Asset und Modul (1–10)
 
 [server_worker]
 enabled = true          # Server-Worker mit dem Server starten
-max_parallel = 2        # Parallele Jobs des Server-Workers (1–64)
-last_choice = []        # Modultypen, für die der Server-Worker nur letzte Wahl ist, z. B. ["transcode", "qc"]
+max_parallel = 1        # Parallele Jobs des Server-Workers (1–64)
 ```
 
 ```python
@@ -32,15 +31,14 @@ class EngineConfig:
 @dataclass(frozen=True)
 class ServerWorkerConfig:
     enabled: bool = True
-    max_parallel: int = 2
-    last_choice: tuple[str, ...] = ()
+    max_parallel: int = 1
 
 # ServerConfig bekommt zusätzlich:
 #   engine: EngineConfig = field(default_factory=EngineConfig)
 #   server_worker: ServerWorkerConfig = field(default_factory=ServerWorkerConfig)
 ```
 
-Zahlen: `int` oder `float`, nie `bool`; `max_attempts`, `max_parallel` nur `int`. `last_choice`: Liste von Texten, je `^[a-z0-9_]{1,64}$`. Fehler: `ConfigError` mit Abschnitt und Schlüssel, z. B. `[engine] poll_timeout_s in <datei> muss eine Zahl zwischen 1 und 60 sein`.
+Zahlen: `int` oder `float`, nie `bool`; `max_attempts`, `max_parallel` nur `int`. Unbekannte Schlüssel (z. B. das frühere `last_choice`) werden ignoriert. Fehler: `ConfigError` mit Abschnitt und Schlüssel, z. B. `[engine] poll_timeout_s in <datei> muss eine Zahl zwischen 1 und 60 sein`.
 
 ## 2. Datenbank – Migration `0005`
 
@@ -110,7 +108,7 @@ Die Engine bewegt Assets nur in Workflows mit `active AND NOT pausing`. Ergebnis
 | `offline` | Anmeldung oder Anfrage | `ready` |
 | `ready` ⇄ `busy` | Engine-Takt: aktiver Job vorhanden ⇄ keiner | |
 
-Jobs bekommen nur `ready`/`busy`. Freie Plätze = `min(max_parallel, client_slots)` − aktive Jobs. Angebot = Modultypen in `capabilities` (meldet der Worker) ohne Vorrang `off`. Vorrang je Modultyp in `priorities`: `preferred` (0), `normal` (1, Standard), `last` (2), `off`. Bei der ersten Anmeldung werden die gemeldeten `last_choice`-Typen auf `last` gesetzt.
+Jobs bekommen nur `ready`/`busy`. Freie Plätze = `min(max_parallel, client_slots)` − aktive Jobs. Angebot = Modultypen in `capabilities` (meldet der Worker) ohne Vorrang `off`. Vorrang je Modultyp in `priorities`: `preferred` (0), `normal` (1, Standard), `last` (2), `off`. Neue Worker starten ohne Einträge in `priorities` (alles `normal`).
 
 ### 4.4 Workflow
 
@@ -220,19 +218,19 @@ Jeder Schritt in eigener Transaktion mit `lock_timeout 5s`, `statement_timeout 1
 
 | Endpunkt | Eingabe | Antwort |
 |---|---|---|
-| `POST /worker/register` | `worker_id` (`^[A-Za-z0-9_-]{1,64}$`), `name`, `client_version`, `capabilities: list[str]`, `max_parallel: int ≥ 1`, `last_choice: list[str] = []`, `protocol: int` | `{"worker_id", "status", "protocol": 1, "poll_timeout_s"}`; `protocol != 1` → 409 „Protokollversion nicht unterstützt“ |
+| `POST /worker/register` | `worker_id` (`^[A-Za-z0-9_-]{1,64}$`), `name`, `client_version`, `capabilities: list[str]`, `max_parallel: int ≥ 1`, `protocol: int` (unbekannte Felder werden ignoriert) | `{"worker_id", "status", "protocol": 1, "poll_timeout_s"}`; `protocol != 1` → 409 „Protokollversion nicht unterstützt“ |
 | `POST /worker/poll` | `worker_id`, `running: list[str]` | `{"jobs": [...], "cancel": [...]}` |
 | `POST /worker/jobs/{job_id}/start` | `worker_id` | 200 `{"ok": true}`; 409 „Job nicht mehr gültig“; 404 |
 | `POST /worker/jobs/{job_id}/progress` | `worker_id`, `progress: 0–100`, `log: list[str] = []` | `{"cancel": bool}` (true bei `cancelling` oder Endzustand) |
 | `POST /worker/jobs/{job_id}/result` | `worker_id`, Ergebnis wie `apply_job_result` | `{"accepted": bool}`; 404 unbekannt; 403 fremder Worker |
 
-- **Anmelden:** neuer Worker → Zeile mit `status` `new` (`server-worker`: `ready`), `client_slots=max_parallel`, `max_parallel=max_parallel`, `priorities` mit `last_choice` auf `last`. Bekannter Worker: `client_version`, `capabilities`, `client_slots`, `ip_address`, `last_seen` aktualisieren (Name, `max_parallel`, `priorities` bleiben); `offline` → `ready`; alle aktiven Jobs des Workers: `assigned` → `drop_unstarted_job`, sonst `interrupt_job(reason="Worker neu gestartet")`.
+- **Anmelden:** neuer Worker → Zeile mit `status` `new` (`server-worker`: `ready`), `client_slots=max_parallel`, `max_parallel=max_parallel`, `priorities` leer. Bekannter Worker: `client_version`, `capabilities`, `client_slots`, `ip_address`, `last_seen` aktualisieren (Name, `max_parallel`, `priorities` bleiben); `offline` → `ready`; alle aktiven Jobs des Workers: `assigned` → `drop_unstarted_job`, sonst `interrupt_job(reason="Worker neu gestartet")`.
 - **Anfrage (Long-Poll):** unbekannter Worker → 404 „Worker unbekannt“. `last_seen` sofort und danach höchstens alle 5 s; `offline` → `ready`. `jobs` = alle `assigned`-Jobs des Workers als `{"job_id", "type_id", "settings", "asset": {"id", "name", "path"}}`; `cancel` = Jobs des Workers im Zustand `cancelling` plus IDs aus `running`, die für diesen Worker nicht `running`/`cancelling` sind. Sofortige Antwort, wenn eine Liste nicht leer ist; sonst Prüfung alle 0,5 s bis `poll_timeout_s` oder bis die Verbindung getrennt ist. Der Endpunkt ist `async`, Datenbankarbeit über `run_in_threadpool`.
 
 ## 8. Worker-Laufzeit `marathon/worker/`
 
 ```
-python -m marathon.worker --server URL --worker-id ID --name NAME --max-parallel N [--last-choice a,b] [--exit-on-stdin-eof]
+python -m marathon.worker --server URL --worker-id ID --name NAME --max-parallel N [--exit-on-stdin-eof]
 ```
 
 - `--server` ist die Basis-URL des Servers (z. B. `http://127.0.0.1:8080`); die Laufzeit hängt `/api/v1` an.
@@ -258,7 +256,7 @@ class WorkerSupervisor:
     def stop(self) -> bool
 ```
 
-- Kommando: `[sys.executable, "-m", "marathon.worker", "--server", url, "--worker-id", "server-worker", "--name", "Server", "--max-parallel", str(n), "--exit-on-stdin-eof"]`, bei `last_choice` zusätzlich `["--last-choice", "a,b"]`.
+- Kommando: `[sys.executable, "-m", "marathon.worker", "--server", url, "--worker-id", "server-worker", "--name", "Server-Worker", "--max-parallel", str(n), "--exit-on-stdin-eof"]`.
 - Kindprozess mit `stdin=PIPE`, Ausgabe angehängt an `log_file` (`.data/server-worker.log`); POSIX `start_new_session=True`, Windows `CREATE_NEW_PROCESS_GROUP`.
 - Endet das Kind ungeplant oder startet es nicht: Warnung im Logger `marathon.supervisor`, Neustart nach Wartefolge; nach `stable_s` Laufzeit beginnt die Folge von vorn. Keine Ausnahme erreicht den Server.
 - `stop()`: stdin schließen → `graceful_timeout_s` warten → `terminate` → `kill_timeout_s` → `kill`; True, wenn das Kind beendet ist.

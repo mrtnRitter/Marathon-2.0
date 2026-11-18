@@ -17,5 +17,4 @@ max_attempts = 3        # Unterbrochene Versuche je Asset und Modul (1–10)
 
 [server_worker]
 enabled = true          # Server-Worker mit dem Server starten
-max_parallel = 2        # Parallele Jobs des Server-Workers (1–64)
-last_choice = []        # Modultypen, für die der Server-Worker nur letzte Wahl ist, z. B. ["transcode", "qc"]
+max_parallel = 1        # Parallele Jobs des Server-Workers (1–64)
