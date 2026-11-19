@@ -21,15 +21,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Als Versuch zählt nur ein Job, der schon lief; Pausieren und abgelaufene Abhol-Frist zählen nicht; der Zähler beginnt neu, wenn das Asset das Modul verlässt oder erneut verarbeitet wird
 - [ ] Server-Neustart: Jobs auf anderen Workern laufen weiter; meldet sich der Worker innerhalb von 30 s, wird sein Ergebnis übernommen
 - [ ] `last_choice` überall entfernt (Konfiguration, Worker-Anmeldung, Worker-Laufzeit)
-- [ ] Überall „Starten“ / „Stoppen“ statt „Starten“ / „Pausieren“; Status „aktiv“ oder „gestoppt“ (rot); „Wird gestoppt“ statt „Wird pausiert“
-- [ ] Zeitgesteuerte Workflows: Der Workflow bleibt „aktiv“, auch während die Zeitsteuerung eine Pause vorsieht; nur aktive Workflows werden verarbeitet, auch ihre Pausen
-  - In der Pause startet der Workflow keine neuen Jobs und der Watchfolder scannt nicht; zum nächsten Termin läuft er, bis kein Asset mehr aussteht oder in Arbeit ist, dann beginnt die nächste Pause
-  - Das Selbst-Pausieren entfällt; „Stoppen“ beendet auch die Zeitsteuerung, bis der Workflow wieder gestartet wird
-  - Starten: aktiv, wartet auf den nächsten Termin; ein Lauf endet erst, wenn jeder Watchfolder seit Laufbeginn gescannt hat und keine Datei mehr auf Stabilität wartet
-- [ ] Verarbeitung bleibt parallel: Jedes Asset läuft weiter, sobald es fertig ist, soweit Worker frei sind; die Idee der Asset-fokussierten Verarbeitung entfällt
-- [ ] Überwachen: Doppelklick auf ein Modul wechselt zu Bearbeiten, das Modul ist markiert und das rechte Panel offen
-- [ ] Konsole: Server mit „stop“ und Enter beenden (Strg+C bleibt Notfall-Abbruch)
-- [ ] Server nicht erreichbar: nach 2 s Overlay „Keine Verbindung zum Marathon-Server“, die Seite ist nicht bedienbar, alle Worker (auch der Server-Worker) stehen auf „Offline“
 
 ---
 ---
@@ -158,4 +149,5 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### unsortiert Martin
 
-- 
+- [ ] Überwachen -> Einstellungen: Werte in Settings ausgrauen - dann ist klarer, dass man sie hier nicht editieren kann
+- [ ] 
