@@ -48,6 +48,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Status „bereit“ oder „gestoppt“ (rot); beim Stoppen „Wird gestoppt“, bis alle Jobs abgebrochen sind; „online“ / „offline“ bleibt eine eigene Anzeige, die Auslastung zeigt die Spalte Jobs; „neu“, „beschäftigt“ und „gesperrt“ entfallen
 - [ ] Ein neuer Worker meldet sich „gestoppt“ an und bekommt erst nach „Starten“ Jobs (wie bisher nach „Freigeben“); der Server-Worker startet automatisch
 - [ ] Stoppen bricht alle laufenden Jobs des Workers ab, unfertige Ergebnisse werden verworfen, das Asset geht zurück auf den Ausgang des letzten Moduls, an dem es fertig war, und wird neu verteilt; der Abbruch zählt nicht als Versuch
+- [ ] Jobs und Worker: ein Worker kann nur einen Job machen - die Option für mehrer Jobs entfällt (vorerst). Ein Job kann aber mehrere Threads haben (zb. Kopieren 2 Assets parallel, oder API Abfragen 10x parallel). An einem Workflow können mehrere Worker parallel arbeiten.  
 
 #### Watchfolder
 
