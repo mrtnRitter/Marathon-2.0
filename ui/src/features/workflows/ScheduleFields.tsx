@@ -39,7 +39,7 @@ export function ScheduleFields({ value, on_change, disabled, next_run_at }: { va
   return (
     <>
       <FormField
-        spec={{ key: 'schedule_enabled', label: 'Zeitgesteuert starten', type: 'boolean', help: 'Aktiviert den Workflow im gewählten Rhythmus. Er pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist.' }}
+        spec={{ key: 'schedule_enabled', label: 'Zeitgesteuert starten', type: 'boolean', help: 'Der Workflow läuft im gewählten Rhythmus, solange er aktiv ist. Zwischen den Läufen wartet er auf den nächsten Termin.' }}
         value={value !== null}
         disabled={disabled}
         on_change={enabled => on_change(enabled ? default_schedule(new Date()) : null)}

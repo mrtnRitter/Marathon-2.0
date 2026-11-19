@@ -69,6 +69,14 @@ def record_watch_error(
 ) -> bool:
     """Store a changed watch error and append one corresponding log line."""
     connection.execute(text("SET LOCAL lock_timeout = '5s'"))
+    # Use database time because this API has no scan timestamp.
+    connection.execute(
+        text(
+            "UPDATE watch_modules SET last_scan_at = now() "
+            "WHERE workflow_id = :workflow_id AND module_id = :module_id"
+        ),
+        {"workflow_id": workflow_id, "module_id": module_id},
+    )
     changed = connection.execute(
         text(
             "UPDATE watch_modules SET last_error = :message "
@@ -101,7 +109,8 @@ def claim_due_modules(connection: Connection, now: datetime) -> list[WatchClaim]
             "JOIN workflow_modules AS module "
             "ON module.workflow_id = workflow.id AND module.version = workflow.current_version "
             "AND module.id = watched.module_id "
-            "WHERE watched.next_scan_at <= :now AND workflow.active AND module.type_id = :watch_type_id "
+            "WHERE watched.next_scan_at <= :now AND workflow.active AND NOT workflow.schedule_waiting "
+            "AND module.type_id = :watch_type_id "
             "ORDER BY watched.workflow_id, watched.module_id "
             "FOR UPDATE OF watched SKIP LOCKED"
         ),
@@ -195,6 +204,17 @@ def apply_scan(
     ):
         return None
 
+    connection.execute(
+        text(
+            "UPDATE watch_modules SET last_scan_at = :scanned_at "
+            "WHERE workflow_id = :workflow_id AND module_id = :module_id"
+        ),
+        {
+            "workflow_id": claim.workflow_id,
+            "module_id": claim.module_id,
+            "scanned_at": scanned_at,
+        },
+    )
     settings = read_settings(claim.settings)
     known_rows = connection.execute(
         text(

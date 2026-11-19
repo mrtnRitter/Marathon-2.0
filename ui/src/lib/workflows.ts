@@ -30,7 +30,7 @@ export function use_pausing_notice(workflows: Workflow[] | null | undefined): vo
           pause = { started_at: now, notified: false }
           pause_started_at.current.set(workflow.id, pause)
         } else if (!pause.notified && now - pause.started_at > 1000) {
-          notify('Workflow wird gerade pausiert')
+          notify('Workflow wird gerade gestoppt')
           pause.notified = true
         }
       }
@@ -62,7 +62,7 @@ export async function set_workflows_active(workflows: Workflow[], active: boolea
     count += 1
     if (active || !updated.pausing) completed_count += 1
   }
-  if (completed_count === 1) notify(active ? 'Workflow gestartet' : 'Workflow pausiert')
-  else if (completed_count > 1) notify(`${completed_count} Workflows ${active ? 'gestartet' : 'pausiert'}`)
+  if (completed_count === 1) notify(active ? 'Workflow gestartet' : 'Workflow gestoppt')
+  else if (completed_count > 1) notify(`${completed_count} Workflows ${active ? 'gestartet' : 'gestoppt'}`)
   return count
 }

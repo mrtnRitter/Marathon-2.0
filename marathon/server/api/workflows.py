@@ -171,7 +171,7 @@ def put_workflow_active(
             detail="Workflow kann nicht gestartet werden. " + str(exc),
         ) from exc
     except WorkflowPausing as exc:
-        raise HTTPException(status_code=409, detail="Workflow wird gerade pausiert") from exc
+        raise HTTPException(status_code=409, detail="Workflow wird gerade gestoppt") from exc
     return workflow
 
 

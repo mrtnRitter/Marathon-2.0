@@ -413,8 +413,8 @@ def test_cancel_job_assigned_and_running(db_engine):
     _asset(db_engine, workflow_id, "running-asset", list_position=2, step_status="running")
     _job(db_engine, workflow_id, job_id="running-job", asset_id="running-asset", status="running")
     with db_engine.begin() as connection:
-        cancel_job(connection, "assigned-job", "Workflow pausiert", NOW)
-        cancel_job(connection, "running-job", "Workflow pausiert", NOW)
+        cancel_job(connection, "assigned-job", "Workflow gestoppt", NOW)
+        cancel_job(connection, "running-job", "Workflow gestoppt", NOW)
     assert _row(db_engine, "jobs", "id", "assigned-job")["status"] == "cancelled"
     assert _row(db_engine, "jobs", "id", "assigned-job")["finished_at"] == NOW
     assert _row(db_engine, "assets", "id", "assigned-asset")["step_status"] == "waiting"
@@ -434,7 +434,7 @@ def test_drop_unstarted_job(db_engine):
 def test_request_pause(db_engine):
     workflow_id = _workflow(db_engine)
     with db_engine.begin() as connection:
-        connection.execute(text("UPDATE workflows SET active = true, scheduled_active = true WHERE id = :id"), {"id": workflow_id})
+        connection.execute(text("UPDATE workflows SET active = true, schedule_waiting = true, run_started_at = :now WHERE id = :id"), {"id": workflow_id, "now": NOW})
     _asset(db_engine, workflow_id, "assigned-asset")
     _job(db_engine, workflow_id, job_id="assigned-job", asset_id="assigned-asset", status="assigned")
     _asset(db_engine, workflow_id, "running-asset", list_position=2, step_status="running")
@@ -443,7 +443,7 @@ def test_request_pause(db_engine):
     with db_engine.begin() as connection:
         assert request_pause(connection, workflow_id, NOW) is True
     state = _row(db_engine, "workflows", "id", workflow_id)
-    assert (state["active"], state["scheduled_active"], state["pausing"]) == (False, False, True)
+    assert (state["active"], state["schedule_waiting"], state["run_started_at"], state["pausing"]) == (False, False, None, True)
     assert state["updated_at"] == NOW
     assert _row(db_engine, "jobs", "id", "assigned-job")["status"] == "cancelled"
     assert _row(db_engine, "jobs", "id", "running-job")["status"] == "cancelling"
@@ -453,13 +453,13 @@ def test_request_pause(db_engine):
     finished_id = _workflow(db_engine)
     with db_engine.begin() as connection:
         connection.execute(text(
-            "UPDATE workflows SET active = true, scheduled_active = true WHERE id = :id"
-        ), {"id": finished_id})
+            "UPDATE workflows SET active = true, schedule_waiting = true, run_started_at = :now WHERE id = :id"
+        ), {"id": finished_id, "now": NOW})
         assert request_pause(connection, finished_id, NOW) is True
         paused = dict(connection.execute(
             text("SELECT * FROM workflows WHERE id=:id"), {"id": finished_id}
         ).mappings().one())
-        assert (paused["active"], paused["scheduled_active"], paused["pausing"]) == (False, False, False)
+        assert (paused["active"], paused["schedule_waiting"], paused["run_started_at"], paused["pausing"]) == (False, False, None, False)
         assert request_pause(connection, finished_id, NOW) is True
         after = dict(connection.execute(
             text("SELECT * FROM workflows WHERE id=:id"), {"id": finished_id}

@@ -24,19 +24,19 @@ def _utc_now() -> datetime:
 
 
 def run_schedule_tick(connection: Connection, now: datetime, tz: tzinfo | None = None) -> dict[str, list[str]]:
-    """Advance due schedules and pause scheduled workflows without open assets."""
+    """Advance due schedules and move completed scheduled runs into waiting."""
     connection.execute(text("SET LOCAL lock_timeout = '5s'"))
     connection.execute(text("SET LOCAL statement_timeout = '10s'"))
     due_rows = connection.execute(
         text(
-            "SELECT id, active, schedule_every, schedule_unit, schedule_start "
+            "SELECT id, active, pausing, schedule_waiting, schedule_every, schedule_unit, schedule_start "
             "FROM workflows "
             "WHERE next_run_at IS NOT NULL AND next_run_at <= :now "
             "ORDER BY id FOR UPDATE SKIP LOCKED"
         ),
         {"now": now},
     ).mappings().all()
-    activated: list[str] = []
+    started: list[str] = []
 
     for workflow in due_rows:
         workflow_id = workflow["id"]
@@ -52,54 +52,71 @@ def run_schedule_tick(connection: Connection, now: datetime, tz: tzinfo | None =
             connection.execute(
                 text(
                     "UPDATE workflows SET schedule_every = NULL, schedule_unit = NULL, "
-                    "schedule_start = NULL, next_run_at = NULL, scheduled_active = false "
-                    "WHERE id = :id"
+                    "schedule_start = NULL, next_run_at = NULL, schedule_waiting = false, "
+                    "run_started_at = NULL WHERE id = :id"
                 ),
                 {"id": workflow_id},
             )
             _logger.warning("Ungültiger Zeitplan für Workflow %s wird geleert: %s", workflow_id, error)
             continue
 
-        if workflow["active"]:
-            connection.execute(
-                text("UPDATE workflows SET next_run_at = :next_run_at WHERE id = :id"),
-                {"id": workflow_id, "next_run_at": next_run_at},
-            )
-        else:
-            invalid = workflow_invalid_modules(connection, workflow_id)
-            if invalid:
-                connection.execute(
-                    text("UPDATE workflows SET next_run_at = :next_run_at WHERE id = :id"),
-                    {"id": workflow_id, "next_run_at": next_run_at},
-                )
-                for module in invalid:
-                    connection.execute(
-                        text(
-                            "INSERT INTO log_lines (workflow_id, module_id, job_id, level, text) "
-                            "VALUES (:workflow_id, :module_id, NULL, 'warn', 'Zeitgesteuerter Start übersprungen: Einstellungen prüfen')"
-                        ),
-                        {"workflow_id": workflow_id, "module_id": module["id"]},
-                    )
-                continue
-            connection.execute(
-                text(
-                    "UPDATE workflows SET active = true, scheduled_active = true, "
-                    "next_run_at = :next_run_at, updated_at = now() WHERE id = :id"
-                ),
-                {"id": workflow_id, "next_run_at": next_run_at},
-            )
-            activated.append(workflow_id)
+        connection.execute(
+            text("UPDATE workflows SET next_run_at = :next_run_at WHERE id = :id"),
+            {"id": workflow_id, "next_run_at": next_run_at},
+        )
+        if not workflow["active"] or workflow["pausing"] or not workflow["schedule_waiting"]:
+            continue
 
-    paused_rows = connection.execute(
+        invalid = workflow_invalid_modules(connection, workflow_id)
+        if invalid:
+            for module in invalid:
+                connection.execute(
+                    text(
+                        "INSERT INTO log_lines (workflow_id, module_id, job_id, level, text) "
+                        "VALUES (:workflow_id, :module_id, NULL, 'warn', 'Zeitgesteuerter Lauf übersprungen: Einstellungen prüfen')"
+                    ),
+                    {"workflow_id": workflow_id, "module_id": module["id"]},
+                )
+            continue
+
+        connection.execute(
+            text(
+                "UPDATE workflows SET schedule_waiting = false, run_started_at = :now, "
+                "updated_at = now() WHERE id = :id"
+            ),
+            {"id": workflow_id, "now": now},
+        )
+        started.append(workflow_id)
+
+    waiting_rows = connection.execute(
         text(
-            "UPDATE workflows SET active = false, scheduled_active = false, updated_at = now() "
-            "WHERE active AND scheduled_active AND NOT EXISTS ("
-            "SELECT 1 FROM assets WHERE assets.workflow_id = workflows.id "
-            "AND assets.status IN ('pending', 'in_progress')) RETURNING id"
+            "UPDATE workflows SET schedule_waiting = true, updated_at = now() "
+            "WHERE active AND NOT pausing AND NOT schedule_waiting AND schedule_every IS NOT NULL "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM assets AS asset WHERE asset.workflow_id = workflows.id "
+            "AND asset.status IN ('pending', 'in_progress')) "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM watch_modules AS watched "
+            "WHERE watched.workflow_id = workflows.id "
+            "AND (watched.last_scan_at IS NULL "
+            "OR watched.last_scan_at < COALESCE(workflows.run_started_at, '-infinity'::timestamptz))) "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM workflows AS workflow "
+            "JOIN workflow_modules AS module "
+            "ON module.workflow_id = workflow.id AND module.version = workflow.current_version "
+            "LEFT JOIN watch_modules AS watched "
+            "ON watched.workflow_id = workflow.id AND watched.module_id = module.id "
+            "WHERE workflow.id = workflows.id AND module.type_id = 'watchfolder' "
+            "AND (watched.module_id IS NULL OR watched.last_scan_at IS NULL "
+            "OR watched.last_scan_at < COALESCE(workflows.run_started_at, '-infinity'::timestamptz))) "
+            "AND NOT EXISTS ("
+            "SELECT 1 FROM watch_files AS watched_file "
+            "WHERE watched_file.workflow_id = workflows.id "
+            "AND watched_file.asset_id IS NULL AND watched_file.missing_since IS NULL) "
+            "RETURNING id"
         )
     ).all()
-    return {"activated": sorted(activated), "paused": sorted(row[0] for row in paused_rows)}
-
+    return {"started": sorted(started), "waiting": sorted(row[0] for row in waiting_rows)}
 
 class ScheduleRunner:
     """Run schedule ticks on a stoppable daemon thread."""

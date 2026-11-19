@@ -60,12 +60,14 @@ export const log_level_color: Record<LogLevel, string> = {
 }
 
 export const active_meta = (active: boolean): StatusMeta =>
-  active ? { label: 'aktiv', color: color('done') } : { label: 'pausiert', color: color('on-hold') }
+  active ? { label: 'aktiv', color: color('done') } : { label: 'gestoppt', color: color('failed') }
 
 export const workflow_state_meta = (workflow: Pick<Workflow, 'active' | 'pausing'>): StatusMeta =>
-  workflow.pausing ? { label: 'Wird pausiert', color: color('on-hold') } : active_meta(workflow.active)
+  workflow.pausing ? { label: 'Wird gestoppt', color: color('on-hold') } : active_meta(workflow.active)
 
-export const is_online = (worker: Worker) => worker.status !== 'offline'
+export const shown_worker_status = (worker: Worker, connected: boolean): WorkerStatus => connected ? worker.status : 'offline'
+
+export const is_online = (worker: Worker, connected = true) => connected && worker.status !== 'offline'
 
 export const online_meta = (online: boolean): StatusMeta => online ? { label: 'Online', color: color('done') } : { label: 'Offline', color: color('offline') }
 

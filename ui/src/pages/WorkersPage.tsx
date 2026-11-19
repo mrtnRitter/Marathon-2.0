@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
 import { FormField, FormSection } from '../components/FormField'
 import { PageHeader } from '../components/PageHeader'
@@ -9,18 +9,9 @@ import { notify, not_available } from '../components/Toast'
 import { approve_worker, get_module_types, get_workers, lock_worker, update_worker } from '../data/api'
 import type { FieldSpec, ModuleType, Worker, WorkerInput, WorkerPriority, WorkerStatus } from '../data/types'
 import { use_data } from '../data/use_data'
+import { use_server_connected } from '../data/use_connection'
 import { format_datetime, format_relative } from '../lib/format'
-import { worker_status_meta } from '../theme/status'
-
-const columns: Column<Worker>[] = [
-  { key: 'name', label: 'Name', render: row => <strong>{row.name}</strong> },
-  { key: 'status', label: 'Status', render: row => <StatusBadge meta={worker_status_meta[row.status]} /> },
-  { key: 'capabilities', label: 'Fähigkeiten', render: row => row.capabilities.length ? row.capabilities.map(item => <span key={item} className="chip">{item}</span>) : <span className="dim">–</span> },
-  { key: 'max_parallel', label: 'Parallel', align: 'right' },
-  { key: 'running_jobs', label: 'Laufende Jobs', render: row => `${row.running_jobs} / ${row.max_parallel}`, sort_value: row => row.running_jobs, align: 'right' },
-  { key: 'client_version', label: 'Client-Version' },
-  { key: 'last_seen', label: 'Zuletzt gesehen', render: row => <span title={format_datetime(row.last_seen)}>{format_relative(row.last_seen)}</span>, sort_value: row => row.last_seen },
-]
+import { shown_worker_status, worker_status_meta } from '../theme/status'
 
 const name_field: FieldSpec = { key: 'name', label: 'Name', type: 'text' }
 const priority_choices: { value: WorkerPriority; label: string }[] = [
@@ -32,6 +23,7 @@ const priority_choices: { value: WorkerPriority; label: string }[] = [
 const status_tiles: WorkerStatus[] = ['ready', 'busy', 'new', 'updating', 'offline', 'locked']
 
 export function WorkersPage() {
+  const connected = use_server_connected()
   const { data, reload } = use_data(() => Promise.all([get_workers(), get_module_types()]), [], { live: ['workers', 'jobs', 'module_types'] })
   const [selected, set_selected] = useState<string[]>([])
   const [editing_worker, set_editing_worker] = useState<Worker | null>(null)
@@ -40,6 +32,15 @@ export function WorkersPage() {
   const [acting, set_acting] = useState(false)
   const workers = data?.[0]
   const module_types = data?.[1] ?? []
+  const columns = useMemo<Column<Worker>[]>(() => [
+    { key: 'name', label: 'Name', render: row => <strong>{row.name}</strong> },
+    { key: 'status', label: 'Status', render: row => <StatusBadge meta={worker_status_meta[shown_worker_status(row, connected)]} /> },
+    { key: 'capabilities', label: 'Fähigkeiten', render: row => row.capabilities.length ? row.capabilities.map(item => <span key={item} className="chip">{item}</span>) : <span className="dim">–</span> },
+    { key: 'max_parallel', label: 'Parallel', align: 'right' },
+    { key: 'running_jobs', label: 'Laufende Jobs', render: row => `${row.running_jobs} / ${row.max_parallel}`, sort_value: row => row.running_jobs, align: 'right' },
+    { key: 'client_version', label: 'Client-Version' },
+    { key: 'last_seen', label: 'Zuletzt gesehen', render: row => <span title={format_datetime(row.last_seen)}>{format_relative(row.last_seen)}</span>, sort_value: row => row.last_seen },
+  ], [connected])
 
   const edit = (worker: Worker) => {
     set_editing_worker(worker)
@@ -110,7 +111,7 @@ export function WorkersPage() {
       <div className="page-content">
         {!workers ? <div className="loading">Lade</div> : (
           <>
-            <StatusTabs items={status_tiles.map(status => ({ id: status, ...worker_status_meta[status], count: workers.filter(worker => worker.status === status).length }))} />
+            <StatusTabs items={status_tiles.map(status => ({ id: status, ...worker_status_meta[status], count: workers.filter(worker => shown_worker_status(worker, connected) === status).length }))} />
             <DataTable columns={columns} rows={workers} row_key={row => row.id} selected={selected} on_selection_change={set_selected} on_row_open={edit} />
           </>
         )}

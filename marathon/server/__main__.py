@@ -53,7 +53,7 @@ def main() -> int:
     if not (default_static_dir / "index.html").is_file():
         print("Fehler: Oberfläche ist nicht gebaut. Zuerst python build.py ausführen.", file=sys.stderr)
         return 1
-    print(f"{app_name} {app_version} läuft auf http://{config.host}:{config.port}  (Beenden mit Strg+C)")
+    print(f"{app_name} {app_version} läuft auf http://{config.host}:{config.port}  (Beenden mit „stop“)")
     app = create_app(
         scheduler_interval_s=tick_interval_s,
         sync_catalog=True,

@@ -21,6 +21,15 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Als Versuch zählt nur ein Job, der schon lief; Pausieren und abgelaufene Abhol-Frist zählen nicht; der Zähler beginnt neu, wenn das Asset das Modul verlässt oder erneut verarbeitet wird
 - [ ] Server-Neustart: Jobs auf anderen Workern laufen weiter; meldet sich der Worker innerhalb von 30 s, wird sein Ergebnis übernommen
 - [ ] `last_choice` überall entfernt (Konfiguration, Worker-Anmeldung, Worker-Laufzeit)
+- [ ] Überall „Starten“ / „Stoppen“ statt „Starten“ / „Pausieren“; Status „aktiv“ oder „gestoppt“ (rot); „Wird gestoppt“ statt „Wird pausiert“
+- [ ] Zeitgesteuerte Workflows: Der Workflow bleibt „aktiv“, auch während die Zeitsteuerung eine Pause vorsieht; nur aktive Workflows werden verarbeitet, auch ihre Pausen
+  - In der Pause startet der Workflow keine neuen Jobs und der Watchfolder scannt nicht; zum nächsten Termin läuft er, bis kein Asset mehr aussteht oder in Arbeit ist, dann beginnt die nächste Pause
+  - Das Selbst-Pausieren entfällt; „Stoppen“ beendet auch die Zeitsteuerung, bis der Workflow wieder gestartet wird
+  - Starten: aktiv, wartet auf den nächsten Termin; ein Lauf endet erst, wenn jeder Watchfolder seit Laufbeginn gescannt hat und keine Datei mehr auf Stabilität wartet
+- [ ] Verarbeitung bleibt parallel: Jedes Asset läuft weiter, sobald es fertig ist, soweit Worker frei sind; die Idee der Asset-fokussierten Verarbeitung entfällt
+- [ ] Überwachen: Doppelklick auf ein Modul wechselt zu Bearbeiten, das Modul ist markiert und das rechte Panel offen
+- [ ] Konsole: Server mit „stop“ und Enter beenden (Strg+C bleibt Notfall-Abbruch)
+- [ ] Server nicht erreichbar: nach 2 s Overlay „Keine Verbindung zum Marathon-Server“, die Seite ist nicht bedienbar, alle Worker (auch der Server-Worker) stehen auf „Offline“
 
 ---
 ---
@@ -48,17 +57,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Status „bereit“ oder „gestoppt“ (rot); beim Stoppen „Wird gestoppt“, bis alle Jobs abgebrochen sind; „online“ / „offline“ bleibt eine eigene Anzeige, die Auslastung zeigt die Spalte Jobs; „neu“, „beschäftigt“ und „gesperrt“ entfallen
 - [ ] Ein neuer Worker meldet sich „gestoppt“ an und bekommt erst nach „Starten“ Jobs (wie bisher nach „Freigeben“); der Server-Worker startet automatisch
 - [ ] Stoppen bricht alle laufenden Jobs des Workers ab, unfertige Ergebnisse werden verworfen, das Asset geht zurück auf den Ausgang des letzten Moduls, an dem es fertig war, und wird neu verteilt; der Abbruch zählt nicht als Versuch
-
-#### Workflows - next
-
-- [ ] Überall „Starten“ / „Stoppen“ statt „Starten“ / „Pausieren“; Status „aktiv“ oder „gestoppt“ (rot); „Wird gestoppt“ statt „Wird pausiert“
-- [ ] Zeitgesteuerte Workflows: Der Workflow bleibt „aktiv“, auch während die Zeitsteuerung eine Pause vorsieht; nur aktive Workflows werden verarbeitet, auch ihre Pausen
-  - In der Pause startet der Workflow keine neuen Jobs und der Watchfolder scannt nicht; zum nächsten Termin läuft er, bis kein Asset mehr aussteht oder in Arbeit ist, dann beginnt die nächste Pause
-  - Das Selbst-Pausieren entfällt; „Stoppen“ beendet auch die Zeitsteuerung, bis der Workflow wieder gestartet wird
-- [ ] Verarbeitung bleibt parallel: Jedes Asset läuft weiter, sobald es fertig ist, soweit Worker frei sind; die Idee der Asset-fokussierten Verarbeitung entfällt
-- [ ] Überwachen: Doppelklick auf ein Modul wechselt zu Bearbeiten, das Modul ist markiert und das rechte Panel offen
-- [ ] in console server mit "stop" beenden, statt strg + c
-- [ ] wenn Server nicht läuft, steht Server-Worker auf Webseite als "Offline" und die Seite bekommt ein Overlay "keine Verbindung zum Marathon-Server". - Interaktion mit der Seite ist dann nicht möglich.
 
 #### Watchfolder
 

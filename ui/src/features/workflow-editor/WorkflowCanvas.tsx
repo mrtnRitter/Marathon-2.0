@@ -286,6 +286,19 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale 
     else if (node.data.module.locked) set_inspected_id(node.id)
   }
 
+  const on_node_double_click: NodeMouseHandler<ModuleFlowNode> = (_, node) => {
+    if (editing) return
+    set_activity_node(null)
+    on_mode_change('edit')
+    if (node.data.module.locked) {
+      set_nodes(current => current.map(item => item.selected ? { ...item, selected: false } : item))
+      set_inspected_id(node.id)
+      return
+    }
+    set_inspected_id(null)
+    set_nodes(current => current.map(item => ({ ...item, selected: item.id === node.id })))
+  }
+
   return (
     <EditorActionsContext.Provider value={{ toggle_lock }}>
       <EditorModeContext.Provider value={mode}>
@@ -335,6 +348,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale 
                 edgesReconnectable={editing}
                 isValidConnection={is_valid_connection}
                 onNodeClick={on_node_click}
+                onNodeDoubleClick={on_node_double_click}
                 onPaneClick={() => { set_inspected_id(null); if (!editing) set_activity_node(null) }}
                 onSelectionChange={({ nodes: selection }) => { if (selection.length > 0) set_inspected_id(null) }}
                 onBeforeDelete={on_before_delete}

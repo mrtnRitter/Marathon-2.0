@@ -2,10 +2,15 @@
 
 # IMPORTS
 import argparse
+import os
+import signal
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from subprocess import CompletedProcess
+from typing import TextIO
 
 from build import (
     BuildError,
@@ -33,6 +38,7 @@ app_name = "marathon-run"
 app_version = "2.0.0"
 
 setup_hint = "Zuerst python build.py ausführen."
+stop_command = "stop"
 
 
 # FUNC
@@ -176,56 +182,194 @@ def stop_database() -> None:
         raise stop_error
 
 
-def _finish_server(process: subprocess.Popen, command_name: str) -> None:
-    """Terminate a dev server and bound both graceful and forced waits."""
+def _start_child(command: list[str], **kwargs) -> subprocess.Popen:
+    """Start a child with isolated console input and, on Windows, a signalable process group."""
+    kwargs["stdin"] = subprocess.DEVNULL
+    if os.name == "nt":
+        kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    return subprocess.Popen(command, **kwargs)
+
+
+def _request_stop(process: subprocess.Popen) -> None:
+    """Send the platform's graceful console-stop signal to a running child."""
+    stop_signal = signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGINT
     try:
-        process.terminate()
-        process.wait(timeout=10)
-        return
-    except subprocess.TimeoutExpired:
-        pass
+        process.send_signal(stop_signal)
     except OSError:
+        if process.poll() is None:
+            raise
+
+
+def _watch_console(stop_event: threading.Event, stream: TextIO = sys.stdin) -> threading.Thread:
+    """Watch console lines for the stop command without blocking process shutdown."""
+    def watch() -> None:
+        try:
+            while line := stream.readline():
+                if line.strip().casefold() == stop_command:
+                    stop_event.set()
+                    return
+        except Exception:
+            return
+
+    thread = threading.Thread(target=watch, daemon=True)
+    thread.start()
+    return thread
+
+
+def _child_name(process: subprocess.Popen) -> str:
+    args = getattr(process, "args", None)
+    command = args[0] if isinstance(args, (list, tuple)) and args else str(args or "Server")
+    return Path(command).name
+
+
+def _wait_after_kill(process: subprocess.Popen, command_name: str) -> int:
+    deadline = time.monotonic() + 5.0
+    timeout = 5.0
+    while True:
+        try:
+            return process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            raise BuildError(f"Zeitlimit beim Beenden des Servers überschritten: {command_name}") from error
+        except KeyboardInterrupt:
+            timeout = deadline - time.monotonic()
+            if timeout <= 0:
+                raise BuildError(f"Zeitlimit beim Beenden des Servers überschritten: {command_name}")
+
+
+def _wait_child(process: subprocess.Popen, stop_event: threading.Event, grace_s: float = 10.0) -> int:
+    """Wait for a child, then stop it gracefully and bound forced cleanup."""
+    while not stop_event.is_set():
+        try:
+            return process.wait(timeout=0.2)
+        except subprocess.TimeoutExpired:
+            continue
+        except KeyboardInterrupt:
+            break
+
+    if process.poll() is not None:
+        return process.wait(timeout=0)
+
+    _request_stop(process)
+    try:
+        return process.wait(timeout=grace_s)
+    except subprocess.TimeoutExpired:
         pass
     except KeyboardInterrupt:
         pass
 
+    if process.poll() is not None:
+        return process.wait(timeout=0)
     try:
         process.kill()
     except OSError:
-        pass
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired as error:
-        raise BuildError(f"Zeitlimit beim Beenden des Servers überschritten: {command_name}") from error
-    except KeyboardInterrupt:
-        # The child has already received kill; do not emit a shutdown traceback.
+        if process.poll() is None:
+            raise
+    return _wait_after_kill(process, _child_name(process))
+
+
+def _finish_server(process: subprocess.Popen, command_name: str, request_stop: bool = True) -> None:
+    """Gracefully stop a child and bound both graceful and forced waits."""
+    if process.poll() is not None:
         return
+    try:
+        if request_stop:
+            _request_stop(process)
+        else:
+            process.terminate()
+    except OSError:
+        if process.poll() is None:
+            raise
+        return
+
+    try:
+        process.wait(timeout=10)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except KeyboardInterrupt:
+        pass
+
+    if process.poll() is not None:
+        return
+    try:
+        process.kill()
+    except OSError:
+        if process.poll() is None:
+            raise
+        return
+    _wait_after_kill(process, command_name)
+
+
+def _wait_for_dev_end(server: subprocess.Popen, vite: subprocess.Popen, stop_event: threading.Event) -> int | None:
+    while True:
+        if stop_event.is_set():
+            return None
+        server_code = server.poll()
+        if server_code is not None:
+            return server_code
+        vite_code = vite.poll()
+        if vite_code is not None:
+            return vite_code
+        time.sleep(0.2)
 
 
 def start_dev(config: ServerConfig, venv: Path) -> int:
     """Run the server in the background while Vite serves the live preview."""
     server_command = [str(venv), "-m", "marathon.server"]
+    server = None
+    vite = None
     try:
-        server = subprocess.Popen(server_command, cwd=root_dir)
-    except OSError as error:
-        raise BuildError(f"Server konnte nicht gestartet werden: {error}") from error
+        try:
+            server = _start_child(server_command, cwd=root_dir)
+        except OSError as error:
+            raise BuildError(f"Server konnte nicht gestartet werden: {error}") from error
 
-    try:
         api_url = _api_url(config.host, config.port)
         env = {**node_env(), "MARATHON_API_URL": api_url}
-        return subprocess.call(ui_command("vite"), cwd=ui_dir, env=env, shell=False)
-    except OSError as error:
-        raise BuildError(f"Live-Vorschau konnte nicht gestartet werden: {error}") from error
+        try:
+            vite = _start_child(ui_command("vite"), cwd=ui_dir, env=env)
+        except OSError as error:
+            raise BuildError(f"Live-Vorschau konnte nicht gestartet werden: {error}") from error
+
+        print("Beenden mit „stop“ und Enter")
+        stop_event = threading.Event()
+        _watch_console(stop_event)
+        try:
+            exit_code = _wait_for_dev_end(server, vite, stop_event)
+        except KeyboardInterrupt:
+            exit_code = None
+        return exit_code if exit_code is not None else 0
     finally:
-        _finish_server(server, Path(server_command[0]).name)
+        cleanup_error = None
+        for process, name, request_stop in (
+            (server, Path(server_command[0]).name, True),
+            (vite, "vite", False),
+        ):
+            if process is None:
+                continue
+            try:
+                _finish_server(process, name, request_stop=request_stop)
+            except BuildError as error:
+                cleanup_error = cleanup_error or error
+            except OSError as error:
+                cleanup_error = cleanup_error or BuildError(f"Server konnte nicht beendet werden: {error}")
+        if cleanup_error is not None:
+            raise cleanup_error
 
 
 def start_server(venv: Path) -> int:
     """Run the configured Marathon server in the foreground."""
+    command = [str(venv), "-m", "marathon.server"]
     try:
-        return subprocess.call([str(venv), "-m", "marathon.server"], cwd=root_dir)
+        process = _start_child(command, cwd=root_dir)
     except OSError as error:
         raise BuildError(f"Server konnte nicht gestartet werden: {error}") from error
+    print("Beenden mit „stop“ und Enter")
+    stop_event = threading.Event()
+    _watch_console(stop_event)
+    return _wait_child(process, stop_event)
 
 
 # MAIN

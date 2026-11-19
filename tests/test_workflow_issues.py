@@ -115,7 +115,7 @@ def test_save_invalid_pauses_active_workflow(api_client, db_engine, tmp_path):
     assert saved.status_code == 200, saved.json()
     with db_engine.connect() as connection:
         state = connection.execute(
-            text("SELECT active, scheduled_active FROM workflows WHERE id = :id"),
+            text("SELECT active, schedule_waiting, run_started_at FROM workflows WHERE id = :id"),
             {"id": workflow_id},
         ).mappings().one()
         log = connection.execute(
@@ -123,11 +123,11 @@ def test_save_invalid_pauses_active_workflow(api_client, db_engine, tmp_path):
             {"id": workflow_id},
         ).mappings().all()
     assert state["active"] is False
-    assert state["scheduled_active"] is False
+    assert (state["schedule_waiting"], state["run_started_at"]) == (False, None)
     assert any(
         row["module_id"] == "watch-1"
         and row["level"] == "warn"
-        and row["text"] == "Workflow pausiert: Einstellungen prüfen"
+        and row["text"] == "Workflow gestoppt: Einstellungen prüfen"
         for row in log
     )
 
@@ -139,26 +139,27 @@ def test_scheduled_start_skips_invalid(api_client, db_engine):
     with db_engine.begin() as connection:
         connection.execute(
             text(
-                "UPDATE workflows SET schedule_every = 1, schedule_unit = 'hours', "
-                "schedule_start = :start, next_run_at = :due WHERE id = :id"
+                "UPDATE workflows SET active = true, schedule_waiting = true, schedule_every = 1, "
+                "schedule_unit = 'hours', schedule_start = :start, next_run_at = :due WHERE id = :id"
             ),
             {"id": workflow_id, "start": now - timedelta(hours=2), "due": now - timedelta(minutes=1)},
         )
         result = run_schedule_tick(connection, now)
 
-    assert result["activated"] == []
+    assert result == {"started": [], "waiting": []}
     with db_engine.connect() as connection:
         state = connection.execute(
-            text("SELECT active, next_run_at FROM workflows WHERE id = :id"),
+            text("SELECT active, schedule_waiting, next_run_at FROM workflows WHERE id = :id"),
             {"id": workflow_id},
         ).mappings().one()
         logs = connection.execute(
             text("SELECT level, text FROM log_lines WHERE workflow_id = :id"),
             {"id": workflow_id},
         ).mappings().all()
-    assert state["active"] is False
+    assert state["active"] is True
+    assert state["schedule_waiting"] is True
     assert state["next_run_at"] > now
     assert any(
-        row["level"] == "warn" and row["text"] == "Zeitgesteuerter Start übersprungen: Einstellungen prüfen"
+        row["level"] == "warn" and row["text"] == "Zeitgesteuerter Lauf übersprungen: Einstellungen prüfen"
         for row in logs
     )

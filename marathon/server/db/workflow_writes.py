@@ -176,9 +176,9 @@ def create_workflow(
         text(
             "INSERT INTO workflows "
             "(id, name, description, active, current_version, schedule_every, schedule_unit, "
-            "schedule_start, next_run_at, scheduled_active) "
+            "schedule_start, next_run_at) "
             "VALUES (:id, :name, :description, false, 1, :schedule_every, :schedule_unit, "
-            ":schedule_start, :next_run_at, false)"
+            ":schedule_start, :next_run_at)"
         ),
         {
             "id": workflow_id,
@@ -238,9 +238,9 @@ def duplicate_workflow(
         text(
             "INSERT INTO workflows "
             "(id, name, description, active, current_version, schedule_every, schedule_unit, "
-            "schedule_start, next_run_at, scheduled_active) "
+            "schedule_start, next_run_at) "
             "VALUES (:id, :name, :description, false, 1, :schedule_every, :schedule_unit, "
-            ":schedule_start, :next_run_at, false)"
+            ":schedule_start, :next_run_at)"
         ),
         {
             "id": duplicate_id,
@@ -286,7 +286,7 @@ def update_workflow(
     connection.execute(text("SET LOCAL lock_timeout = '10s'"))
     current_row = connection.execute(
         text(
-            "SELECT schedule_every, schedule_unit, schedule_start, next_run_at, scheduled_active "
+            "SELECT schedule_every, schedule_unit, schedule_start, next_run_at, schedule_waiting, run_started_at "
             "FROM workflows WHERE id = :id FOR UPDATE"
         ),
         {"id": workflow_id},
@@ -297,20 +297,23 @@ def update_workflow(
     normalized_name = _validate_workflow_name(connection, name, workflow_id)
     current = dict(current_row)
     schedule_fields = _schedule_values(schedule, now, current)
-    scheduled_active = current["scheduled_active"] if schedule is not None else False
+    schedule_waiting = current["schedule_waiting"] if schedule is not None else False
+    run_started_at = current["run_started_at"] if schedule is not None else None
     updated = connection.execute(
         text(
             "UPDATE workflows SET name = :name, description = :description, "
             "schedule_every = :schedule_every, schedule_unit = :schedule_unit, "
             "schedule_start = :schedule_start, next_run_at = :next_run_at, "
-            "scheduled_active = :scheduled_active, updated_at = now() WHERE id = :id RETURNING id"
+            "schedule_waiting = :schedule_waiting, run_started_at = :run_started_at, "
+            "updated_at = now() WHERE id = :id RETURNING id"
         ),
         {
             "id": workflow_id,
             "name": normalized_name,
             "description": description.strip(),
             **schedule_fields,
-            "scheduled_active": scheduled_active,
+            "schedule_waiting": schedule_waiting,
+            "run_started_at": run_started_at,
         },
     ).scalar_one_or_none()
     return updated is not None
@@ -322,7 +325,7 @@ def set_workflow_active(connection: Connection, workflow_id: str, active: bool) 
         return request_pause(connection, workflow_id, datetime.now(timezone.utc))
 
     workflow = connection.execute(
-        text("SELECT id, pausing FROM workflows WHERE id = :id FOR UPDATE"), {"id": workflow_id}
+        text("SELECT id, pausing, schedule_every FROM workflows WHERE id = :id FOR UPDATE"), {"id": workflow_id}
     ).mappings().one_or_none()
     if workflow is None:
         return False
@@ -333,8 +336,8 @@ def set_workflow_active(connection: Connection, workflow_id: str, active: bool) 
         raise WorkflowNotStartable(issues)
     updated = connection.execute(
         text(
-            "UPDATE workflows SET active = true, scheduled_active = false, "
-            "updated_at = now() WHERE id = :id RETURNING id"
+            "UPDATE workflows SET active = true, schedule_waiting = (schedule_every IS NOT NULL), "
+            "run_started_at = NULL, updated_at = now() WHERE id = :id RETURNING id"
         ),
         {"id": workflow_id},
     ).scalar_one_or_none()
@@ -435,7 +438,7 @@ def save_graph(
                 connection.execute(
                     text(
                         "INSERT INTO log_lines (workflow_id, module_id, job_id, level, text) "
-                        "VALUES (:workflow_id, :module_id, NULL, 'warn', 'Workflow pausiert: Einstellungen prüfen')"
+                        "VALUES (:workflow_id, :module_id, NULL, 'warn', 'Workflow gestoppt: Einstellungen prüfen')"
                     ),
                     {"workflow_id": workflow_id, "module_id": module["id"]},
                 )

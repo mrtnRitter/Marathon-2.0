@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DataTable, type Column } from '../components/DataTable'
 import { PageHeader } from '../components/PageHeader'
@@ -11,6 +11,7 @@ import { get_dashboard } from '../data/api'
 import { set_workflows_active, use_pausing_notice } from '../lib/workflows'
 import type { Worker, Workflow } from '../data/types'
 import { use_data } from '../data/use_data'
+import { use_server_connected } from '../data/use_connection'
 import { workflow_state_meta, asset_status_meta, asset_statuses, is_online, online_meta } from '../theme/status'
 import './DashboardPage.css'
 
@@ -39,23 +40,23 @@ function WorkflowRow({ workflow, on_changed }: { workflow: Workflow; on_changed:
         ))}
       </div>
       <div className="dashboard-row-actions" onClick={event => event.stopPropagation()}>
-        <Button label={workflow.pausing ? 'Wird pausiert' : workflow.active ? 'Pausieren' : 'Aktivieren'} icon={workflow.active || workflow.pausing ? 'pause' : 'play'} on_click={toggle} disabled={busy || workflow.pausing} />
+        <Button label={workflow.pausing ? 'Wird gestoppt' : workflow.active ? 'Stoppen' : 'Starten'} icon={workflow.active || workflow.pausing ? 'stop' : 'play'} on_click={toggle} disabled={busy || workflow.pausing} />
         <Button label="Assets" icon="files" on_click={() => open('assets')} />
       </div>
     </div>
   )
 }
 
-const worker_columns: Column<Worker>[] = [
-  { key: 'status', label: 'Status', render: row => <StatusBadge meta={online_meta(is_online(row))} />, sort_value: row => Number(is_online(row)) },
-  { key: 'name', label: 'Name', render: row => <strong>{row.name}</strong> },
-  { key: 'ip_address', label: 'IP-Adresse', render: row => <span className={row.ip_address === null ? 'dim' : undefined}>{row.ip_address ?? '–'}</span> },
-]
-
 export function DashboardPage() {
   const navigate = useNavigate()
+  const connected = use_server_connected()
   const { data, reload } = use_data(get_dashboard, [], { live: ['workflows', 'assets', 'jobs', 'workers'] })
   use_pausing_notice(data?.workflows)
+  const worker_columns = useMemo<Column<Worker>[]>(() => [
+    { key: 'status', label: 'Status', render: row => <StatusBadge meta={online_meta(is_online(row, connected))} />, sort_value: row => Number(is_online(row, connected)) },
+    { key: 'name', label: 'Name', render: row => <strong>{row.name}</strong> },
+    { key: 'ip_address', label: 'IP-Adresse', render: row => <span className={row.ip_address === null ? 'dim' : undefined}>{row.ip_address ?? '–'}</span> },
+  ], [connected])
   return (
     <>
       <PageHeader title="Dashboard" />

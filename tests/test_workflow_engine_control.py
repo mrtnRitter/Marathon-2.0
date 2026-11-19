@@ -122,7 +122,7 @@ def test_start_while_pausing_returns_409(api_client, db_engine):
     response = api_client.put(f"/api/v1/workflows/{workflow['id']}/active", json={"active": True})
 
     assert response.status_code == 409
-    assert response.json() == {"detail": "Workflow wird gerade pausiert"}
+    assert response.json() == {"detail": "Workflow wird gerade gestoppt"}
 
 
 def test_workflow_records_have_pausing(api_client):
@@ -162,7 +162,7 @@ def test_save_graph_reroutes_assets_of_removed_module(api_client, db_engine):
     assert tuple(asset) == ("m3", "waiting", None)
 
 
-def test_save_invalid_active_workflow_pauses(api_client, db_engine):
+def test_save_invalid_active_workflow_stops(api_client, db_engine):
     workflow = _create_workflow(api_client)
     _save_graph(api_client, workflow["id"], 1, [_module("m1", "wait", settings={"wait_s": 1})])
     with db_engine.begin() as connection:
@@ -181,7 +181,7 @@ def test_save_invalid_active_workflow_pauses(api_client, db_engine):
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM jobs WHERE id = 'job-1'")).scalar_one() == "cancelling"
         assert connection.execute(
-            text("SELECT COUNT(*) FROM log_lines WHERE workflow_id = :id AND text = 'Workflow pausiert: Einstellungen prüfen'"),
+            text("SELECT COUNT(*) FROM log_lines WHERE workflow_id = :id AND text = 'Workflow gestoppt: Einstellungen prüfen'"),
             {"id": workflow["id"]},
         ).scalar_one() == 1
 

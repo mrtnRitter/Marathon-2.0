@@ -423,25 +423,28 @@ def test_set_active_toggles(api_client):
     assert disabled.json()["active"] is False
 
 
-def test_set_active_clears_scheduled_flag(api_client, db_engine):
-    workflow = api_client.post("/api/v1/workflows", json={"name": "Zeitplan aktiv"}).json()
-    with db_engine.begin() as connection:
-        connection.execute(
-            text("UPDATE workflows SET active = true, scheduled_active = true WHERE id = :id"),
-            {"id": workflow["id"]},
-        )
+def test_set_active_tracks_schedule_waiting(api_client, db_engine):
+    scheduled = api_client.post(
+        "/api/v1/workflows",
+        json={
+            "name": "Zeitplan aktiv",
+            "schedule": {"every": 1, "unit": "hours", "start": "2030-01-01T06:00:00Z"},
+        },
+    ).json()
+    unscheduled = api_client.post("/api/v1/workflows", json={"name": "Ohne Zeitplan"}).json()
 
-    response = api_client.put(
-        f"/api/v1/workflows/{workflow['id']}/active", json={"active": True}
-    )
+    for workflow in (scheduled, unscheduled):
+        response = api_client.put(f"/api/v1/workflows/{workflow['id']}/active", json={"active": True})
+        assert response.status_code == 200
 
-    assert response.status_code == 200
     with db_engine.connect() as connection:
-        scheduled_active = connection.execute(
-            text("SELECT scheduled_active FROM workflows WHERE id = :id"),
-            {"id": workflow["id"]},
-        ).scalar_one()
-    assert scheduled_active is False
+        states = connection.execute(
+            text("SELECT id, active, schedule_waiting, run_started_at FROM workflows WHERE id IN (:scheduled, :unscheduled)"),
+            {"scheduled": scheduled["id"], "unscheduled": unscheduled["id"]},
+        ).mappings().all()
+    by_id = {row["id"]: row for row in states}
+    assert (by_id[scheduled["id"]]["active"], by_id[scheduled["id"]]["schedule_waiting"], by_id[scheduled["id"]]["run_started_at"]) == (True, True, None)
+    assert (by_id[unscheduled["id"]]["active"], by_id[unscheduled["id"]]["schedule_waiting"], by_id[unscheduled["id"]]["run_started_at"]) == (True, False, None)
 
 
 def test_set_active_missing_returns_404(api_client):
@@ -572,7 +575,7 @@ def test_put_without_schedule_clears_it(api_client, db_engine):
     assert created.status_code == 201
     workflow_id = created.json()["id"]
     with db_engine.begin() as connection:
-        connection.execute(text("UPDATE workflows SET scheduled_active = true WHERE id = :id"), {"id": workflow_id})
+        connection.execute(text("UPDATE workflows SET active = true, schedule_waiting = true, run_started_at = now() WHERE id = :id"), {"id": workflow_id})
 
     response = api_client.put(f"/api/v1/workflows/{workflow_id}", json={"name": "Zeitplan gelöscht"})
 
@@ -580,10 +583,10 @@ def test_put_without_schedule_clears_it(api_client, db_engine):
     assert response.json()["schedule"] is None
     with db_engine.begin() as connection:
         row = connection.execute(
-            text("SELECT schedule_every, schedule_unit, schedule_start, next_run_at, scheduled_active FROM workflows WHERE id = :id"),
+            text("SELECT schedule_every, schedule_unit, schedule_start, next_run_at, schedule_waiting, run_started_at FROM workflows WHERE id = :id"),
             {"id": workflow_id},
         ).one()
-    assert tuple(row) == (None, None, None, None, False)
+    assert tuple(row) == (None, None, None, None, False, None)
 
 
 def test_put_same_schedule_keeps_next_run(api_client, db_engine):
@@ -595,10 +598,11 @@ def test_put_same_schedule_keeps_next_run(api_client, db_engine):
     assert created.status_code == 201
     workflow_id = created.json()["id"]
     fixed_next_run = datetime.fromisoformat("2020-01-02T03:00:00+00:00")
+    run_started_at = datetime.fromisoformat("2020-01-02T02:00:00+00:00")
     with db_engine.begin() as connection:
         connection.execute(
-            text("UPDATE workflows SET next_run_at = :next_run_at WHERE id = :id"),
-            {"next_run_at": fixed_next_run, "id": workflow_id},
+            text("UPDATE workflows SET next_run_at = :next_run_at, active = true, schedule_waiting = false, run_started_at = :run_started_at WHERE id = :id"),
+            {"next_run_at": fixed_next_run, "run_started_at": run_started_at, "id": workflow_id},
         )
 
     unchanged = api_client.put(f"/api/v1/workflows/{workflow_id}", json=body)
@@ -614,6 +618,12 @@ def test_put_same_schedule_keeps_next_run(api_client, db_engine):
     assert changed.status_code == 200
     changed_next_run = datetime.fromisoformat(changed.json()["schedule"]["next_run_at"].replace("Z", "+00:00"))
     assert changed_next_run > datetime.now(timezone.utc)
+    with db_engine.connect() as connection:
+        state = connection.execute(
+            text("SELECT schedule_waiting, run_started_at FROM workflows WHERE id = :id"),
+            {"id": workflow_id},
+        ).one()
+    assert tuple(state) == (False, run_started_at)
 
 
 def test_update_workflow_sets_timeout_before_row_lock(api_client, db_engine, monkeypatch):

@@ -35,7 +35,7 @@ export function WorkflowDetailPage() {
       <PageHeader
         breadcrumb={<><Link to="/workflows">Workflows</Link> / {workflow?.name ?? workflow_id}</>}
         title={<>{workflow?.name ?? (loading ? '…' : 'Workflow nicht gefunden')}{workflow && <><IssueMark issues={workflow.issues} /><StatusBadge meta={workflow_state_meta(workflow)} /></>}</>}
-        actions={[{ label: workflow?.pausing ? 'Wird pausiert' : workflow?.active ? 'Pausieren' : 'Aktivieren', icon: workflow?.active || workflow?.pausing ? 'pause' : 'play', on_click: toggle, disabled: !workflow || busy || workflow.pausing }]}
+        actions={[{ label: workflow?.pausing ? 'Wird gestoppt' : workflow?.active ? 'Stoppen' : 'Starten', icon: workflow?.active || workflow?.pausing ? 'stop' : 'play', on_click: toggle, disabled: !workflow || busy || workflow.pausing }]}
       />
       <div className="workflow-tabs">
         <Tabs active={tab} on_change={id => navigate(`/workflows/${workflow_id}/${id}`)}

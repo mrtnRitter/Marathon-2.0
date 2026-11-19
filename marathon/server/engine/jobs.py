@@ -40,7 +40,7 @@ class JobWorkerMismatch(Exception):
 
 def _lock_workflow(connection: Connection, workflow_id: str) -> dict[str, Any] | None:
     row = connection.execute(
-        text("SELECT id, active, scheduled_active, pausing FROM workflows WHERE id = :id FOR UPDATE"),
+        text("SELECT id, active, pausing FROM workflows WHERE id = :id FOR UPDATE"),
         {"id": workflow_id},
     ).mappings().one_or_none()
     return dict(row) if row is not None else None
@@ -527,7 +527,7 @@ def drop_unstarted_job(connection: Connection, job_id: str, now: datetime) -> No
 
 
 def request_pause(connection: Connection, workflow_id: str, now: datetime) -> bool:
-    """Pause a workflow, cancel assignments, and ask running workers to stop."""
+    """Stop a workflow, cancel assignments, and ask running workers to stop."""
     workflow = _lock_workflow(connection, workflow_id)
     if workflow is None:
         return False
@@ -550,7 +550,7 @@ def request_pause(connection: Connection, workflow_id: str, now: datetime) -> bo
         return True
 
     connection.execute(
-        text("UPDATE workflows SET active = false, scheduled_active = false, pausing = true, updated_at = :now WHERE id = :id"),
+        text("UPDATE workflows SET active = false, schedule_waiting = false, run_started_at = NULL, pausing = true, updated_at = :now WHERE id = :id"),
         {"id": workflow_id, "now": now},
     )
     for job in jobs:
@@ -560,7 +560,7 @@ def request_pause(connection: Connection, workflow_id: str, now: datetime) -> bo
             graph,
             _job_asset_ids(connection, job["id"]),
             assets,
-            "Workflow pausiert",
+            "Workflow gestoppt",
             now,
         )
     for asset_id in waiting_ids:

@@ -2,9 +2,14 @@
 
 # IMPORTS
 import os
+import io
 import re
+import signal
 import socket
 import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -80,7 +85,10 @@ def test_main_orders_database_migration_server_and_stop(ready_runner, monkeypatc
         raise AssertionError(command)
 
     monkeypatch.setattr(run.subprocess, "run", fake_run)
-    monkeypatch.setattr(run.subprocess, "call", lambda *args, **kwargs: calls.append("server") or 0)
+    process = SimpleNamespace(args=["python", "-m", "marathon.server"], returncode=0)
+    monkeypatch.setattr(run, "_start_child", lambda command, **kwargs: process)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
+    monkeypatch.setattr(run, "_wait_child", lambda child, stop_event: calls.append("server") or 0)
 
     assert run.main([]) == 0
     assert calls == ["status", "start", "upgrade", "server", "stop"]
@@ -97,7 +105,10 @@ def test_main_stops_database_after_server_keyboard_interrupt(ready_runner, monke
         raise KeyboardInterrupt
 
     monkeypatch.setattr(run.subprocess, "run", fake_run)
-    monkeypatch.setattr(run.subprocess, "call", interrupt_server)
+    process = SimpleNamespace(args=["python", "-m", "marathon.server"], returncode=None)
+    monkeypatch.setattr(run, "_start_child", lambda command, **kwargs: process)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
+    monkeypatch.setattr(run, "_wait_child", interrupt_server)
 
     assert run.main([]) == 0
     assert calls == ["status", "start", "-m", "stop"]
@@ -219,17 +230,27 @@ def test_dev_kills_unresponsive_server_then_stops_database(ready_runner, monkeyp
     events = []
 
     class Server:
-        def terminate(self):
-            events.append("terminate")
+        args = ["python", "-m", "marathon.server"]
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def send_signal(self, sig):
+            events.append(f"signal-{sig}")
 
         def wait(self, timeout):
-            events.append(f"wait-{timeout}")
+            events.append(f"wait-{timeout:g}")
             if timeout == 10:
                 raise subprocess.TimeoutExpired("server", timeout)
-            return -9
+            self.returncode = -9
+            return self.returncode
 
         def kill(self):
             events.append("kill")
+
+    server = Server()
+    vite = FakeProcess(args=("vite",), returncode=0)
 
     def fake_run(command, **kwargs):
         if command[1] == "status":
@@ -243,18 +264,20 @@ def test_dev_kills_unresponsive_server_then_stops_database(ready_runner, monkeyp
             return completed()
         raise AssertionError(command)
 
-    monkeypatch.setattr(run.subprocess, "run", fake_run)
-    monkeypatch.setattr(run.subprocess, "Popen", lambda *args, **kwargs: events.append("server-start") or Server())
-
-    def fake_vite(command, **kwargs):
-        events.append("vite")
+    def fake_start_child(command, **kwargs):
+        if command[-1:] == ["marathon.server"]:
+            events.append("server-start")
+            return server
+        events.append("vite-start")
         assert kwargs["env"]["MARATHON_API_URL"] == "http://127.0.0.1:8123"
-        return 0
+        return vite
 
-    monkeypatch.setattr(run.subprocess, "call", fake_vite)
+    monkeypatch.setattr(run.subprocess, "run", fake_run)
+    monkeypatch.setattr(run, "_start_child", fake_start_child)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
 
     assert run.main(["--dev"]) == 0
-    assert events == ["server-start", "vite", "terminate", "wait-10", "kill", "wait-5", "db-stop"]
+    assert events == ["server-start", "vite-start", f"signal-{signal.SIGINT}", "wait-10", "kill", "wait-5", "db-stop"]
 
 
 def test_api_url_maps_wildcard_host_to_loopback():
@@ -318,3 +341,260 @@ def test_postgres_start_stop_integration(tmp_path, monkeypatch):
             check=False,
         )
     assert status.returncode != 0
+
+
+# CHILD PROCESS SHUTDOWN TESTS
+class FakeProcess:
+    def __init__(self, args=("python",), returncode=None, signal_returncode=None, interrupt_on_wait=False):
+        self.args = list(args)
+        self.returncode = returncode
+        self.signal_returncode = signal_returncode
+        self.interrupt_on_wait = interrupt_on_wait
+        self.signals = []
+        self.wait_timeouts = []
+        self.killed = False
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        self.wait_timeouts.append(timeout)
+        if self.interrupt_on_wait:
+            self.interrupt_on_wait = False
+            raise KeyboardInterrupt
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired(self.args, timeout)
+        return self.returncode
+
+    def send_signal(self, sig):
+        self.signals.append(sig)
+        if self.signal_returncode is not None:
+            self.returncode = self.signal_returncode
+
+    def terminate(self):
+        self.returncode = -15
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+
+def watch_stream(stream):
+    stop_event = threading.Event()
+    thread = run._watch_console(stop_event, stream)
+    thread.join(timeout=1)
+    assert not thread.is_alive()
+    return stop_event
+
+
+def test_stop_command_requests_stop_once_and_returns_child_exit_code():
+    stop_event = watch_stream(io.StringIO("stop\n"))
+    process = FakeProcess(returncode=None, signal_returncode=23)
+
+    assert stop_event.is_set()
+    assert run._wait_child(process, stop_event) == 23
+    assert process.signals == [signal.SIGINT]
+
+
+def test_stop_command_ignores_case_and_surrounding_whitespace():
+    stop_event = watch_stream(io.StringIO(" STOP \n"))
+    process = FakeProcess(returncode=None, signal_returncode=0)
+
+    assert stop_event.is_set()
+    assert run._wait_child(process, stop_event) == 0
+    assert process.signals == [signal.SIGINT]
+
+
+def test_other_console_input_is_ignored():
+    stop_event = watch_stream(io.StringIO("exit\nstop now\n"))
+    process = FakeProcess(returncode=6)
+
+    assert not stop_event.is_set()
+    assert run._wait_child(process, stop_event) == 6
+    assert process.signals == []
+
+
+def test_eof_does_not_stop_child_and_finished_process_ends_waiting():
+    stop_event = watch_stream(io.StringIO(""))
+    process = FakeProcess(returncode=8)
+
+    assert not stop_event.is_set()
+    assert run._wait_child(process, stop_event) == 8
+    assert process.signals == []
+
+
+def test_unresponsive_child_is_killed_after_grace_period():
+    stop_event = threading.Event()
+    stop_event.set()
+    process = FakeProcess()
+
+    assert run._wait_child(process, stop_event, grace_s=0.01) == -9
+    assert process.signals == [signal.SIGINT]
+    assert process.killed
+    assert 0 < process.wait_timeouts[-1] <= 5
+
+
+def test_keyboard_interrupt_requests_orderly_stop():
+    process = FakeProcess(signal_returncode=0, interrupt_on_wait=True)
+
+    assert run._wait_child(process, threading.Event()) == 0
+    assert process.signals == [signal.SIGINT]
+
+
+@pytest.mark.parametrize("ended", ["server", "vite"])
+def test_dev_child_exit_stops_the_other_child(ready_runner, monkeypatch, capsys, ended):
+    server = FakeProcess(args=("python", "-m", "marathon.server"), signal_returncode=0)
+    vite = FakeProcess(args=("vite",))
+    if ended == "server":
+        server.returncode = 7
+        expected_code = 7
+    else:
+        vite.returncode = 7
+        expected_code = 7
+
+    def fake_start_child(command, **kwargs):
+        return server if command[-1:] == ["marathon.server"] else vite
+
+    monkeypatch.setattr(run, "_start_child", fake_start_child)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
+    monkeypatch.setattr(run, "node_env", lambda: {})
+    monkeypatch.setattr(run, "ui_command", lambda *args: ["vite"])
+
+    assert run.start_dev(ready_runner, Path("python")) == expected_code
+    assert server.returncode is not None
+    assert vite.returncode is not None
+    assert "Beenden mit „stop“ und Enter" in capsys.readouterr().out
+    assert server.signals == ([] if ended == "server" else [signal.SIGINT])
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX signal handling required")
+def test_stop_command_stops_real_signal_aware_child_under_two_seconds():
+    import select
+
+    script = "import signal, time; signal.signal(signal.SIGINT, lambda *_: exit(0)); print('ready', flush=True); time.sleep(10)"
+    process = run._start_child([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True)
+    assert select.select([process.stdout], [], [], 1)[0]
+    assert process.stdout.readline().strip() == "ready"
+    stop_event = threading.Event()
+    watcher = run._watch_console(stop_event, io.StringIO("stop\n"))
+    started = time.monotonic()
+    try:
+        assert run._wait_child(process, stop_event, grace_s=1) == 0
+    finally:
+        watcher.join(timeout=0.2)
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=1)
+    assert time.monotonic() - started < 2
+
+
+def test_stop_and_keyboard_interrupt_request_stop_at_most_once():
+    stop_event = threading.Event()
+    stop_event.set()
+    process = FakeProcess(interrupt_on_wait=True)
+
+    assert run._wait_child(process, stop_event, grace_s=0.01) == -9
+    assert process.signals == [signal.SIGINT]
+
+
+def test_main_stops_database_after_kill_wait_timeout(ready_runner, monkeypatch, capsys):
+    class StuckProcess(FakeProcess):
+        def kill(self):
+            self.killed = True
+
+    events = []
+    process = StuckProcess(args=("python", "-m", "marathon.server"))
+
+    def fake_run(command, **kwargs):
+        if command[1] == "status":
+            return completed(1)
+        if command[1] == "start":
+            return completed()
+        if command[1] == "-m":
+            return completed()
+        if command[1] == "stop":
+            events.append("db-stop")
+            return completed()
+        raise AssertionError(command)
+
+    def stop_console(stop_event, stream=None):
+        stop_event.set()
+        return None
+
+    monkeypatch.setattr(run.subprocess, "run", fake_run)
+    monkeypatch.setattr(run, "_start_child", lambda command, **kwargs: process)
+    monkeypatch.setattr(run, "_watch_console", stop_console)
+
+    assert run.main([]) == 1
+    assert process.killed
+    assert events == ["db-stop"]
+    assert "Zeitlimit beim Beenden des Servers überschritten: python" in capsys.readouterr().err
+
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX process sessions required")
+def test_start_child_creates_posix_session(monkeypatch):
+    captured = {}
+
+    def fake_popen(command, **kwargs):
+        captured.update(kwargs)
+        return "child"
+
+    monkeypatch.setattr(run.subprocess, "Popen", fake_popen)
+
+    assert run._start_child(["server"]) == "child"
+    assert captured["stdin"] == subprocess.DEVNULL
+    assert captured["start_new_session"] is True
+
+
+def test_start_child_disables_stdin_and_creates_windows_process_group(monkeypatch):
+    captured = {}
+    group_flag = 512
+
+    def fake_popen(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return "child"
+
+    monkeypatch.setattr(run.os, "name", "nt")
+    monkeypatch.setattr(run.subprocess, "CREATE_NEW_PROCESS_GROUP", group_flag, raising=False)
+    monkeypatch.setattr(run.subprocess, "Popen", fake_popen)
+
+    assert run._start_child(["server"], stdin=subprocess.PIPE) == "child"
+    assert captured["stdin"] == subprocess.DEVNULL
+    assert captured["creationflags"] == group_flag
+
+
+def test_request_stop_uses_windows_ctrl_break(monkeypatch):
+    expected_signal = 21
+    monkeypatch.setattr(run.os, "name", "nt")
+    monkeypatch.setattr(run.signal, "CTRL_BREAK_EVENT", expected_signal, raising=False)
+    process = FakeProcess()
+
+    run._request_stop(process)
+
+    assert process.signals == [expected_signal]
+
+
+def test_request_stop_ignores_os_error_only_after_child_exit():
+    class VanishedProcess(FakeProcess):
+        def send_signal(self, sig):
+            raise OSError("child already exited")
+
+    run._request_stop(VanishedProcess(returncode=0))
+    with pytest.raises(OSError, match="child already exited"):
+        run._request_stop(VanishedProcess())
+
+
+def test_dev_keyboard_interrupt_stops_both_children(ready_runner, monkeypatch):
+    server = FakeProcess(args=("python", "-m", "marathon.server"), signal_returncode=0)
+    vite = FakeProcess(args=("vite",))
+    monkeypatch.setattr(run, "_start_child", lambda command, **kwargs: server if command[-1:] == ["marathon.server"] else vite)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
+    monkeypatch.setattr(run, "node_env", lambda: {})
+    monkeypatch.setattr(run, "ui_command", lambda *args: ["vite"])
+    monkeypatch.setattr(run, "_wait_for_dev_end", lambda *args: (_ for _ in ()).throw(KeyboardInterrupt))
+
+    assert run.start_dev(ready_runner, Path("python")) == 0
+    assert server.signals == [signal.SIGINT]
+    assert vite.returncode == -15

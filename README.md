@@ -2,7 +2,7 @@
 
 Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Version 2.0.0).
 
-**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und pausieren und zeitgesteuert starten (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuert gestarteter Workflow pausiert sich selbst, sobald kein Asset mehr aussteht oder in Arbeit ist. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Gestartete Workflows verarbeiten ihre Assets: Die Engine teilt Jobs an Worker zu; der Server bringt dafür einen eigenen Server-Worker mit (siehe [Engine und Worker](#engine-und-worker)). Alle Ansichten aktualisieren sich über einen Live-Kanal in Echtzeit. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
+**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und stoppen und zeitgesteuert laufen lassen (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuerter Workflow bleibt aktiv und wartet zwischen den Läufen auf den nächsten Termin. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Gestartete Workflows verarbeiten ihre Assets: Die Engine teilt Jobs an Worker zu; der Server bringt dafür einen eigenen Server-Worker mit (siehe [Engine und Worker](#engine-und-worker)). Alle Ansichten aktualisieren sich über einen Live-Kanal in Echtzeit; ist der Server nicht erreichbar, sperrt der Hinweis „Keine Verbindung zum Marathon-Server“ die Oberfläche, bis die Verbindung zurück ist. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
 
 ## Voraussetzungen
 
@@ -40,7 +40,7 @@ Bereits erledigte Schritte werden übersprungen. `build.py` erneut ausführen na
 python run.py
 ```
 
-`run.py` startet die Datenbank, bringt sie auf den neuesten Stand und startet den Server. Beim Beenden (`Strg+C`) wird die Datenbank wieder gestoppt.
+`run.py` startet die Datenbank, bringt sie auf den neuesten Stand und startet den Server. Beenden mit `stop` und Enter (Strg+C geht als Notfall-Abbruch); danach wird auch die Datenbank gestoppt.
 
 Oberfläche im Browser öffnen: http://127.0.0.1:8080 (Adresse und Port siehe Konfiguration).
 
@@ -96,10 +96,11 @@ Datei `config/marathon.toml`:
 - **Zugang:** Worker melden sich mit dem Token aus `.data/worker.token` an; der Server legt die Datei beim ersten Bedarf an.
 - **Zuteilung:** Der Server teilt Jobs an Worker mit freiem Platz zu, die den Modultyp anbieten; laufende Workflows kommen reihum dran, im Workflow das oberste Asset zuerst. Worker holen ihre Jobs über eine offen gehaltene Anfrage ab.
 - **Worker-Seite:** Neue Worker freigeben, Worker sperren (laufende Jobs laufen weiter), bearbeiten: Name, parallele Jobs und Vorrang je Modultyp (Bevorzugt, Normal, Letzte Wahl, Aus).
-- **Pausieren:** bricht laufende Jobs ab; das Asset geht zurück an den Ausgang des vorherigen Moduls. Bis alle Jobs abgebrochen sind, zeigt der Workflow „Wird pausiert“ und lässt sich nicht starten.
+- **Stoppen:** bricht laufende Jobs ab; das Asset geht zurück an den Ausgang des vorherigen Moduls. Bis alle Jobs abgebrochen sind, zeigt der Workflow „Wird gestoppt“ und lässt sich nicht starten. Status: „aktiv“ oder „gestoppt“.
+- **Zeitgesteuert:** Ein gestarteter zeitgesteuerter Workflow bleibt „aktiv“. Er wartet auf den nächsten Termin, läuft dann, bis kein Asset mehr aussteht oder in Arbeit ist, und wartet wieder. In der Wartezeit entstehen keine Jobs und der Watchfolder scannt nicht. Ein Lauf endet erst, wenn jeder Watchfolder seit Laufbeginn gescannt hat und keine Datei mehr auf Stabilität wartet.
 - **Ausfälle:** Meldet sich ein Worker 30 s nicht oder startet er neu, wird sein Job erneut vergeben. Nach 3 unterbrochenen Versuchen am selben Modul ist das Asset fehlgeschlagen.
 - **Workflow ändern:** jederzeit speichern. Betrifft die Änderung laufende Assets (z. B. gelöschtes Modul), zeigt die Workflow-Ansicht vorher eine Warnung und speichert erst nach Bestätigung. Die Warnung nennt, wie viele Assets ab dem vorherigen Modul neu verteilt, als erledigt abgeschlossen oder als fehlgeschlagen markiert werden und wie viele Jobs abgebrochen werden.
-- **Überwachen:** Die Zähler in den Modulen aktualisieren sich bei Datenänderungen live. Ein Klick auf ein Modul zeigt Jobs, Assets, Worker, Logs und im Reiter „Einstellungen“ die Moduleinstellungen (nur lesen).
+- **Überwachen:** Die Zähler in den Modulen aktualisieren sich bei Datenänderungen live. Ein Klick auf ein Modul zeigt Jobs, Assets, Worker, Logs und im Reiter „Einstellungen“ die Moduleinstellungen (nur lesen). Ein Doppelklick wechselt zu „Bearbeiten“, das Modul ist markiert und seine Einstellungen sind offen.
 - **Verbinden (Bearbeiten):** Verbindungen von einem Ausgang („Erfolg“, „Fehler“ …) ziehen und über dem Ziel-Modul loslassen; die Linie rastet am Eingang ein. Ziehen am verbundenen Eingang löst die zuletzt angelegte Verbindung: auf einem anderen Eingang loslassen verbindet neu, sonst wird sie entfernt.
 - **Erneut verarbeiten:** Das Asset beginnt am Anfang des Workflows, hinter Watchfolder bzw. am Modul ohne eingehende Verbindung.
 
@@ -107,8 +108,8 @@ Datei `config/marathon.toml`:
 
 - Ein Workflow mit fehlenden oder ungültigen Moduleinstellungen lässt sich speichern. In Workflow-Übersicht, Dashboard und Workflow-Ansicht steht dann ein gelbes Ausrufezeichen; beim Überfahren zeigt es die betroffenen Module.
 - Starten ist gesperrt; ein Startversuch zeigt den Hinweis, die Einstellungen zu prüfen.
-- Wird ein laufender Workflow mit Fehlern gespeichert, pausiert er sich; die betroffenen Module erhalten im Log „Workflow pausiert: Einstellungen prüfen“.
-- Ein zeitgesteuerter Start wird übersprungen; die betroffenen Module erhalten im Log „Zeitgesteuerter Start übersprungen: Einstellungen prüfen“.
+- Wird ein laufender Workflow mit Fehlern gespeichert, stoppt er sich; die betroffenen Module erhalten im Log „Workflow gestoppt: Einstellungen prüfen“.
+- Ein zeitgesteuerter Lauf wird übersprungen, der Workflow wartet weiter; die betroffenen Module erhalten im Log „Zeitgesteuerter Lauf übersprungen: Einstellungen prüfen“.
 - Fehler im Aufbau (z. B. Verbindung zu einem Modul ohne Eingang) verhindern weiterhin das Speichern.
 
 ## Module
@@ -131,7 +132,7 @@ Datei `config/marathon.toml`:
 - Das Modul zeigt in „Überwachen“, wie viele Dateien es erfasst hat (Assets, die noch existieren) und wie viele warten.
 - Im Fenster „Ordner wählen“ filtert das Weitertippen im Adressfeld die Liste auf passende Ordner.
 - Ist der Ordner nicht erreichbar (oder antwortet er 60 s nicht), steht das einmal im Modul-Log; danach folgt „Ordner wieder erreichbar“.
-- Zeitgesteuert gestartete Workflows pausieren sich, sobald kein Asset aussteht. Den Watchfolder deshalb in einem dauerhaft gestarteten Workflow verwenden.
+- In zeitgesteuerten Workflows scannt der Watchfolder nur während eines Laufs; Dateien, die in der Wartezeit ankommen, werden beim nächsten Lauf erfasst.
 
 Warten, Datei kopieren, Datei verschieben und Umbenennen lassen sich im Workflow platzieren und einstellen. Datei kopieren, Datei verschieben und Umbenennen führt ein Worker aus (zunächst der Server-Worker); Pfade gelten aus Sicht des Workers. Warten erledigt die Engine selbst.
 

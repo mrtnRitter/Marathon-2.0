@@ -161,7 +161,7 @@ export function WorkflowsPage() {
   const columns: Column<Workflow>[] = [
     { key: 'name', label: 'Name', render: row => <><strong>{row.name}</strong><IssueMark issues={row.issues} /></> },
     { key: 'active', label: 'Status', render: row => <StatusBadge meta={workflow_state_meta(row)} />, sort_value: row => Number(row.active) },
-    { key: 'run', label: '', width: '48px', sort_value: row => Number(row.active), render: row => <button type="button" className="button" title={row.pausing ? 'Wird pausiert' : row.active ? 'Pausieren' : 'Starten'} aria-label={row.pausing ? 'Wird pausiert' : row.active ? 'Pausieren' : 'Starten'} disabled={busy_ids.includes(row.id) || row.pausing} onClick={event => { event.stopPropagation(); toggle_active(row) }} onDoubleClick={event => event.stopPropagation()}><Icon name={row.active || row.pausing ? 'pause' : 'play'} size={14} /></button> },
+    { key: 'run', label: '', width: '48px', sort_value: row => Number(row.active), render: row => <button type="button" className="button" title={row.pausing ? 'Wird gestoppt' : row.active ? 'Stoppen' : 'Starten'} aria-label={row.pausing ? 'Wird gestoppt' : row.active ? 'Stoppen' : 'Starten'} disabled={busy_ids.includes(row.id) || row.pausing} onClick={event => { event.stopPropagation(); toggle_active(row) }} onDoubleClick={event => event.stopPropagation()}><Icon name={row.active || row.pausing ? 'stop' : 'play'} size={14} /></button> },
     { key: 'schedule', label: 'Zeitplan', render: row => row.schedule ? <span>{schedule_label(row.schedule)} <span className="dim">· nächster Start {format_datetime(row.schedule.next_run_at)}</span></span> : <span className="dim">–</span>, sort_value: row => row.schedule ? new Date(row.schedule.next_run_at).getTime() : Number.MAX_SAFE_INTEGER },
     { key: 'assets', label: 'Assets', render: row => total(row), sort_value: total, align: 'right' },
     { key: 'distribution', label: 'Verteilung', render: row => <StatusBar counts={row.asset_counts} />, width: '22%' },
@@ -175,7 +175,7 @@ export function WorkflowsPage() {
         { label: 'Öffnen', icon: 'pencil', on_click: open, disabled: selected.length !== 1 },
         { label: 'Eigenschaften', icon: 'settings', on_click: open_properties, disabled: selected.length !== 1 },
         { label: 'Duplizieren', icon: 'copy', on_click: duplicate_selected, disabled: selected.length !== 1 || duplicating },
-        { label: selected_pausing ? 'Wird pausiert' : activate ? 'Aktivieren' : 'Pausieren', icon: activate && !selected_pausing ? 'play' : 'pause', on_click: toggle_selected, disabled: !selected.length || toggling || selected_pausing },
+        { label: selected_pausing ? 'Wird gestoppt' : activate ? 'Starten' : 'Stoppen', icon: activate && !selected_pausing ? 'play' : 'stop', on_click: toggle_selected, disabled: !selected.length || toggling || selected_pausing },
         { label: 'Löschen', icon: 'trash', on_click: delete_selected, disabled: !selected.length },
       ]} />
       <div className="page-content">

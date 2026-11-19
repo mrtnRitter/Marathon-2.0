@@ -5,6 +5,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -45,8 +46,8 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0006"
-    assert upgrade_database(db_engine) == "0006"
+    assert upgrade_database(db_engine) == "0007"
+    assert upgrade_database(db_engine) == "0007"
 
 
 def test_engine_columns_exist(db_engine):
@@ -104,7 +105,7 @@ def test_downgrade_0005(db_engine):
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM jobs WHERE id = 'job-downgrade'")).scalar_one() == "cancelled"
     assert "attempts" not in {column["name"] for column in inspect(db_engine).get_columns("assets")}
-    assert upgrade_database(db_engine) == "0006"
+    assert upgrade_database(db_engine) == "0007"
 
 
 def test_ensure_database_creates_then_reuses(db_config):
@@ -188,7 +189,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0006" in captured.out
+    assert "Revision 0007" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 
@@ -220,9 +221,57 @@ def test_workflow_schedule_columns(db_engine):
     columns = {column["name"] for column in inspect(db_engine).get_columns("workflows")}
 
     assert {
-        "schedule_every", "schedule_unit", "schedule_start", "next_run_at", "scheduled_active"
+        "schedule_every", "schedule_unit", "schedule_start", "next_run_at", "schedule_waiting", "run_started_at"
     } <= columns
+    assert {"schedule_waiting", "run_started_at"} <= columns
+    assert "scheduled_active" not in columns
+    watch_columns = {column["name"] for column in inspect(db_engine).get_columns("watch_modules")}
+    assert "last_scan_at" in watch_columns
     assert "priority" not in columns
+
+
+def test_schedule_waiting_migration_up_down_up_preserves_data_rules(db_engine):
+    from alembic import command
+    from alembic.config import Config
+
+    from marathon.server.db.engine import migrations_dir
+
+    config = Config()
+    config.set_main_option("script_location", str(migrations_dir))
+    with db_engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0006")
+        connection.execute(
+            text(
+                "INSERT INTO workflows (id, name, active, schedule_every, schedule_unit, schedule_start, next_run_at) "
+                "VALUES ('legacy-waiting', 'Legacy waiting', false, 1, 'hours', :start, :next), "
+                "('legacy-running', 'Legacy running', true, 1, 'hours', :start, :next)"
+            ),
+            {"start": datetime(2025, 1, 1, tzinfo=timezone.utc), "next": datetime(2025, 1, 2, tzinfo=timezone.utc)},
+        )
+        connection.execute(text("UPDATE workflows SET scheduled_active = true WHERE id = 'legacy-running'"))
+        command.upgrade(config, "head")
+        upgraded = connection.execute(
+            text("SELECT id, active, schedule_waiting, run_started_at FROM workflows WHERE id LIKE 'legacy-%' ORDER BY id")
+        ).mappings().all()
+        assert [(row["id"], row["active"], row["schedule_waiting"], row["run_started_at"] is not None) for row in upgraded] == [
+            ("legacy-running", True, False, True),
+            ("legacy-waiting", True, True, False),
+        ]
+        connection.execute(
+            text("INSERT INTO workflows (id, name, active) VALUES ('legacy-manual', 'Legacy manual', true)")
+        )
+        command.downgrade(config, "0006")
+        downgraded = connection.execute(
+            text("SELECT id, active, scheduled_active FROM workflows WHERE id LIKE 'legacy-%' ORDER BY id")
+        ).all()
+        assert [tuple(row) for row in downgraded] == [
+            ("legacy-manual", True, False),
+            ("legacy-running", True, True),
+            ("legacy-waiting", False, False),
+        ]
+        command.upgrade(config, "head")
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0007"
 
 
 def test_schedule_constraints(db_engine):
@@ -275,7 +324,7 @@ def test_downgrade_restores_priority(db_engine):
 
     columns = {column["name"] for column in inspect(db_engine).get_columns("workflows")}
     assert "priority" in columns
-    assert not {"schedule_every", "schedule_unit", "schedule_start", "next_run_at", "scheduled_active"} & columns
+    assert not {"schedule_every", "schedule_unit", "schedule_start", "next_run_at", "schedule_waiting", "run_started_at"} & columns
 
 
 

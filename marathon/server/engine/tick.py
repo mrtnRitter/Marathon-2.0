@@ -119,7 +119,7 @@ def _write_wait_until(connection: Connection, asset_id: str, now: datetime, wait
 def advance_assets(connection: Connection, now: datetime) -> int:
     """Enter assets, start engine waits, fail unsupported modules, and route expired waits."""
     workflow_ids = connection.execute(
-        text("SELECT id FROM workflows WHERE active AND NOT pausing ORDER BY id")
+        text("SELECT id FROM workflows WHERE active AND NOT pausing AND NOT schedule_waiting ORDER BY id")
     ).scalars().all()
     processed = 0
     for workflow_id in workflow_ids:
@@ -269,7 +269,7 @@ def assign_jobs(connection: Connection, now: datetime, config: EngineConfig) -> 
     while True:
         workflows = connection.execute(
             text(
-                "SELECT id FROM workflows WHERE active AND NOT pausing "
+                "SELECT id FROM workflows WHERE active AND NOT pausing AND NOT schedule_waiting "
                 "ORDER BY last_assigned_at NULLS FIRST, id FOR UPDATE SKIP LOCKED"
             )
         ).scalars().all()

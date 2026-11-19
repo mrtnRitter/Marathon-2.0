@@ -274,6 +274,20 @@ def test_finish_pausing(db_engine):
     assert _rows(db_engine, "SELECT pausing FROM workflows WHERE id = :id", id=workflow_id)[0]["pausing"] is False
 
 
+def test_schedule_waiting_still_processes_running_job_failures(db_engine):
+    workflow_id = _workflow(db_engine)
+    with db_engine.begin() as connection:
+        connection.execute(text("UPDATE workflows SET schedule_waiting = true WHERE id = :id"), {"id": workflow_id})
+    _asset(db_engine, workflow_id, "running-asset", step_status="running")
+    _worker(db_engine, "silent", last_seen=NOW - timedelta(seconds=31))
+    _job(db_engine, workflow_id, job_id="running-job", asset_id="running-asset", worker_id="silent")
+
+    count = _step(db_engine, fail_lost_workers, NOW, EngineConfig(worker_timeout_s=30))
+
+    assert count >= 1
+    assert _job_row(db_engine, "running-job")["status"] == "interrupted"
+
+
 def test_enter_only_running_workflows(db_engine):
     inactive_id = _workflow(db_engine, active=False)
     pausing_id = _workflow(db_engine, active=False, pausing=True)
@@ -307,6 +321,35 @@ def test_wait_module(db_engine):
     asset = _asset_row(db_engine, "asset-1")
     assert (asset["current_module_id"], asset["step_status"]) == ("copy", "waiting")
     assert _history(db_engine, "asset-1") == [{"kind": "info", "text": "Wartezeit abgelaufen"}]
+
+
+def test_schedule_waiting_blocks_engine_work_until_schedule_starts(db_engine):
+    workflow_id = _workflow(
+        db_engine,
+        [_module("watch", "watchfolder"), _module("wait", "wait"), _module("copy", "copy_file")],
+        [_connection("watch", "success", "wait"), _connection("wait", "success", "copy")],
+    )
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE workflow_modules SET settings = '{\"wait_s\": 5}'::jsonb WHERE workflow_id = :id AND id = 'wait'"),
+            {"id": workflow_id},
+        )
+        connection.execute(text("UPDATE workflows SET schedule_waiting = true WHERE id = :id"), {"id": workflow_id})
+    _asset(db_engine, workflow_id, "worker-asset", current_module_id="copy", step_status="waiting")
+    _asset(db_engine, workflow_id, "wait-asset", current_module_id="wait", step_status="waiting", list_position=2)
+    _worker(db_engine, capabilities=["copy_file"])
+
+    assert _step(db_engine, advance_assets, NOW) == 0
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 0
+    assert _rows(db_engine, "SELECT id FROM jobs WHERE workflow_id = :id", id=workflow_id) == []
+    assert _asset_row(db_engine, "wait-asset")["step_status"] == "waiting"
+
+    with db_engine.begin() as connection:
+        connection.execute(text("UPDATE workflows SET schedule_waiting = false WHERE id = :id"), {"id": workflow_id})
+    assert _step(db_engine, advance_assets, NOW) == 1
+    assert _asset_row(db_engine, "wait-asset")["step_status"] == "running"
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
+    assert len(_rows(db_engine, "SELECT id FROM jobs WHERE workflow_id = :id", id=workflow_id)) == 1
 
 
 def test_non_worker_module_fails(db_engine):

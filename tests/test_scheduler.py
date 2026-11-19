@@ -25,29 +25,36 @@ def _insert_workflow(
     *,
     start: datetime | None = None,
     next_run_at: datetime | None = None,
-    every: int = 1,
+    every: int | None = 1,
     unit: str = "hours",
     active: bool = False,
-    scheduled_active: bool = False,
+    pausing: bool = False,
+    schedule_waiting: bool = False,
+    run_started_at: datetime | None = None,
 ) -> None:
-    start = start or now - timedelta(hours=2)
-    next_run_at = next_run_at or now - timedelta(minutes=30)
+    if every is not None:
+        start = start or now - timedelta(hours=2)
+        next_run_at = next_run_at or now - timedelta(minutes=30)
     with engine.begin() as connection:
         connection.execute(
             text(
                 "INSERT INTO workflows "
-                "(id, name, active, scheduled_active, schedule_every, schedule_unit, schedule_start, next_run_at) "
-                "VALUES (:id, :name, :active, :scheduled_active, :every, :unit, :start, :next_run_at)"
+                "(id, name, active, pausing, schedule_every, schedule_unit, schedule_start, next_run_at, "
+                "schedule_waiting, run_started_at) "
+                "VALUES (:id, :name, :active, :pausing, :every, :unit, :start, :next_run_at, "
+                ":schedule_waiting, :run_started_at)"
             ),
             {
                 "id": workflow_id,
                 "name": workflow_id,
                 "active": active,
-                "scheduled_active": scheduled_active,
+                "pausing": pausing,
                 "every": every,
-                "unit": unit,
+                "unit": unit if every is not None else None,
                 "start": start,
                 "next_run_at": next_run_at,
+                "schedule_waiting": schedule_waiting,
+                "run_started_at": run_started_at,
             },
         )
 
@@ -56,8 +63,8 @@ def _workflow(engine, workflow_id: str) -> dict[str, object]:
     with engine.connect() as connection:
         row = connection.execute(
             text(
-                "SELECT active, scheduled_active, schedule_every, schedule_unit, schedule_start, next_run_at "
-                "FROM workflows WHERE id = :id"
+                "SELECT active, pausing, schedule_waiting, run_started_at, schedule_every, "
+                "schedule_unit, schedule_start, next_run_at FROM workflows WHERE id = :id"
             ),
             {"id": workflow_id},
         ).mappings().one()
@@ -72,6 +79,42 @@ def _insert_asset(engine, asset_id: str, workflow_id: str, status: str) -> None:
         )
 
 
+def _insert_watchfolder_module(connection, workflow_id: str, module_id: str = "watch-one") -> None:
+    connection.execute(
+        text(
+            "INSERT INTO module_types (id, name, category, icon, has_input) "
+            "VALUES ('watchfolder', 'Watchfolder', 'source', 'folder', false) ON CONFLICT (id) DO NOTHING"
+        )
+    )
+    connection.execute(
+        text("INSERT INTO workflow_versions (workflow_id, version) VALUES (:id, 1)"),
+        {"id": workflow_id},
+    )
+    connection.execute(
+        text(
+            "INSERT INTO workflow_modules "
+            "(workflow_id, version, id, type_id, name, position_x, position_y) "
+            "VALUES (:workflow_id, 1, :module_id, 'watchfolder', 'Watchfolder', 0, 0)"
+        ),
+        {"workflow_id": workflow_id, "module_id": module_id},
+    )
+
+
+def _insert_watch_state(
+    connection,
+    workflow_id: str,
+    module_id: str,
+    last_scan_at: datetime | None,
+) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO watch_modules (workflow_id, module_id, next_scan_at, last_scan_at) "
+            "VALUES (:workflow_id, :module_id, :now, :last_scan_at)"
+        ),
+        {"workflow_id": workflow_id, "module_id": module_id, "now": datetime.now(utc), "last_scan_at": last_scan_at},
+    )
+
+
 @pytest.fixture(autouse=True)
 def _no_scheduler_threads_after_each_test():
     yield
@@ -82,154 +125,270 @@ def _no_scheduler_threads_after_each_test():
 
 
 # DATABASE TESTS
-def test_due_paused_workflow_with_pending_asset_is_activated(db_engine):
+def test_due_waiting_active_workflow_starts_and_records_time(db_engine):
     now = datetime(2026, 1, 2, 12, tzinfo=utc)
-    start = now - timedelta(minutes=90)
     workflow_id = "scheduled-pending"
-    _insert_workflow(db_engine, workflow_id, now, start=start, next_run_at=now - timedelta(minutes=30))
+    _insert_workflow(db_engine, workflow_id, now, active=True, schedule_waiting=True)
     _insert_asset(db_engine, "asset-pending", workflow_id, "pending")
 
     with db_engine.begin() as connection:
         result = run_schedule_tick(connection, now)
 
     state = _workflow(db_engine, workflow_id)
-    assert result == {"activated": [workflow_id], "paused": []}
+    assert result == {"started": [workflow_id], "waiting": []}
     assert state["active"] is True
-    assert state["scheduled_active"] is True
-    assert state["next_run_at"] == start + timedelta(hours=2)
-
-
-def test_due_workflow_without_open_assets_activates_and_pauses(db_engine):
-    now = datetime(2026, 1, 2, 12, tzinfo=utc)
-    workflow_id = "scheduled-empty"
-    _insert_workflow(db_engine, workflow_id, now)
-
-    with db_engine.begin() as connection:
-        result = run_schedule_tick(connection, now)
-
-    state = _workflow(db_engine, workflow_id)
-    assert result == {"activated": [workflow_id], "paused": [workflow_id]}
-    assert state["active"] is False
-    assert state["scheduled_active"] is False
+    assert state["schedule_waiting"] is False
+    assert state["run_started_at"] == now
     assert state["next_run_at"] > now
 
 
-def test_not_due_workflow_unchanged(db_engine):
+def test_due_inactive_workflow_is_never_started(db_engine):
     now = datetime(2026, 1, 2, 12, tzinfo=utc)
-    next_run_at = now + timedelta(minutes=10)
-    workflow_id = "scheduled-future"
-    _insert_workflow(db_engine, workflow_id, now, next_run_at=next_run_at)
+    workflow_id = "inactive-scheduled"
+    _insert_workflow(db_engine, workflow_id, now, schedule_waiting=True)
 
     with db_engine.begin() as connection:
         result = run_schedule_tick(connection, now)
 
     state = _workflow(db_engine, workflow_id)
-    assert result == {"activated": [], "paused": []}
+    assert result == {"started": [], "waiting": []}
     assert state["active"] is False
-    assert state["scheduled_active"] is False
-    assert state["next_run_at"] == next_run_at
-
-
-def test_manually_active_workflow_is_not_auto_paused(db_engine):
-    now = datetime(2026, 1, 2, 12, tzinfo=utc)
-    workflow_id = "manually-active"
-    _insert_workflow(db_engine, workflow_id, now, active=True, scheduled_active=False)
-
-    with db_engine.begin() as connection:
-        result = run_schedule_tick(connection, now)
-
-    state = _workflow(db_engine, workflow_id)
-    assert result == {"activated": [], "paused": []}
-    assert state["active"] is True
-    assert state["scheduled_active"] is False
+    assert state["schedule_waiting"] is True
     assert state["next_run_at"] > now
 
 
-def test_auto_pause_respects_in_progress_assets(db_engine):
+def test_due_running_workflow_only_advances_next_run(db_engine):
     now = datetime(2026, 1, 2, 12, tzinfo=utc)
-    _insert_workflow(db_engine, "auto-pause-done", now, active=True, scheduled_active=True, next_run_at=now + timedelta(hours=1))
-    _insert_workflow(db_engine, "auto-pause-running", now, active=True, scheduled_active=True, next_run_at=now + timedelta(hours=1))
-    _insert_asset(db_engine, "asset-done", "auto-pause-done", "done")
-    _insert_asset(db_engine, "asset-failed", "auto-pause-done", "failed")
-    _insert_asset(db_engine, "asset-running", "auto-pause-running", "in_progress")
+    workflow_id = "already-running"
+    run_started_at = now - timedelta(minutes=10)
+    _insert_workflow(
+        db_engine,
+        workflow_id,
+        now,
+        active=True,
+        schedule_waiting=False,
+        run_started_at=run_started_at,
+    )
+    _insert_asset(db_engine, "asset-running", workflow_id, "pending")
 
     with db_engine.begin() as connection:
         result = run_schedule_tick(connection, now)
 
-    assert result == {"activated": [], "paused": ["auto-pause-done"]}
-    assert _workflow(db_engine, "auto-pause-done")["active"] is False
-    assert _workflow(db_engine, "auto-pause-done")["scheduled_active"] is False
-    assert _workflow(db_engine, "auto-pause-running")["active"] is True
-    assert _workflow(db_engine, "auto-pause-running")["scheduled_active"] is True
+    state = _workflow(db_engine, workflow_id)
+    assert result == {"started": [], "waiting": []}
+    assert state["schedule_waiting"] is False
+    assert state["run_started_at"] == run_started_at
+    assert state["next_run_at"] > now
 
 
-def test_missed_runs_are_caught_up_once(db_engine):
-    now = datetime(2026, 1, 12, 12, tzinfo=utc)
-    workflow_id = "missed-runs"
-    _insert_workflow(db_engine, workflow_id, now, start=now - timedelta(days=20), next_run_at=now - timedelta(days=10))
+def test_pausing_workflow_does_not_start_due_run(db_engine):
+    now = datetime(2026, 1, 2, 12, tzinfo=utc)
+    workflow_id = "stopping-scheduled"
+    _insert_workflow(db_engine, workflow_id, now, active=True, pausing=True, schedule_waiting=True)
 
     with db_engine.begin() as connection:
         result = run_schedule_tick(connection, now)
 
-    next_run_at = _workflow(db_engine, workflow_id)["next_run_at"]
-    assert result["activated"] == [workflow_id]
-    assert next_run_at > now
-    assert next_run_at <= now + timedelta(hours=1)
+    state = _workflow(db_engine, workflow_id)
+    assert result == {"started": [], "waiting": []}
+    assert state["active"] is True
+    assert state["schedule_waiting"] is True
+    assert state["next_run_at"] > now
 
 
-def test_locked_row_is_skipped(db_engine):
+def test_invalid_settings_keep_workflow_waiting_and_log_each_module(db_engine, monkeypatch):
     now = datetime(2026, 1, 2, 12, tzinfo=utc)
-    workflow_id = "locked-workflow"
-    _insert_workflow(db_engine, workflow_id, now)
+    workflow_id = "invalid-settings"
+    _insert_workflow(db_engine, workflow_id, now, active=True, schedule_waiting=True)
+    monkeypatch.setattr(
+        "marathon.server.scheduler.workflow_invalid_modules",
+        lambda connection, current_id: [{"id": "bad-one"}, {"id": "bad-two"}],
+    )
 
-    with db_engine.connect() as lock_connection:
-        transaction = lock_connection.begin()
-        lock_connection.execute(
-            text("SELECT id FROM workflows WHERE id = :id FOR UPDATE"), {"id": workflow_id}
+    with db_engine.begin() as connection:
+        result = run_schedule_tick(connection, now)
+
+    state = _workflow(db_engine, workflow_id)
+    with db_engine.connect() as connection:
+        logs = connection.execute(
+            text("SELECT module_id, level, text FROM log_lines WHERE workflow_id = :id ORDER BY module_id"),
+            {"id": workflow_id},
+        ).all()
+    assert result == {"started": [], "waiting": []}
+    assert state["active"] is True
+    assert state["schedule_waiting"] is True
+    assert state["run_started_at"] is None
+    assert state["next_run_at"] > now
+    assert [tuple(row) for row in logs] == [
+        ("bad-one", "warn", "Zeitgesteuerter Lauf übersprungen: Einstellungen prüfen"),
+        ("bad-two", "warn", "Zeitgesteuerter Lauf übersprungen: Einstellungen prüfen"),
+    ]
+
+
+def test_running_workflow_without_work_enters_schedule_waiting(db_engine):
+    now = datetime(2026, 1, 2, 12, tzinfo=utc)
+    workflow_id = "run-complete"
+    _insert_workflow(
+        db_engine,
+        workflow_id,
+        now,
+        active=True,
+        schedule_waiting=False,
+        run_started_at=now - timedelta(minutes=1),
+        next_run_at=now + timedelta(hours=1),
+    )
+
+    with db_engine.begin() as connection:
+        result = run_schedule_tick(connection, now)
+
+    state = _workflow(db_engine, workflow_id)
+    assert result == {"started": [], "waiting": [workflow_id]}
+    assert state["active"] is True
+    assert state["schedule_waiting"] is True
+
+
+def test_running_workflow_with_open_asset_does_not_wait(db_engine):
+    now = datetime(2026, 1, 2, 12, tzinfo=utc)
+    workflow_id = "run-open-asset"
+    _insert_workflow(
+        db_engine,
+        workflow_id,
+        now,
+        active=True,
+        schedule_waiting=False,
+        run_started_at=now - timedelta(minutes=1),
+        next_run_at=now + timedelta(hours=1),
+    )
+    _insert_asset(db_engine, "asset-open", workflow_id, "in_progress")
+
+    with db_engine.begin() as connection:
+        result = run_schedule_tick(connection, now)
+
+    assert result == {"started": [], "waiting": []}
+    assert _workflow(db_engine, workflow_id)["schedule_waiting"] is False
+
+
+def test_running_workflow_with_watchfolder_missing_watch_state_does_not_wait(db_engine):
+    now = datetime(2026, 1, 2, 12, tzinfo=utc)
+    workflow_id = "watch-state-missing"
+    _insert_workflow(
+        db_engine,
+        workflow_id,
+        now,
+        active=True,
+        schedule_waiting=False,
+        run_started_at=now - timedelta(minutes=1),
+        next_run_at=now + timedelta(hours=1),
+    )
+    with db_engine.begin() as connection:
+        _insert_watchfolder_module(connection, workflow_id)
+        result = run_schedule_tick(connection, now)
+
+    assert result == {"started": [], "waiting": []}
+    assert _workflow(db_engine, workflow_id)["active"] is True
+    assert _workflow(db_engine, workflow_id)["schedule_waiting"] is False
+
+
+def test_running_watchfolder_requires_scan_since_run_start(db_engine):
+    now = datetime(2026, 1, 2, 12, tzinfo=utc)
+    run_started_at = now - timedelta(minutes=1)
+    workflow_id = "watch-scan-required"
+    _insert_workflow(
+        db_engine,
+        workflow_id,
+        now,
+        active=True,
+        schedule_waiting=False,
+        run_started_at=run_started_at,
+        next_run_at=now + timedelta(hours=1),
+    )
+    with db_engine.begin() as connection:
+        _insert_watchfolder_module(connection, workflow_id)
+        _insert_watch_state(connection, workflow_id, "watch-one", None)
+        result = run_schedule_tick(connection, now)
+    assert result == {"started": [], "waiting": []}
+
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE watch_modules SET last_scan_at = :scanned_at WHERE workflow_id = :id"),
+            {"scanned_at": run_started_at - timedelta(seconds=1), "id": workflow_id},
         )
-        try:
-            started = time.monotonic()
-            with db_engine.begin() as connection:
-                result = run_schedule_tick(connection, now)
-            elapsed = time.monotonic() - started
-        finally:
-            transaction.rollback()
+        result = run_schedule_tick(connection, now)
+    assert result == {"started": [], "waiting": []}
 
-    assert result == {"activated": [], "paused": []}
-    assert elapsed < 3
-    assert _workflow(db_engine, workflow_id)["active"] is False
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE watch_modules SET last_scan_at = :now WHERE workflow_id = :id"),
+            {"now": now, "id": workflow_id},
+        )
+        result = run_schedule_tick(connection, now)
+
+    assert result == {"started": [], "waiting": [workflow_id]}
+    assert _workflow(db_engine, workflow_id)["schedule_waiting"] is True
 
 
-def test_invalid_schedule_is_cleared(db_engine):
+def test_running_workflow_with_unstable_watchfolder_file_does_not_wait(db_engine):
+    now = datetime(2026, 1, 2, 12, tzinfo=utc)
+    workflow_id = "watch-file-unstable"
+    _insert_workflow(
+        db_engine,
+        workflow_id,
+        now,
+        active=True,
+        schedule_waiting=False,
+        run_started_at=now - timedelta(minutes=1),
+        next_run_at=now + timedelta(hours=1),
+    )
+    with db_engine.begin() as connection:
+        _insert_watchfolder_module(connection, workflow_id)
+        _insert_watch_state(connection, workflow_id, "watch-one", now)
+        connection.execute(
+            text(
+                "INSERT INTO watch_files "
+                "(workflow_id, module_id, path, size, mtime_ns, stable_since, asset_id, missing_since) "
+                "VALUES (:workflow_id, 'watch-one', '/input/new.mov', 10, 20, :now, NULL, NULL)"
+            ),
+            {"workflow_id": workflow_id, "now": now},
+        )
+        result = run_schedule_tick(connection, now)
+
+    assert result == {"started": [], "waiting": []}
+    assert _workflow(db_engine, workflow_id)["schedule_waiting"] is False
+
+
+def test_invalid_schedule_is_cleared_without_orphaned_wait_state(db_engine):
     now = datetime(2026, 1, 2, 12, tzinfo=utc)
     workflow_id = "invalid-schedule"
-    _insert_workflow(db_engine, workflow_id, now, every=5000, unit="minutes")
+    _insert_workflow(db_engine, workflow_id, now, every=5000, active=True, schedule_waiting=True)
 
     with db_engine.begin() as connection:
         result = run_schedule_tick(connection, now)
 
     state = _workflow(db_engine, workflow_id)
-    assert result == {"activated": [], "paused": []}
-    assert state["scheduled_active"] is False
+    assert result == {"started": [], "waiting": []}
     assert state["schedule_every"] is None
-    assert state["schedule_unit"] is None
-    assert state["schedule_start"] is None
-    assert state["next_run_at"] is None
+    assert state["schedule_waiting"] is False
+    assert state["run_started_at"] is None
 
 
-def test_invalid_workflow_does_not_prevent_due_workflow_activation(db_engine):
+def test_manually_active_workflow_is_not_automatically_ended(db_engine):
     now = datetime(2026, 1, 2, 12, tzinfo=utc)
-    _insert_workflow(db_engine, "a-invalid", now, every=5000, unit="minutes")
-    _insert_workflow(db_engine, "b-valid", now)
-    _insert_asset(db_engine, "asset-valid", "b-valid", "pending")
+    workflow_id = "manually-active"
+    _insert_workflow(
+        db_engine,
+        workflow_id,
+        now,
+        active=True,
+        every=None,
+        schedule_waiting=False,
+        next_run_at=None,
+    )
 
     with db_engine.begin() as connection:
         result = run_schedule_tick(connection, now)
 
-    assert result == {"activated": ["b-valid"], "paused": []}
-    assert _workflow(db_engine, "a-invalid")["next_run_at"] is None
-    assert _workflow(db_engine, "b-valid")["active"] is True
-    assert _workflow(db_engine, "b-valid")["scheduled_active"] is True
+    assert result == {"started": [], "waiting": []}
+    assert _workflow(db_engine, workflow_id)["active"] is True
 
 
 # RUNNER TESTS
