@@ -4,8 +4,8 @@
 .data
 ui/node_modules
 marathon/server/static
-dist
-*.pyc
 .monarch
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.env
