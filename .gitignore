@@ -7,4 +7,5 @@ marathon/server/static
 dist
 *.pyc
 .monarch
-__pychache__
+__pycache__/
+*.py[cod]
