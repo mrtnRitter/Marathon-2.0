@@ -74,10 +74,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 #### Module
 
 - [ ] Modul-Log: neben Fehlern auch jede Aktivität des Moduls (Zeit, Asset, Worker, Ergebnis); der Reiter „Jobs“ bleibt die Tabelle mit Status, Worker, Versuch und Fortschritt je Job
-- [ ] Parallele Verarbeitung (statt „Threads“): mehrere Assets gleichzeitig, jedes Asset in einem Strom; einstellbar in Kopieren und Verschieben
-  - Offen: Wie zählt z. B. der Wert 2 beim Worker?
-    - a) Ein Job mit 2 Assets gleichzeitig, belegt 1 Platz beim Worker (wie das frühere Beispiel: Kopieren + Umbenennen = 2 Jobs)
-    - b) Ein Job je Asset; der Wert begrenzt, wie viele Jobs dieses Moduls gleichzeitig laufen (belegt 2 Plätze)
+- [ ] Parallele Verarbeitung (statt „Threads“): mehrere Assets gleichzeitig, jedes Asset in einem Strom; einstellbar heute nur für Kopieren und Verschieben
 - [ ] Prioliste: „Metadaten bearbeiten“ heißt „Bearbeiten“
 - [ ] Verbindung zwischen Nodes: Anfang und Ende der Linie liegen am Rand des Kreises – heute beginnt die Linie am Ausgang „Erfolg“ etwas innerhalb des Kreises, beim Ziehen liegen Anfang und Ende im Modul
 - [ ] Asset erneut verarbeiten: keine Beschränkung auf 1000 Assets
