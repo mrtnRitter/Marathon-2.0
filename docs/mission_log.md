@@ -29,14 +29,14 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### Nächster Release: Worker-Steuerung, Watchfolder auf Workern, Live-Kanal
 
-#### Einstellungen
+#### Einstellungen - next
 
 - [ ] Die Einstellungsseite speichert in die Datenbank; erste echte Einstellung ist die Server-Adresse für den Ordner-Dialog
   - Standardwert im neuen Eintrag `[folder_dialog] server_address` in `config/marathon.toml`; `host` bleibt die Adresse, an der Marathon selbst erreichbar ist, und ist nicht in der Oberfläche änderbar
 - [ ] Standardwerte stehen in `config/marathon.toml` und gehen beim Build in die Datenbank, sofern dort noch kein Wert steht; ab dann gilt die Datenbank, geändert wird in der Oberfläche
 - [ ] Ordner-Dialog: Button „Laufwerke“ wird Umschalter Laufwerke / Server; „Server“ zeigt die Freigaben von `\\<Server-Adresse>`
 
-#### Worker
+#### Worker - next
 
 - [ ] Die Vorrang-Stufen (Bevorzugt, Normal, Letzte Wahl, Aus) entfallen überall: Oberfläche, Datenbank, Zuteilung
 - [ ] Fähigkeiten je Worker als sortierbare Liste im Stil der Prioliste; weiter oben = höhere Prio; nicht in der Liste = übernimmt diesen Modultyp nicht; wählbar sind nur Modultypen, die der Rechner meldet
