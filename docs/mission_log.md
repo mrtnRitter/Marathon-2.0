@@ -10,8 +10,8 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 - [ ] Der Server teilt zu, der Worker holt ab: Seine Anfrage bleibt ca. 25 s offen; Verbindungen nur vom Worker zum Server
 - [ ] Nicht innerhalb der Abhol-Frist abgeholt: Der Job geht zurück und wird neu vergeben
-- [ ] Worker-Auswahl nach Vorrang je Worker und Modultyp (Bevorzugt, Normal, Letzte Wahl, Aus); ist der bevorzugte belegt, übernimmt ein anderer mit gleichen Fähigkeiten
-- [ ] Es gilt die Schnittmenge: Modultypen, die der Rechner meldet, ohne Vorrang „Aus“; parallele Jobs = kleinerer Wert aus Rechner und Worker-Ansicht
+- [ ] Worker-Auswahl nach Vorrang je Worker und Modultyp (Bevorzugt, Normal, Letzte Wahl, Aus); ist der bevorzugte belegt, übernimmt ein anderer mit gleichen Fähigkeiten – wird im nächsten Release durch die Fähigkeiten-Rangliste ersetzt
+- [ ] Es gilt die Schnittmenge: Modultypen, die der Rechner meldet, ohne Vorrang „Aus“; parallele Jobs = kleinerer Wert aus Rechner und Worker-Ansicht – im nächsten Release: Modultypen, die der Rechner meldet und die in seiner Fähigkeiten-Liste stehen
 - [ ] Zwischen Workflows reihum, keine Workflow-Priorität; im Workflow zuerst das Asset, das am weitesten oben steht
 - [ ] Worker-Schnittstelle, versioniert (`/api/v1/worker/…`): anmelden, Job holen (mit Lebenszeichen und Abbruch), Start, Fortschritt und Log, Ergebnis; Zugang per Token
 - [ ] Ein Worker gilt nach 30 s ohne Meldung als ausgefallen
@@ -21,45 +21,76 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Als Versuch zählt nur ein Job, der schon lief; Pausieren und abgelaufene Abhol-Frist zählen nicht; der Zähler beginnt neu, wenn das Asset das Modul verlässt oder erneut verarbeitet wird
 - [ ] Server-Neustart: Jobs auf anderen Workern laufen weiter; meldet sich der Worker innerhalb von 30 s, wird sein Ergebnis übernommen
 - [ ] `last_choice` überall entfernt (Konfiguration, Worker-Anmeldung, Worker-Laufzeit)
+- [ ] Ausführungsvertrag für Module: Jedes ausführbare Modul hat `run(job)` (Eingang: Asset-Pfad, Einstellungen, Stopp-Signal; Ausgang: Ergebnis-Ausgang, Log, neuer Pfad, neue Assets); der Worker ruft es auf und bewegt damit die Dateien. Nichts mehr zu tun
 
 ---
 ---
 
 ## Geplant
 
-Nächster Release: offene Punkte aus „unsortiert von Martin“ klären
+### Nächster Release: Worker-Steuerung, Watchfolder auf Workern, Live-Kanal
 
-- [ ] Ordner-Dialog: Button „Laufwerke“ als Umschalter Laufwerke / Server; die Server-Adresse wird in den Einstellungen fest hinterlegt und als `\\<Server-IP>` benutzt (Anzeige der Freigaben funktioniert schon)
-  - Offen: Die Einstellungsseite speichert noch nichts. Server-Adresse in `config/marathon.toml` (gilt nach Server-Neustart) oder als erste echte Einstellung in der Datenbank, änderbar in der Oberfläche?
-- [ ] Fähigkeiten der Worker (Server-Worker und alle anderen) in der Oberfläche pflegen und im Stil der Prioliste priorisieren; steht Transcode beim Server-Worker zuletzt, transcodiert er nur als letzte Instanz
-  - Heute: Die Fähigkeiten meldet der Worker selbst (alle Module, die ein Worker ausführt). Auf der Worker-Seite unter „Bearbeiten“ gibt es je Modultyp einen Vorrang: Bevorzugt, Normal, Letzte Wahl, Aus.
-  - Offen: Wie vergleicht die Zuteilung die Ranglisten verschiedener Worker? Beispiel: Worker A [Kopieren, Transcode], Server-Worker [Kopieren, Umbenennen, Transcode] – wer bekommt einen Transcode-Job?
-  - Offen: Ersetzt die Reihenfolge die vier Vorrang-Stufen ganz, und heißt „nicht in der Liste“ = Aus?
-  - Offen: Server-Worker ab Werk mit oberster Prio für Kopieren, Verschieben und Umbenennen – ergibt sich aus der Antwort oben.
-- [ ] Server-Worker außerhalb der Oberfläche einstellen
-  - Heute: `config/marathon.toml` → `[server_worker] max_parallel` begrenzt die parallelen Jobs, auch beim schon angemeldeten Server-Worker. Name und Vorrang lassen sich nur in der Oberfläche ändern; der Name aus dem Code gilt nur bei der ersten Anmeldung.
-  - Offen: Sollen Name und Prio auch in die Konfiguration? Was gilt, wenn Konfiguration und Oberfläche voneinander abweichen?
-- [ ] Worker „Freigeben“ und „Sperren“
-  - Antwort: Ein neuer Worker (Status „neu“) bekommt erst nach „Freigeben“ Jobs; so holt sich kein Rechner Jobs, nur weil er das Token kennt. „Sperren“ nimmt einen Worker aus der Zuteilung (z. B. Wartung, Fehlverhalten); laufende Jobs laufen weiter. Der Server-Worker ist automatisch freigegeben.
-  - Offen: So lassen oder ändern?
-- [ ] Watchfolder: Wer verarbeitet ihn – Engine oder Server-Worker? Discover-Job im Seitenmenü
-  - Heute: Den Ordner scannt der Server selbst in einem eigenen Hintergrunddienst neben der Engine, ohne Worker und ohne Job. Deshalb zeigt das Seitenmenü nie einen Job und nie einen Worker.
-  - Offen: Soll das Scannen ein Discover-Job auf einem Worker werden? Dann gelten die Pfade aus Sicht des Workers (passt zu Pfadzuordnung und erreichbaren Speicherorten im Backlog). Was passiert, wenn kein Worker frei ist?
-- [ ] Watchfolder als Indexer: Assets ohne Folgemodul gelten als wartend statt erledigt
-  - Offen: Welcher Status genau – „Ausstehend“ oder „In Arbeit“ mit Schrittstatus „wartet“ am Watchfolder?
-  - Offen: Zeitgesteuert gestartete Workflows pausieren sich, sobald kein Asset mehr aussteht oder in Arbeit ist. Mit wartenden Watchfolder-Assets würden sie nie pausieren – soll der Watchfolder dabei nicht mitzählen?
-- [ ] Modul-Log: nur Fehler oder auch normale Statusmeldungen?
-  - Heute: Im Modul-Log stehen nur Meldungen des Moduls, die zu keinem Job gehören (z. B. Watchfolder „Ordner nicht erreichbar“, „Workflow pausiert: Einstellungen prüfen“). Job-Meldungen wie „Kopiert nach …“ stehen im Log des Assets; deshalb ist das Log von „Datei kopieren“ leer.
-  - Offen: Sollen auch Job-Meldungen im Modul-Log erscheinen – alle oder nur Warnungen und Fehler, mit Asset-Namen?
-- [ ] Zwei Verarbeitungsmodi je Workflow: Asset-fokussiert (Asset für Asset durch den Workflow) oder Node-fokussiert (jeder Node arbeitet seine Warteschlange ab, erst dann kommt der nächste Node dran)
-  - Heute: Jedes Asset läuft für sich weiter, sobald es fertig ist; alle Module arbeiten gleichzeitig, soweit Worker frei sind.
-  - Offen: Startet Node-fokussiert das nächste Modul erst, wenn am vorherigen nichts mehr wartet oder läuft? Was gilt für Assets, die währenddessen neu vom Watchfolder kommen? Wird der Modus je Workflow eingestellt?
-- [ ] Kopieren und Verschieben parallel: Einstellung im Modul, z. B. Kopieren mit 2 Threads gilt als ein Job, anschließendes Umbenennen als 2. Job; der Worker macht 2 Jobs
-  - Heute: Ein Job verarbeitet ein Asset; parallel wird über die parallelen Jobs des Workers.
-  - Offen: Heißt „2 Threads“, dass ein Job mehrere Assets gleichzeitig kopiert (wie Sammeljobs im Backlog), oder dass eine Datei schneller in mehreren Strömen kopiert wird?
-- [ ] Asset mit mehreren Dateien (z. B. OP-Atom, Interview aus vielen Einzeldateien): Eine Kopie wird eine weitere Datei des Assets statt eines neuen Assets
-  - Heute: Die Kopie wird ein neues Asset (Log „Kopie von …“).
-  - Offen: Welche Datei verarbeiten Folgemodule standardmäßig? Wie wird nur die neue Kopie weiterverarbeitet (`asset_x.copy_a`)?
+#### Einstellungen
+
+- [ ] Die Einstellungsseite speichert in die Datenbank; erste echte Einstellung ist die Server-Adresse für den Ordner-Dialog
+  - Standardwert im neuen Eintrag `[folder_dialog] server_address` in `config/marathon.toml`; `host` bleibt die Adresse, an der Marathon selbst erreichbar ist, und ist nicht in der Oberfläche änderbar
+- [ ] Standardwerte stehen in `config/marathon.toml` und gehen beim Build in die Datenbank, sofern dort noch kein Wert steht; ab dann gilt die Datenbank, geändert wird in der Oberfläche
+- [ ] Ordner-Dialog: Button „Laufwerke“ wird Umschalter Laufwerke / Server; „Server“ zeigt die Freigaben von `\\<Server-Adresse>`
+- [ ] Platzhalter „Live-Kanal“ (Server-Sent Events / WebSocket) entfällt aus den Einstellungen
+
+#### Worker
+
+- [ ] Die Vorrang-Stufen (Bevorzugt, Normal, Letzte Wahl, Aus) entfallen überall: Oberfläche, Datenbank, Zuteilung
+- [ ] Fähigkeiten je Worker als sortierbare Liste im Stil der Prioliste; weiter oben = höhere Prio; nicht in der Liste = übernimmt diesen Modultyp nicht; wählbar sind nur Modultypen, die der Rechner meldet
+- [ ] Zuteilung: Ein Job geht an den Worker mit freiem Platz, bei dem der Modultyp am weitesten oben steht. Beispiel: Worker A [Transcode, Kopieren], Worker B [Kopieren, Transcode] → Transcode-Jobs vorrangig an A, Kopieren an B; ist A voll, transcodiert B
+- [ ] Gleicher Rang: zuerst der Worker, dem noch kein Job zugeteilt ist; sind beide frei, einer von beiden
+- [ ] Server-Worker ab Werk mit den Fähigkeiten Watchfolder, Kopieren, Verschieben, Umbenennen; einstellbar unter `[server_worker]` in `config/marathon.toml` (Fähigkeiten, parallele Jobs); diese Standardwerte gehen beim Build in die Datenbank, danach gilt die Datenbank
+- [ ] Alle Worker, auch der Server-Worker, werden in der Oberfläche eingestellt
+- [ ] „Freigeben“ und „Sperren“ werden ein Button „Starten“ / „Stoppen“, der je nach Zustand wechselt (wie bei Workflows); auch direkt in der Worker-Liste
+- [ ] Status „bereit“ oder „gestoppt“ (rot); beim Stoppen „Wird gestoppt“, bis alle Jobs abgebrochen sind; „online“ / „offline“ bleibt eine eigene Anzeige, die Auslastung zeigt die Spalte Jobs; „neu“, „beschäftigt“ und „gesperrt“ entfallen
+- [ ] Ein neuer Worker meldet sich „gestoppt“ an und bekommt erst nach „Starten“ Jobs (wie bisher nach „Freigeben“); der Server-Worker startet automatisch
+- [ ] Stoppen bricht alle laufenden Jobs des Workers ab, unfertige Ergebnisse werden verworfen, das Asset geht zurück auf den Ausgang des letzten Moduls, an dem es fertig war, und wird neu verteilt; der Abbruch zählt nicht als Versuch
+
+#### Workflows
+
+- [ ] Überall „Starten“ / „Stoppen“ statt „Starten“ / „Pausieren“; Status „aktiv“ oder „gestoppt“ (rot); „Wird gestoppt“ statt „Wird pausiert“
+- [ ] Zeitgesteuerte Workflows: Der Workflow bleibt „aktiv“, auch während die Zeitsteuerung eine Pause vorsieht; nur aktive Workflows werden verarbeitet, auch ihre Pausen
+  - In der Pause startet der Workflow keine neuen Jobs und der Watchfolder scannt nicht; zum nächsten Termin läuft er, bis kein Asset mehr aussteht oder in Arbeit ist, dann beginnt die nächste Pause
+  - Das Selbst-Pausieren entfällt; „Stoppen“ beendet auch die Zeitsteuerung, bis der Workflow wieder gestartet wird
+- [ ] Verarbeitung bleibt parallel: Jedes Asset läuft weiter, sobald es fertig ist, soweit Worker frei sind; die Idee der Asset-fokussierten Verarbeitung entfällt
+- [ ] Überwachen: Doppelklick auf ein Modul wechselt zu Bearbeiten, das Modul ist markiert und das rechte Panel offen
+
+#### Watchfolder
+
+- [ ] Watchfolder wird eine Fähigkeit der Worker, ab Werk mit oberster Prio; den Ordner scannt ein Worker statt des Hintergrunddienstes im Server
+- [ ] Ist kein passender Worker frei oder gestartet, wartet der Scan; das Modul-Log meldet „Kein Worker für den Watchfolder verfügbar“
+- [ ] Netzwerkpfad: Der Server-Worker scannt
+- [ ] Lokaler Pfad: Der Worker auf der Workstation scannt
+  - Offen: Ein lokaler Pfad (z. B. `D:\Ingest`) existiert auf jeder Workstation. Welcher Worker scannt ihn?
+    - a) Im Watchfolder wird ein bestimmter Worker ausgewählt (Pflicht bei lokalem Pfad)
+    - b) Jeder gestartete Worker mit der Fähigkeit Watchfolder scannt seinen eigenen lokalen Ordner
+    - c) Der Worker, bei dem Watchfolder am weitesten oben steht
+  - Offen: Die Datei eines lokal gefundenen Assets liegt nur auf dieser Workstation. Gehen alle Folgejobs dieses Assets an genau diesen Worker, bis ein Modul die Datei auf einen Netzwerkpfad gebracht hat?
+    - a) Ja, gebunden an diesen Worker, bis die Datei auf einem Netzwerkpfad liegt
+    - b) Nein, normal nach Fähigkeiten verteilen
+- [ ] Gefundene Assets gehen sofort in den nächsten Node und stehen dort auf „wartet“ oder werden direkt verarbeitet; am Watchfolder gibt es nur „erfasst“, keine Spalte „wartet“
+- [ ] Warten: Assets vom Watchfolder stehen in der Spalte „wartet“, solange ihre Wartezeit läuft (heute bleibt die Spalte leer); nach Ablauf zählen sie am Warten-Modul als erledigt und gehen über „Erfolg“ weiter
+
+#### Module
+
+- [ ] Modul-Log: neben Fehlern auch jede Aktivität des Moduls (Zeit, Asset, Worker, Ergebnis); der Reiter „Jobs“ bleibt die Tabelle mit Status, Worker, Versuch und Fortschritt je Job
+- [ ] Parallele Verarbeitung (statt „Threads“): mehrere Assets gleichzeitig, jedes Asset in einem Strom; einstellbar in Kopieren und Verschieben, später ggf. Transcode und API-Abrufe
+  - Offen: Wie zählt z. B. der Wert 2 beim Worker?
+    - a) Ein Job mit 2 Assets gleichzeitig, belegt 1 Platz beim Worker (wie das frühere Beispiel: Kopieren + Umbenennen = 2 Jobs)
+    - b) Ein Job je Asset; der Wert begrenzt, wie viele Jobs dieses Moduls gleichzeitig laufen (belegt 2 Plätze)
+- [ ] Prioliste: „Metadaten bearbeiten“ heißt „Bearbeiten“
+- [ ] Verbindung zwischen Nodes: Anfang und Ende der Linie liegen am Rand des Kreises – heute beginnt die Linie am Ausgang „Erfolg“ etwas innerhalb des Kreises, beim Ziehen liegen Anfang und Ende im Modul
+- [ ] Asset erneut verarbeiten: keine Beschränkung auf 1000 Assets
+
+#### Live-Kanal
+
+- [ ] Der Server meldet jede Änderung an Assets, Jobs, Workern, Workflows und Modulzählern sofort an alle offenen Browser; alle Ansichten zu Assets, Fortschritt, Workern und Workflows aktualisieren sich in Echtzeit und synchron
+- [ ] Ersetzt das bisherige Abfragen im Takt (Überwachen alle 2 s, Pausieren jede Sekunde) und das Neuladen per Hand; nach einem Verbindungsabbruch verbindet sich der Browser selbst neu und lädt den aktuellen Stand
 
 ---
 ---
@@ -68,7 +99,6 @@ Nächster Release: offene Punkte aus „unsortiert von Martin“ klären
 
 ### Engine und Worker
 
-- [ ] Live-Kanal zum Browser (ersetzt das Neuladen im Sekundentakt beim Pausieren)
 - [ ] Worker-Client: Client-Hülle für Windows (Starter, Einstellungen inkl. erlaubter Modultypen, Auto-Update mit Rückfall, später Zeitpläne) um die Worker-Laufzeit aus dem Release Engine
 - [ ] Rollout von Client-Versionen
 - [ ] Pfadzuordnung je Worker – nötig mit dem Umstieg auf Linux (Server-Worker sieht `/mnt/...` statt `\\server\freigabe`)
@@ -87,7 +117,6 @@ Nächster Release: offene Punkte aus „unsortiert von Martin“ klären
 - [ ] Modulpanel mit ausklappbaren Kategorien zur Sortierung 
 - [ ] Watchfolder: ersetzte Datei – altes Asset beenden („Quelldatei kann nicht mehr zugeordnet werden“), neues Asset mit Hinweis auf die verlorene Vorgängerdatei
   - Offen: Welcher Status ist „beendet“ – Erledigt oder Fehlgeschlagen?
-- [ ] Watchfolder in zeitgesteuert gestarteten Workflows (pausieren sich ohne ausstehende Assets sofort)
 - Geplante Module:
   - [ ] Transcode
     - Wahl von GPU oder CPU je Worker regelt das Modul
@@ -99,11 +128,13 @@ Nächster Release: offene Punkte aus „unsortiert von Martin“ klären
   - [ ] API (EditShare, Veritone, ARK, awork) → später
   - [ ] Umbenennen: weitere Methoden
   - [ ] Prioliste: Metadaten je Eintrag bearbeiten, Verarbeitung nach Prio
-  - [ ] Rechenintensive Module (Transcode, QC …) beim Einbau für den Server-Worker als letzte Wahl vorsehen – über die neue Fähigkeiten-Rangliste (siehe Nächster Release); `last_choice` entfällt
+  - [ ] Rechenintensive Module (Transcode, QC …) beim Einbau für den Server-Worker als letzte Wahl vorsehen – über die neue Fähigkeiten-Rangliste (siehe Geplant); `last_choice` entfällt
 
 ### Assets und Daten
 
 - [ ] Assets hinzufügen: manuell und einfacher Listenimport
+- [ ] Asset mit mehreren Dateien (z. B. OP-Atom, Interview aus vielen Einzeldateien): Eine Kopie wird eine weitere Datei des Assets statt eines neuen Assets – vertagt
+  - Offen: Welche Datei verarbeiten Folgemodule standardmäßig? Wie wird nur die neue Kopie weiterverarbeitet (`asset_x.copy_a`)?
 - [ ] Asset-Aktionen im Workflow und in der Asset-Ansicht: Nach oben, Abbrechen, Anhalten/Freigeben, Entfernen
 - [ ] Aufbewahrung der Daten
   - Offen: Daten pro Workflow oder global aufheben?
@@ -132,23 +163,5 @@ Nächster Release: offene Punkte aus „unsortiert von Martin“ klären
 
 
 ### unsortiert Martin
-- [ ] Überwachen: doppelklick auf Modul wechselt zu Bearbeiten mit genau diesem Modul schon markiert und mit rechten Panel offen
-- [ ] Verarbeitung der assets wird nicht überall in echtzeit angezeigt - bitte repo-weit prüfen - jede anzeige zu assets und fortschritt soll sich in echtzeit aktualisieren -> hier wollten wir einen Live-Kanal bauen, damit immer alles in Echtzeit überall aktualisiert ist
-- [ ] Ausführungsvertrag für Module (`run(job)`); Dateien bewegt später der Worker, angeschlossen wird mit der Engine - was bedeutet das, ist das noch zu erledigen oder schon eingebaut - muss ich hier was tun?
-- [ ] Verbinung zwischen nodes: 1. Erfolg: der anfang der linie liegt etwas innerhalb des kreises -- 2. beim ziehen sind linien anfang und ende im module, nicht am rand des kreises
-- [ ] Asset erneut verarbeiten: Fehler: zu viele Assets (max. 1000) -> nein, keine Beschränkung
-- [ ] Watchfolder hat keine Spalte "wartet", da erfasste Assets gleich übergeben werden
-- [ ] Warten: ist für ein Asset die Wartezeit abgelaufen, gilt es als erledigt, außerdem werden erfasste assets vom Watchfolder nicht in die Queue von warten eingereiht (warten-modul spalte "wartet" bleibt immer leer).
-- [ ] Prioliste "Metadaten bearbeiten" verkürzen auf "Bearbeiten"
+
 - [ ] 
-
-
-
-
-
-
-
-
-
-
-
