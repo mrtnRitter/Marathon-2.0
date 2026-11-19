@@ -67,11 +67,11 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Warten: Assets vom Watchfolder stehen in der Spalte „wartet“, solange ihre Wartezeit läuft (heute bleibt die Spalte leer); nach Ablauf zählen sie am Warten-Modul als erledigt und gehen über „Erfolg“ weiter
 - [ ] modul watchfolder: erfasst und neu als status: neu ist immer, was im lauf neu gefunden wurde, sobald lauf beendet ist, gehen die Assets in erfasst über - reihenfolge umstellen: neu links, erfasst rechts - wartet entfällt
 
-#### Warten
+#### Warten - next
 - [ ] genauso behandeln wie fachmodule: assets, auf den gerade eine Wartezeit läuft, gelten als "in arbeit", asstes, deren wartezeit durchlaufen ist (und es keine fehler gab), gelten als "erledigt". Assets, die vom vorherigen Modul übergeben wurden, gehen sofort in "läuft" über, es gibt kein "Warten" für das Warten-Modul. Die eingestellte Wartezeit gilt pro Asset (tick 1: 10 Assets werden übergeben und warten 10 sekunden -- tick 2: die nächsten 5 assets werden übergeben und deren wartezeit startet frisch bei 10 sekunden, die ersten 10 haben eine Restwartezeit von 10 Sekunden - Zeit tick 1). 
 
 
-#### Module
+#### Module - next
 
 - [ ] Modul-Log: neben Fehlern auch jede Aktivität des Moduls (Zeit, Asset, Worker, Ergebnis); der Reiter „Jobs“ bleibt die Tabelle mit Status, Worker, Versuch und Fortschritt je Job
 - [ ] Parallele Verarbeitung (statt „Threads“): mehrere Assets gleichzeitig, jedes Asset in einem Strom; einstellbar heute nur für Kopieren und Verschieben
