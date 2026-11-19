@@ -154,4 +154,4 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 ### unsortiert Martin
 
 - [ ] Überwachen -> Einstellungen: Werte in Settings ausgrauen - dann ist klarer, dass man sie hier nicht editieren kann
-- [ ] 
+- [ ] mit "stop" beendet sich der Server, aber es kommen noch viele Fehlermeldungen in der Konsole. Sieht noch nach einem sehr harten stop aus.
