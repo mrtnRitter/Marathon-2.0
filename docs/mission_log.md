@@ -49,7 +49,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Ein neuer Worker meldet sich „gestoppt“ an und bekommt erst nach „Starten“ Jobs (wie bisher nach „Freigeben“); der Server-Worker startet automatisch
 - [ ] Stoppen bricht alle laufenden Jobs des Workers ab, unfertige Ergebnisse werden verworfen, das Asset geht zurück auf den Ausgang des letzten Moduls, an dem es fertig war, und wird neu verteilt; der Abbruch zählt nicht als Versuch
 
-#### Workflows
+#### Workflows - next
 
 - [ ] Überall „Starten“ / „Stoppen“ statt „Starten“ / „Pausieren“; Status „aktiv“ oder „gestoppt“ (rot); „Wird gestoppt“ statt „Wird pausiert“
 - [ ] Zeitgesteuerte Workflows: Der Workflow bleibt „aktiv“, auch während die Zeitsteuerung eine Pause vorsieht; nur aktive Workflows werden verarbeitet, auch ihre Pausen
@@ -57,6 +57,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Das Selbst-Pausieren entfällt; „Stoppen“ beendet auch die Zeitsteuerung, bis der Workflow wieder gestartet wird
 - [ ] Verarbeitung bleibt parallel: Jedes Asset läuft weiter, sobald es fertig ist, soweit Worker frei sind; die Idee der Asset-fokussierten Verarbeitung entfällt
 - [ ] Überwachen: Doppelklick auf ein Modul wechselt zu Bearbeiten, das Modul ist markiert und das rechte Panel offen
+- [ ] in console server mit "stop" beenden, statt strg + c
 
 #### Watchfolder
 
@@ -73,6 +74,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
     - b) Nein, normal nach Fähigkeiten verteilen
 - [ ] Gefundene Assets gehen sofort in den nächsten Node und stehen dort auf „wartet“ oder werden direkt verarbeitet; am Watchfolder gibt es nur „erfasst“, keine Spalte „wartet“
 - [ ] Warten: Assets vom Watchfolder stehen in der Spalte „wartet“, solange ihre Wartezeit läuft (heute bleibt die Spalte leer); nach Ablauf zählen sie am Warten-Modul als erledigt und gehen über „Erfolg“ weiter
+- [ ] modul watchfolder: erfasst und neu als status: neu ist immer, was im lauf neu gefunden wurde, sobald lauf beendet ist, gehen die Assets in erfasst über - reihenfolge umstellen: neu links, erfasst rechts - wartet entfällt
 
 #### Module
 
@@ -157,5 +159,4 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### unsortiert Martin
 
-- [ ] modul watchfolder: erfasst und neu als status: neu ist immer, was im lauf neu gefunden wurde, sobald lauf beendet ist, gehen die Assets in erfasst über - reihenfolge umstellen: neu links, erfasst rechts - wartet entfällt
-- [ ] in console server mit "stop" beenden, statt strg + c
+- 
