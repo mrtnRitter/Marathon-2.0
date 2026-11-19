@@ -21,10 +21,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Als Versuch zählt nur ein Job, der schon lief; Pausieren und abgelaufene Abhol-Frist zählen nicht; der Zähler beginnt neu, wenn das Asset das Modul verlässt oder erneut verarbeitet wird
 - [ ] Server-Neustart: Jobs auf anderen Workern laufen weiter; meldet sich der Worker innerhalb von 30 s, wird sein Ergebnis übernommen
 - [ ] `last_choice` überall entfernt (Konfiguration, Worker-Anmeldung, Worker-Laufzeit)
-- [ ] Ausführungsvertrag für Module: Jedes ausführbare Modul hat `run(job)` (Eingang: Asset-Pfad, Einstellungen, Stopp-Signal; Ausgang: Ergebnis-Ausgang, Log, neuer Pfad, neue Assets); der Worker ruft es auf und bewegt damit die Dateien. Nichts mehr zu tun
-- [ ] Der Server meldet jede Änderung an Assets, Jobs, Workern, Workflows und Modulzählern sofort an alle offenen Browser; alle Ansichten zu Assets, Fortschritt, Workern und Workflows aktualisieren sich in Echtzeit und synchron
-- [ ] Ersetzt das bisherige Abfragen im Takt (Überwachen alle 2 s, Pausieren jede Sekunde) und das Neuladen per Hand; nach einem Verbindungsabbruch verbindet sich der Browser selbst neu und lädt den aktuellen Stand
-- [ ] Platzhalter „Live-Kanal“ (Server-Sent Events / WebSocket) entfällt aus den Einstellungen; der Live-Kanal nutzt fest Server-Sent Events
 
 ---
 ---
@@ -161,4 +157,5 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### unsortiert Martin
 
-- [ ] 
+- [ ] modul watchfolder: erfasst und neu als status: neu ist immer, was im lauf neu gefunden wurde, sobald lauf beendet ist, gehen die Assets in erfasst über - reihenfolge umstellen: neu links, erfasst rechts - wartet entfällt
+- [ ] in console server mit "stop" beenden, statt strg + c
