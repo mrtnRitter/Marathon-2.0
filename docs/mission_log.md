@@ -8,8 +8,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ### Abnahme offen
 
-- [ ] Assets neu verarbeiten: Option: in einem anderen Workflow
-- [ ] Ausführungsvertrag für Module (`run(job)`); Dateien bewegt später der Worker, angeschlossen wird mit der Engine - ist das noch aktuell?
 - [ ] Der Server teilt zu, der Worker holt ab: Seine Anfrage bleibt ca. 25 s offen; Verbindungen nur vom Worker zum Server
 - [ ] Nicht innerhalb der Abhol-Frist abgeholt: Der Job geht zurück und wird neu vergeben
 - [ ] Worker-Auswahl nach Vorrang je Worker und Modultyp (Bevorzugt, Normal, Letzte Wahl, Aus); ist der bevorzugte belegt, übernimmt ein anderer mit gleichen Fähigkeiten
@@ -22,22 +20,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Nach 3 unterbrochenen Versuchen am selben Modul *Fehlgeschlagen*; der Log zeigt die Versuche
 - [ ] Als Versuch zählt nur ein Job, der schon lief; Pausieren und abgelaufene Abhol-Frist zählen nicht; der Zähler beginnt neu, wenn das Asset das Modul verlässt oder erneut verarbeitet wird
 - [ ] Server-Neustart: Jobs auf anderen Workern laufen weiter; meldet sich der Worker innerhalb von 30 s, wird sein Ergebnis übernommen
-- [ ] Ein vor dem Abbruch fertiges Ergebnis wird übernommen; ein spätes Ergebnis eines abgebrochenen Jobs wird verworfen
-- [ ] Prioliste: Menüpunkt „Metadaten bearbeiten“ mit Stift-Icon
-- [ ] Ordner-Dialog: Weitertippen im Adressfeld filtert die Liste (Pfad beginnt mit der Eingabe, ohne Groß-/Kleinschreibung); „Kein passender Ordner“, wenn nichts passt
-- [ ] Überwachen: Zähler in den Nodes aktualisieren sich alle 2 s (bis zum Live-Kanal)
-- [ ] Watchfolder-Node zeigt „erfasst“ (Dateien mit noch vorhandenem Asset) und „wartet“; kein „läuft“, „erledigt“, „Fehler“
-- [ ] Server-Worker: Standardname „Server-Worker“ (gilt bei der ersten Anmeldung), Standard 1 paralleler Job (`[server_worker] max_parallel = 1`)
 - [ ] `last_choice` überall entfernt (Konfiguration, Worker-Anmeldung, Worker-Laufzeit)
-- [ ] Asset-Detail: Größe mit Einheit (B, KB, MB, GB, TB; Basis 1024); Metadaten „Quellpfad“, „Größe“, „Datei geändert“ (statt mtime), übrige mit großem Anfangsbuchstaben
-- [ ] Asset-Meldungen vom Typ Fehler in roter Schrift
-- [ ] Spinner (drei Punkte, nacheinander eingeblendet) über Tabellen, wenn Laden oder Sortieren länger als 0,5 s dauert
-- [ ] Assets: Reiter „Alle“ vor den Status-Reitern
-- [ ] Warnung beim Speichern: Überschrift „Warnung“ mit gelbem Warndreieck; Text nennt, wie viele Assets neu verteilt, erledigt oder fehlgeschlagen werden und wie viele Jobs abgebrochen werden, dazu die betroffenen Module
-- [ ] Überwachen: Reiter „Einstellungen“ im Modul-Seitenmenü, nur lesen
-- [ ] Grafik-Glitch: blauer Balken aktiver Module liegt über den Trennlinien
-- [ ] Verbinden: Linie rastet am Eingang ein, sobald die Maus über dem Ziel-Modul ist (nicht über dessen Ausgangsleiste)
-- [ ] Verbindungen nur vom Ausgang (Erfolg und Fehler) zum Eingang; Ziehen am verbundenen Eingang löst die zuletzt angelegte Verbindung (nach dem Neuladen gilt die gespeicherte Reihenfolge)
 
 ---
 ---
@@ -149,5 +132,23 @@ Nächster Release: offene Punkte aus „unsortiert von Martin“ klären
 
 
 ### unsortiert Martin
-- [ ] ...
+- [ ] Überwachen: doppelklick auf Modul wechselt zu Bearbeiten mit genau diesem Modul schon markiert und mit rechten Panel offen
+- [ ] Verarbeitung der assets wird nicht überall in echtzeit angezeigt - bitte repo-weit prüfen - jede anzeige zu assets und fortschritt soll sich in echtzeit aktualisieren -> hier wollten wir einen Live-Kanal bauen, damit immer alles in Echtzeit überall aktualisiert ist
+- [ ] Ausführungsvertrag für Module (`run(job)`); Dateien bewegt später der Worker, angeschlossen wird mit der Engine - was bedeutet das, ist das noch zu erledigen oder schon eingebaut - muss ich hier was tun?
+- [ ] Verbinung zwischen nodes: 1. Erfolg: der anfang der linie liegt etwas innerhalb des kreises -- 2. beim ziehen sind linien anfang und ende im module, nicht am rand des kreises
+- [ ] Asset erneut verarbeiten: Fehler: zu viele Assets (max. 1000) -> nein, keine Beschränkung
+- [ ] Watchfolder hat keine Spalte "wartet", da erfasste Assets gleich übergeben werden
+- [ ] Warten: ist für ein Asset die Wartezeit abgelaufen, gilt es als erledigt, außerdem werden erfasste assets vom Watchfolder nicht in die Queue von warten eingereiht (warten-modul spalte "wartet" bleibt immer leer).
+- [ ] Prioliste "Metadaten bearbeiten" verkürzen auf "Bearbeiten"
 - [ ] 
+
+
+
+
+
+
+
+
+
+
+
