@@ -58,6 +58,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Verarbeitung bleibt parallel: Jedes Asset läuft weiter, sobald es fertig ist, soweit Worker frei sind; die Idee der Asset-fokussierten Verarbeitung entfällt
 - [ ] Überwachen: Doppelklick auf ein Modul wechselt zu Bearbeiten, das Modul ist markiert und das rechte Panel offen
 - [ ] in console server mit "stop" beenden, statt strg + c
+- [ ] wenn Server nicht läuft, steht Server-Worker auf Webseite als "Offline" und die Seite bekommt ein Overlay "keine Verbindung zum Marathon-Server". - Interaktion mit der Seite ist dann nicht möglich.
 
 #### Watchfolder
 
