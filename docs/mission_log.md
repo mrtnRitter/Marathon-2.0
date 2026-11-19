@@ -22,6 +22,9 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Server-Neustart: Jobs auf anderen Workern laufen weiter; meldet sich der Worker innerhalb von 30 s, wird sein Ergebnis übernommen
 - [ ] `last_choice` überall entfernt (Konfiguration, Worker-Anmeldung, Worker-Laufzeit)
 - [ ] Ausführungsvertrag für Module: Jedes ausführbare Modul hat `run(job)` (Eingang: Asset-Pfad, Einstellungen, Stopp-Signal; Ausgang: Ergebnis-Ausgang, Log, neuer Pfad, neue Assets); der Worker ruft es auf und bewegt damit die Dateien. Nichts mehr zu tun
+- [ ] Der Server meldet jede Änderung an Assets, Jobs, Workern, Workflows und Modulzählern sofort an alle offenen Browser; alle Ansichten zu Assets, Fortschritt, Workern und Workflows aktualisieren sich in Echtzeit und synchron
+- [ ] Ersetzt das bisherige Abfragen im Takt (Überwachen alle 2 s, Pausieren jede Sekunde) und das Neuladen per Hand; nach einem Verbindungsabbruch verbindet sich der Browser selbst neu und lädt den aktuellen Stand
+- [ ] Platzhalter „Live-Kanal“ (Server-Sent Events / WebSocket) entfällt aus den Einstellungen; der Live-Kanal nutzt fest Server-Sent Events
 
 ---
 ---
@@ -36,7 +39,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
   - Standardwert im neuen Eintrag `[folder_dialog] server_address` in `config/marathon.toml`; `host` bleibt die Adresse, an der Marathon selbst erreichbar ist, und ist nicht in der Oberfläche änderbar
 - [ ] Standardwerte stehen in `config/marathon.toml` und gehen beim Build in die Datenbank, sofern dort noch kein Wert steht; ab dann gilt die Datenbank, geändert wird in der Oberfläche
 - [ ] Ordner-Dialog: Button „Laufwerke“ wird Umschalter Laufwerke / Server; „Server“ zeigt die Freigaben von `\\<Server-Adresse>`
-- [ ] Platzhalter „Live-Kanal“ (Server-Sent Events / WebSocket) entfällt aus den Einstellungen; der Live-Kanal nutzt fest Server-Sent Events
 
 #### Worker
 
@@ -86,11 +88,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Prioliste: „Metadaten bearbeiten“ heißt „Bearbeiten“
 - [ ] Verbindung zwischen Nodes: Anfang und Ende der Linie liegen am Rand des Kreises – heute beginnt die Linie am Ausgang „Erfolg“ etwas innerhalb des Kreises, beim Ziehen liegen Anfang und Ende im Modul
 - [ ] Asset erneut verarbeiten: keine Beschränkung auf 1000 Assets
-
-#### Live-Kanal
-
-- [ ] Der Server meldet jede Änderung an Assets, Jobs, Workern, Workflows und Modulzählern sofort an alle offenen Browser; alle Ansichten zu Assets, Fortschritt, Workern und Workflows aktualisieren sich in Echtzeit und synchron
-- [ ] Ersetzt das bisherige Abfragen im Takt (Überwachen alle 2 s, Pausieren jede Sekunde) und das Neuladen per Hand; nach einem Verbindungsabbruch verbindet sich der Browser selbst neu und lädt den aktuellen Stand
 
 ---
 ---

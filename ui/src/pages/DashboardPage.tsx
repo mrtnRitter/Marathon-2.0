@@ -8,7 +8,7 @@ import { StatusBar } from '../components/StatusBar'
 import { StatusTabs } from '../components/StatusTabs'
 import { Button } from '../components/Toolbar'
 import { get_dashboard } from '../data/api'
-import { set_workflows_active, use_pausing_reload } from '../lib/workflows'
+import { set_workflows_active, use_pausing_notice } from '../lib/workflows'
 import type { Worker, Workflow } from '../data/types'
 import { use_data } from '../data/use_data'
 import { workflow_state_meta, asset_status_meta, asset_statuses, is_online, online_meta } from '../theme/status'
@@ -54,8 +54,8 @@ const worker_columns: Column<Worker>[] = [
 
 export function DashboardPage() {
   const navigate = useNavigate()
-  const { data, reload } = use_data(get_dashboard)
-  use_pausing_reload(data?.workflows, reload)
+  const { data, reload } = use_data(get_dashboard, [], { live: ['workflows', 'assets', 'jobs', 'workers'] })
+  use_pausing_notice(data?.workflows)
   return (
     <>
       <PageHeader title="Dashboard" />

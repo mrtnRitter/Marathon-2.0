@@ -14,7 +14,7 @@ interface Props {
 }
 
 export function ReprocessPanel({ open, asset_ids, current_workflow_id, on_close, on_done }: Props) {
-  const { data: workflows = [] } = use_data(() => (open ? get_workflows() : Promise.resolve([])), [open])
+  const { data: workflows = [] } = use_data(() => (open ? get_workflows() : Promise.resolve([])), [open], { live: ['workflows'] })
   const [target, set_target] = useState('')
   const [sending, set_sending] = useState(false)
 

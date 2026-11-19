@@ -11,7 +11,6 @@ const sections: { title: string; fields: FieldSpec[] }[] = [
     fields: [
       { key: 'host', label: 'Adresse', type: 'text', default: '127.0.0.1', help: 'Wird später aus config/marathon.toml gelesen' },
       { key: 'port', label: 'Port', type: 'number', default: 8080 },
-      { key: 'live_channel', label: 'Live-Kanal', type: 'select', default: 'Server-Sent Events', options: ['Server-Sent Events', 'WebSocket'] },
     ],
   },
   {

@@ -24,7 +24,7 @@ interface Props {
 /** Asset list with status tiles and actions; shared by the global view and the workflow tab. */
 export function AssetList({ workflow_id, workflows, initial_status }: Props) {
   const navigate = useNavigate()
-  const { data: assets = [], loading, reload } = use_data(() => get_assets({ workflow_id }), [workflow_id])
+  const { data: assets = [], loading, reload } = use_data(() => get_assets({ workflow_id }), [workflow_id], { live: ['assets', 'jobs'] })
   const [status, set_status] = useState<AssetFilter>(initial_status ?? 'pending')
   const [selected, set_selected] = useState<string[]>([])
   const [search, set_search] = useState('')

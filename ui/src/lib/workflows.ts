@@ -11,7 +11,7 @@ export function name_taken(workflows: Workflow[], name: string, own_id: string |
   )
 }
 
-export function use_pausing_reload(workflows: Workflow[] | null | undefined, reload: () => void): void {
+export function use_pausing_notice(workflows: Workflow[] | null | undefined): void {
   const workflows_ref = useRef(workflows)
   const pause_started_at = useRef(new Map<string, { started_at: number; notified: boolean }>())
   workflows_ref.current = workflows
@@ -40,10 +40,9 @@ export function use_pausing_reload(workflows: Workflow[] | null | undefined, rel
     if (!workflows_ref.current?.some(workflow => workflow.pausing)) return
     const timer = window.setInterval(() => {
       check_pausing()
-      if (workflows_ref.current?.some(workflow => workflow.pausing)) reload()
     }, 1000)
     return () => window.clearInterval(timer)
-  }, [workflows?.some(workflow => workflow.pausing), reload])
+  }, [workflows?.some(workflow => workflow.pausing)])
 }
 
 export async function set_workflows_active(workflows: Workflow[], active: boolean): Promise<number> {

@@ -273,12 +273,12 @@ def test_server_main_starts_and_stops_watcher_with_test_database(db_engine, tmp_
         assert kwargs["watch_interval_s"] == watcher.tick_interval_s
         return original_create_app(engine=db_engine, static_dir=static_dir, **kwargs)
 
-    def run_test_server(app, **kwargs):
+    def run_test_server(app, host, port):
         with TestClient(app):
             assert any(thread.name == "marathon-watcher" and thread.is_alive() for thread in threading.enumerate())
 
     monkeypatch.setattr(server_main, "create_app", create_test_app)
-    monkeypatch.setattr(server_main.uvicorn, "run", run_test_server)
+    monkeypatch.setattr(server_main, "serve", run_test_server)
     assert server_main.main() == 0
     assert not any(thread.name == "marathon-watcher" and thread.is_alive() for thread in threading.enumerate())
 

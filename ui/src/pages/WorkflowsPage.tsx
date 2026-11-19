@@ -15,7 +15,7 @@ import { ApiError, create_workflow, delete_workflow, duplicate_workflow, get_wor
 import type { FieldSpec, Workflow, WorkflowInput } from '../data/types'
 import { schedule_error, schedule_label } from '../lib/schedule'
 import { format_datetime } from '../lib/format'
-import { name_taken, set_workflows_active, use_pausing_reload } from '../lib/workflows'
+import { name_taken, set_workflows_active, use_pausing_notice } from '../lib/workflows'
 import { use_data } from '../data/use_data'
 import { workflow_state_meta, asset_statuses } from '../theme/status'
 
@@ -27,8 +27,8 @@ const empty_form: WorkflowInput = { name: '', description: '', schedule: null }
 export function WorkflowsPage() {
   const navigate = useNavigate()
   const [search_params] = useSearchParams()
-  const { data, reload } = use_data(get_workflows)
-  use_pausing_reload(data, reload)
+  const { data, reload } = use_data(get_workflows, [], { live: ['workflows', 'assets', 'jobs'] })
+  use_pausing_notice(data)
   const [selected, set_selected] = useState<string[]>([])
   const [panel_open, set_panel_open] = useState(false)
   const [editing, set_editing] = useState<Workflow | null>(null)

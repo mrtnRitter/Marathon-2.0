@@ -15,9 +15,9 @@ import './AssetDetailPage.css'
 export function AssetDetailPage() {
   const { asset_id = '' } = useParams()
   const navigate = useNavigate()
-  const { data: asset, loading, reload } = use_data(() => get_asset_detail(asset_id), [asset_id])
+  const { data: asset, loading, reload } = use_data(() => get_asset_detail(asset_id), [asset_id], { live: ['assets', 'asset_history', 'jobs', 'job_assets', 'log_lines'] })
   const [reprocess_open, set_reprocess_open] = useState(false)
-  const { data: workflow } = use_data(() => (asset ? get_workflow(asset.workflow_id) : Promise.resolve(null)), [asset?.workflow_id])
+  const { data: workflow } = use_data(() => (asset ? get_workflow(asset.workflow_id) : Promise.resolve(null)), [asset?.workflow_id], { live: ['workflows'] })
 
   if (!asset) {
     return (

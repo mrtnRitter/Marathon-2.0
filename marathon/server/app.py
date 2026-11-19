@@ -18,6 +18,7 @@ from marathon.server.config import ConfigError, EngineConfig, ServerWorkerConfig
 from marathon.server.db.catalog_writes import sync_module_types
 from marathon.modules import load_catalog
 from marathon.server.engine.tick import EngineRunner
+from marathon.server.live import LiveHub, NotifyListener, open_listen_connection
 from marathon.server.scheduler import ScheduleRunner
 from marathon.server.watcher import WatchRunner
 from marathon.server.ui import create_ui_router, default_static_dir
@@ -35,10 +36,20 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     watcher = None
     engine_runner = None
     supervisor = None
+    listener = None
     try:
         if app.state.sync_catalog:
             with app_engine(app).begin() as connection:
                 sync_module_types(connection, load_catalog())
+        if app.state.run_live:
+            listener = NotifyListener(
+                lambda: open_listen_connection(app_engine(app)),
+                app.state.live_hub.publish,
+            )
+            try:
+                listener.start()
+            except Exception as error:
+                _logger.warning("Live-Listener konnte nicht gestartet werden (%s)", type(error).__name__)
         if app.state.scheduler_interval_s is not None:
             runner = ScheduleRunner(
                 lambda: app_engine(app),
@@ -67,7 +78,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 _logger.warning("Server-Worker konnte nicht gestartet werden (%s)", type(error).__name__)
         yield
     finally:
+        try:
+            app.state.live_hub.close_streams()
+        except Exception:
+            _logger.exception("Live-Kanal konnte nicht geschlossen werden")
         for name, task in (
+            ("Live-Kanal", listener),
             ("Server-Worker", supervisor),
             ("Engine", engine_runner),
             ("Watcher", watcher),
@@ -76,7 +92,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             if task is None:
                 continue
             try:
-                task.stop()
+                stopped = task.stop()
+                if name == "Live-Kanal" and stopped is False:
+                    _logger.warning("%s konnte nicht gestoppt werden", name)
             except Exception:
                 _logger.exception("%s konnte nicht gestoppt werden", name)
         if app.state.engine_owned and app.state.engine is not None:
@@ -95,6 +113,7 @@ def create_app(
     engine_config: EngineConfig | None = None,
     worker_token: str | None = None,
     run_engine: bool = False,
+    run_live: bool = False,
     server_worker: ServerWorkerConfig | None = None,
     server_url: str | None = None,
 ) -> FastAPI:
@@ -115,6 +134,8 @@ def create_app(
     app.state.engine_config = engine_config or EngineConfig()
     app.state.worker_token = worker_token
     app.state.run_engine = run_engine
+    app.state.live_hub = LiveHub()
+    app.state.run_live = run_live
     app.state.server_worker = server_worker
     app.state.server_url = server_url
 

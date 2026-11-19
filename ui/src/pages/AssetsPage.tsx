@@ -10,7 +10,7 @@ export function AssetsPage() {
   const workflow_id = params.get('workflow') ?? ''
   const status_param = params.get('status')
   const initial_status = status_param === 'all' ? 'all' : asset_statuses.find(status => status === status_param)
-  const { data: workflows = [] } = use_data(get_workflows)
+  const { data: workflows = [] } = use_data(get_workflows, [], { live: ['workflows'] })
   return (
     <>
       <PageHeader title="Assets">

@@ -5,7 +5,7 @@ import { IssueMark } from '../components/IssueMark'
 import { StatusBadge } from '../components/StatusBadge'
 import { Tabs } from '../components/Tabs'
 import { get_workflow } from '../data/api'
-import { set_workflows_active, use_pausing_reload } from '../lib/workflows'
+import { set_workflows_active, use_pausing_notice } from '../lib/workflows'
 import { use_data } from '../data/use_data'
 import { AssetList } from '../features/assets/AssetList'
 import { WorkflowCanvas } from '../features/workflow-editor/WorkflowCanvas'
@@ -20,8 +20,8 @@ export function WorkflowDetailPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const initial_mode: EditorMode | undefined = (location.state as { mode?: string } | null)?.mode === 'edit' ? 'edit' : undefined
-  const { data: workflow, loading, reload } = use_data(() => get_workflow(workflow_id), [workflow_id])
-  use_pausing_reload(workflow ? [workflow] : undefined, reload)
+  const { data: workflow, loading, reload } = use_data(() => get_workflow(workflow_id), [workflow_id], { live: ['workflows', 'assets'] })
+  use_pausing_notice(workflow ? [workflow] : undefined)
   const [busy, set_busy] = useState(false)
   const toggle = async () => {
     if (!workflow || busy) return

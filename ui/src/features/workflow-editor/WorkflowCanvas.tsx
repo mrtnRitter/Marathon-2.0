@@ -9,6 +9,7 @@ import { SlidePanel } from '../../components/SlidePanel'
 import { Icon } from '../../components/Icon'
 import { notify } from '../../components/Toast'
 import { get_graph_impact, get_module_types, get_workflow_graph, save_workflow_graph } from '../../data/api'
+import { create_reload_gate, subscribe_live } from '../../data/live'
 import type { GraphImpact, GraphInput, ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
 import { has_setting_errors } from '../../lib/module_settings'
 import { impact_lines } from '../../lib/graph_impact'
@@ -80,9 +81,8 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale 
   useEffect(() => {
     if (mode !== 'monitor') return
     let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | undefined
-
-    const poll = async () => {
+    let gate: ReturnType<typeof create_reload_gate> | undefined
+    const refresh = async () => {
       try {
         const result = await get_workflow_graph(graph.workflow_id, { quiet: true })
         if (cancelled || result === null) return
@@ -92,15 +92,19 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale 
         }
         set_nodes(current => merge_counters(current, result.modules) ?? current)
       } catch {
-        if (cancelled) return
+        // Keep current counters; the next live change retries.
+      } finally {
+        gate?.done()
       }
-      if (!cancelled) timer = setTimeout(() => { void poll() }, 2000)
     }
 
-    timer = setTimeout(() => { void poll() }, 2000)
+    gate = create_reload_gate(() => { void refresh() }, 250)
+    gate.request()
+    const unsubscribe = subscribe_live(['assets', 'jobs', 'workflow_versions', 'workflow_modules', 'workflow_connections'], () => gate?.request())
     return () => {
       cancelled = true
-      if (timer !== undefined) clearTimeout(timer)
+      unsubscribe()
+      gate?.dispose()
     }
   }, [mode, graph.workflow_id, graph.version, on_stale, set_nodes])
 

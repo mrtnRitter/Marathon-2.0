@@ -34,6 +34,7 @@ function ReportResults({ start, end, workflow_id }: { start: string; end: string
   const report_state = use_data(
     () => get_job_status_report({ start, end, workflow_id: workflow_id || undefined }),
     [start, end, workflow_id],
+    { live: ['jobs', 'job_assets'] },
   )
   if (report_state.loading) return <div className="loading">Lade</div>
   if (report_state.error) return <div className="data-table-empty">Report konnte nicht geladen werden</div>
@@ -79,7 +80,7 @@ export function ReportsPage() {
     }
   })
   const [workflow_id, set_workflow_id] = useState('')
-  const { data: workflows = [] } = use_data(get_workflows)
+  const { data: workflows = [] } = use_data(get_workflows, [], { live: ['workflows'] })
   const from_date = parse_local_date(dates.from)
   const to_date = parse_local_date(dates.to)
   const range_hint = !dates.from || !dates.to

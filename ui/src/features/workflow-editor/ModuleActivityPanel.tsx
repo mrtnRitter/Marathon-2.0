@@ -41,7 +41,7 @@ const worker_columns: Column<Worker>[] = [
 export function ModuleActivityPanel({ workflow_id, data, on_close }: { workflow_id: string; data: ModuleNodeData; on_close: () => void }) {
   const navigate = useNavigate()
   const [tab, set_tab] = useState('jobs')
-  const { data: activity } = use_data(() => get_module_activity(workflow_id, data.module.id), [workflow_id, data.module.id])
+  const { data: activity } = use_data(() => get_module_activity(workflow_id, data.module.id), [workflow_id, data.module.id], { live: ['jobs', 'job_assets', 'assets', 'workers', 'log_lines'] })
   return (
     <SlidePanel open title={data.module.name} icon={data.module_type.icon} on_close={on_close} width={760} click_through>
       <Tabs active={tab} on_change={set_tab} items={[

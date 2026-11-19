@@ -32,7 +32,7 @@ const priority_choices: { value: WorkerPriority; label: string }[] = [
 const status_tiles: WorkerStatus[] = ['ready', 'busy', 'new', 'updating', 'offline', 'locked']
 
 export function WorkersPage() {
-  const { data, reload } = use_data(() => Promise.all([get_workers(), get_module_types()]))
+  const { data, reload } = use_data(() => Promise.all([get_workers(), get_module_types()]), [], { live: ['workers', 'jobs', 'module_types'] })
   const [selected, set_selected] = useState<string[]>([])
   const [editing_worker, set_editing_worker] = useState<Worker | null>(null)
   const [form, set_form] = useState<WorkerInput | null>(null)

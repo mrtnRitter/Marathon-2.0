@@ -45,8 +45,8 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0005"
-    assert upgrade_database(db_engine) == "0005"
+    assert upgrade_database(db_engine) == "0006"
+    assert upgrade_database(db_engine) == "0006"
 
 
 def test_engine_columns_exist(db_engine):
@@ -104,7 +104,7 @@ def test_downgrade_0005(db_engine):
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM jobs WHERE id = 'job-downgrade'")).scalar_one() == "cancelled"
     assert "attempts" not in {column["name"] for column in inspect(db_engine).get_columns("assets")}
-    assert upgrade_database(db_engine) == "0005"
+    assert upgrade_database(db_engine) == "0006"
 
 
 def test_ensure_database_creates_then_reuses(db_config):
@@ -188,7 +188,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0005" in captured.out
+    assert "Revision 0006" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 
