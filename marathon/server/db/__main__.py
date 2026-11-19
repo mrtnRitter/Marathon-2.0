@@ -9,6 +9,7 @@ from sqlalchemy.exc import OperationalError
 
 from marathon.server.config import ConfigError, default_config_file, load_server_config, pg_password_file
 from marathon.server.db.engine import create_db_engine, ensure_database, read_password, upgrade_database
+from marathon.server.db.seed import seed_defaults
 
 
 # CONFIG
@@ -35,6 +36,8 @@ def main(
         engine = create_db_engine(server_config.database, password)
         try:
             revision = upgrade_database(engine)
+            with engine.begin() as connection:
+                seed_defaults(connection, server_config)
         finally:
             engine.dispose()
     except ConfigError as error:

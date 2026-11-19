@@ -23,7 +23,6 @@ from marathon.server.engine.tick import (
     fail_lost_workers,
     finish_pausing,
     run_engine_tick,
-    update_worker_busy,
 )
 
 
@@ -121,18 +120,19 @@ def _worker(
     name: str = "GPU",
     status: str = "ready",
     capabilities: list[str] | None = None,
-    priorities: dict[str, str] | None = None,
-    max_parallel: int = 2,
-    client_slots: int = 2,
+    skills: list[str] | None = None,
+    online: bool = True,
     last_seen: datetime | None = NOW,
     created_at: datetime = NOW,
 ) -> None:
+    capabilities = ["copy_file", "move_file"] if capabilities is None else capabilities
+    skills = capabilities if skills is None else skills
     statement = text(
         "INSERT INTO workers "
-        "(id, name, status, capabilities, priorities, max_parallel, client_slots, last_seen, created_at) "
-        "VALUES (:id, :name, :status, :capabilities, :priorities, :max_parallel, :client_slots, :last_seen, :created_at) "
+        "(id, name, status, online, skills, capabilities, last_seen, created_at) "
+        "VALUES (:id, :name, :status, :online, :skills, :capabilities, :last_seen, :created_at) "
         "ON CONFLICT (id) DO NOTHING"
-    ).bindparams(bindparam("capabilities", type_=JSONB), bindparam("priorities", type_=JSONB))
+    ).bindparams(bindparam("skills", type_=JSONB), bindparam("capabilities", type_=JSONB))
     with db_engine.begin() as connection:
         connection.execute(
             statement,
@@ -140,10 +140,9 @@ def _worker(
                 "id": worker_id,
                 "name": name,
                 "status": status,
-                "capabilities": capabilities or ["copy_file", "move_file"],
-                "priorities": priorities or {},
-                "max_parallel": max_parallel,
-                "client_slots": client_slots,
+                "online": online,
+                "skills": skills,
+                "capabilities": capabilities,
                 "last_seen": last_seen,
                 "created_at": created_at,
             },
@@ -237,7 +236,7 @@ def test_lost_worker_jobs(db_engine):
     _asset(db_engine, workflow_id, "assigned-asset", step_status="running", attempts=0)
     _asset(db_engine, workflow_id, "locked-asset", step_status="running", attempts=0)
     _worker(db_engine, "silent", last_seen=NOW - timedelta(seconds=31))
-    _worker(db_engine, "locked", status="locked", last_seen=NOW - timedelta(seconds=31))
+    _worker(db_engine, "locked", status="stopped", last_seen=NOW - timedelta(seconds=31))
     _job(db_engine, workflow_id, job_id="running-job", asset_id="running-asset", worker_id="silent")
     _job(db_engine, workflow_id, job_id="assigned-job", asset_id="assigned-asset", worker_id="silent", status="assigned")
     _job(db_engine, workflow_id, job_id="locked-job", asset_id="locked-asset", worker_id="locked")
@@ -251,8 +250,8 @@ def test_lost_worker_jobs(db_engine):
     assert _job_row(db_engine, "assigned-job")["error"] == "Nicht abgeholt"
     assert _asset_row(db_engine, "assigned-asset")["step_status"] == "waiting"
     assert _job_row(db_engine, "locked-job")["status"] == "interrupted"
-    assert _rows(db_engine, "SELECT status FROM workers WHERE id = 'silent'")[0]["status"] == "offline"
-    assert _rows(db_engine, "SELECT status FROM workers WHERE id = 'locked'")[0]["status"] == "locked"
+    assert _rows(db_engine, "SELECT status, online FROM workers WHERE id = 'silent'")[0] == {"status": "ready", "online": False}
+    assert _rows(db_engine, "SELECT status FROM workers WHERE id = 'locked'")[0]["status"] == "stopped"
 
 
 def test_expire_pickups(db_engine):
@@ -299,7 +298,7 @@ def test_enter_only_running_workflows(db_engine):
     assert _asset_row(db_engine, "pausing-asset")["status"] == "pending"
 
 
-def test_wait_module(db_engine):
+def test_wait_module_uses_engine_jobs_and_individual_deadlines(db_engine):
     workflow_id = _workflow(
         db_engine,
         [_module("watch", "watchfolder"), _module("wait", "wait"), _module("copy", "copy_file")],
@@ -310,17 +309,39 @@ def test_wait_module(db_engine):
             text("UPDATE workflow_modules SET settings = '{\"wait_s\": 5}'::jsonb WHERE workflow_id = :id AND id = 'wait'"),
             {"id": workflow_id},
         )
-    _asset(db_engine, workflow_id, current_module_id="wait", step_status="waiting")
+    _asset(db_engine, workflow_id, "first", current_module_id="wait", step_status="waiting")
 
     assert _step(db_engine, advance_assets, NOW) == 1
-    asset = _asset_row(db_engine, "asset-1")
-    assert asset["step_status"] == "running"
-    assert asset["wait_until"] == NOW + timedelta(seconds=5)
+    first = _rows(db_engine, "SELECT * FROM jobs WHERE worker_id IS NULL")[0]
+    assert first["status"] == "running"
+    assert _asset_row(db_engine, "first")["wait_until"] == NOW + timedelta(seconds=5)
+
+    _asset(db_engine, workflow_id, "second", current_module_id="wait", step_status="waiting", list_position=2)
+    assert _step(db_engine, advance_assets, NOW + timedelta(seconds=3)) == 1
+    wait_until = {row["asset_id"]: row["wait_until"] for row in _rows(
+        db_engine,
+        "SELECT a.id AS asset_id, a.wait_until FROM assets AS a WHERE a.workflow_id = :id ORDER BY a.id",
+        id=workflow_id,
+    )}
+    assert wait_until == {"first": NOW + timedelta(seconds=5), "second": NOW + timedelta(seconds=8)}
 
     assert _step(db_engine, advance_assets, NOW + timedelta(seconds=6)) == 1
-    asset = _asset_row(db_engine, "asset-1")
-    assert (asset["current_module_id"], asset["step_status"]) == ("copy", "waiting")
-    assert _history(db_engine, "asset-1") == [{"kind": "info", "text": "Wartezeit abgelaufen"}]
+    assert _job_row(db_engine, first["id"])["status"] == "succeeded"
+    assert (_asset_row(db_engine, "first")["current_module_id"], _asset_row(db_engine, "first")["step_status"]) == ("copy", "waiting")
+    assert _asset_row(db_engine, "second")["step_status"] == "running"
+
+
+def test_due_legacy_wait_without_engine_job_uses_old_route(db_engine):
+    workflow_id = _workflow(
+        db_engine,
+        [_module("watch", "watchfolder"), _module("wait", "wait"), _module("copy", "copy_file")],
+        [_connection("watch", "success", "wait"), _connection("wait", "success", "copy")],
+    )
+    _asset(db_engine, workflow_id, current_module_id="wait", step_status="running", wait_until=NOW)
+
+    assert _step(db_engine, advance_assets, NOW) == 1
+    assert _asset_row(db_engine, "asset-1")["current_module_id"] == "copy"
+    assert _history(db_engine, "asset-1")[0]["text"] == "Wartezeit abgelaufen"
 
 
 def test_schedule_waiting_blocks_engine_work_until_schedule_starts(db_engine):
@@ -349,7 +370,10 @@ def test_schedule_waiting_blocks_engine_work_until_schedule_starts(db_engine):
     assert _step(db_engine, advance_assets, NOW) == 1
     assert _asset_row(db_engine, "wait-asset")["step_status"] == "running"
     assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
-    assert len(_rows(db_engine, "SELECT id FROM jobs WHERE workflow_id = :id", id=workflow_id)) == 1
+    jobs = _rows(db_engine, "SELECT worker_id, status FROM jobs WHERE workflow_id = :id", id=workflow_id)
+    assert len(jobs) == 2
+    assert sum(job["worker_id"] is None and job["status"] == "running" for job in jobs) == 1
+    assert sum(job["worker_id"] == "worker-1" and job["status"] == "assigned" for job in jobs) == 1
 
 
 def test_non_worker_module_fails(db_engine):
@@ -375,45 +399,46 @@ def test_non_worker_module_fails(db_engine):
     assert _history(db_engine, "asset-1")[0]["text"] == "Modul kann nicht ausgeführt werden: engine_none_test"
 
 
-def test_assign_prefers_priority(db_engine):
+def test_assign_prefers_skill_rank(db_engine):
     workflow_id = _workflow(db_engine)
     _asset(db_engine, workflow_id)
-    _worker(db_engine, "normal", priorities={"copy_file": "normal"})
-    _worker(db_engine, "preferred", priorities={"copy_file": "preferred"})
+    _worker(db_engine, "normal", skills=["move_file", "copy_file"])
+    _worker(db_engine, "preferred", skills=["copy_file", "move_file"])
 
     assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
-    assert _job_row(db_engine, _rows(db_engine, "SELECT id FROM jobs")[0]["id"])["worker_id"] == "preferred"
+    assert _rows(db_engine, "SELECT worker_id FROM jobs")[0]["worker_id"] == "preferred"
 
 
-def test_assign_skips_off_and_missing_capability(db_engine):
+def test_assign_skips_workers_without_matching_skill_or_capability(db_engine):
     workflow_id = _workflow(db_engine)
     _asset(db_engine, workflow_id)
-    _worker(db_engine, "off", priorities={"copy_file": "off"})
-    _worker(db_engine, "missing", capabilities=["move_file"])
+    _worker(db_engine, "skill-missing", skills=["move_file"])
+    _worker(db_engine, "capability-missing", capabilities=["move_file"], skills=["copy_file"])
+    _worker(db_engine, "offline", online=False)
+    _worker(db_engine, "stopped", status="stopped")
 
     assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 0
     assert _rows(db_engine, "SELECT id FROM jobs") == []
     assert _asset_row(db_engine, "asset-1")["step_status"] == "waiting"
 
 
-def test_assign_respects_slots(db_engine):
+def test_worker_with_active_job_gets_no_second_job(db_engine):
     workflow_id = _workflow(db_engine)
-    _worker(db_engine, max_parallel=3, client_slots=2, status="busy")
     _asset(db_engine, workflow_id, "active", step_status="running")
     _job(db_engine, workflow_id, job_id="active-job", asset_id="active", status="running")
-    _asset(db_engine, workflow_id, "waiting-1", list_position=2)
-    _asset(db_engine, workflow_id, "waiting-2", list_position=3)
+    _asset(db_engine, workflow_id, "waiting", list_position=2)
+    _worker(db_engine, "other", name="Other", skills=["move_file"])
 
-    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
-    assert _rows(db_engine, "SELECT id FROM jobs WHERE status = 'assigned'")
-    assert len(_rows(db_engine, "SELECT id FROM jobs WHERE status IN ('assigned', 'running', 'cancelling')")) == 2
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 0
+    assert _rows(db_engine, "SELECT id FROM jobs WHERE status = 'assigned'") == []
+    assert _asset_row(db_engine, "waiting")["step_status"] == "waiting"
 
 
-def test_no_jobs_for_new_offline_locked_workers(db_engine):
+def test_no_jobs_for_stopped_or_offline_workers(db_engine):
     workflow_id = _workflow(db_engine)
     _asset(db_engine, workflow_id)
-    for status in ("new", "offline", "locked"):
-        _worker(db_engine, status, status=status)
+    _worker(db_engine, "stopped", status="stopped")
+    _worker(db_engine, "offline", status="ready", online=False)
 
     assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 0
     assert _rows(db_engine, "SELECT id FROM jobs") == []
@@ -425,7 +450,8 @@ def test_round_robin_within_tick(db_engine):
     for workflow_id, prefix in ((workflow_a, "a"), (workflow_b, "b")):
         for position in range(3):
             _asset(db_engine, workflow_id, f"{prefix}-{position}", list_position=position)
-    _worker(db_engine, max_parallel=2, client_slots=2)
+    _worker(db_engine, "worker-a", name="A")
+    _worker(db_engine, "worker-b", name="B")
 
     assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 2
     counts = _job_counts(db_engine, [workflow_a, workflow_b])
@@ -442,7 +468,7 @@ def test_round_robin_across_ticks(db_engine):
         )
     _asset(db_engine, workflow_a, "a-asset")
     _asset(db_engine, workflow_b, "b-asset")
-    _worker(db_engine, max_parallel=1, client_slots=1)
+    _worker(db_engine)
 
     assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
     first = _rows(db_engine, "SELECT workflow_id, id FROM jobs WHERE status = 'assigned'")[0]
@@ -466,17 +492,36 @@ def test_asset_without_path_fails(db_engine):
     assert _rows(db_engine, "SELECT id FROM jobs") == []
 
 
-def test_update_worker_busy(db_engine):
-    workflow_id = _workflow(db_engine)
-    _asset(db_engine, workflow_id, step_status="running")
-    _job(db_engine, workflow_id)
+def test_finish_worker_stops_only_without_active_jobs(db_engine):
+    from marathon.server.engine import tick
 
-    assert _step(db_engine, update_worker_busy) == 1
-    assert _rows(db_engine, "SELECT status FROM workers WHERE id = 'worker-1'")[0]["status"] == "busy"
-    with db_engine.begin() as connection:
-        connection.execute(text("UPDATE jobs SET status = 'succeeded' WHERE id = 'job-1'"))
-    assert _step(db_engine, update_worker_busy) == 1
-    assert _rows(db_engine, "SELECT status FROM workers WHERE id = 'worker-1'")[0]["status"] == "ready"
+    workflow_id = _workflow(db_engine)
+    _worker(db_engine, "idle-stop", status="stopping")
+    for status in ("assigned", "running", "cancelling"):
+        worker_id = f"stop-{status}"
+        asset_id = f"asset-{status}"
+        _worker(db_engine, worker_id, status="stopping")
+        _asset(db_engine, workflow_id, asset_id, step_status="running")
+        _job(
+            db_engine,
+            workflow_id,
+            job_id=f"job-{status}",
+            asset_id=asset_id,
+            worker_id=worker_id,
+            status=status,
+        )
+
+    assert _step(db_engine, tick.finish_worker_stops) == 1
+    statuses = _rows(
+        db_engine,
+        "SELECT id, status FROM workers WHERE id = 'idle-stop' OR id LIKE 'stop-%' ORDER BY id",
+    )
+    assert statuses == [
+        {"id": "idle-stop", "status": "stopped"},
+        {"id": "stop-assigned", "status": "stopping"},
+        {"id": "stop-cancelling", "status": "stopping"},
+        {"id": "stop-running", "status": "stopping"},
+    ]
 
 
 def test_step_error_does_not_stop_tick(db_engine, monkeypatch, caplog):
@@ -491,15 +536,15 @@ def test_step_error_does_not_stop_tick(db_engine, monkeypatch, caplog):
 
     monkeypatch.setattr(tick, "expire_pickups", raise_error)
     monkeypatch.setattr(tick, "finish_pausing", lambda *args: calls.append("paused") or 1)
+    monkeypatch.setattr(tick, "finish_worker_stops", lambda *args: calls.append("stopped") or 1, raising=False)
     monkeypatch.setattr(tick, "advance_assets", lambda *args: calls.append("advanced") or 1)
     monkeypatch.setattr(tick, "assign_jobs", lambda *args: calls.append("assigned") or 1)
-    monkeypatch.setattr(tick, "update_worker_busy", lambda *args: calls.append("busy") or 1)
 
     with caplog.at_level("WARNING", logger="marathon.engine"):
         result = run_engine_tick(db_engine, NOW, EngineConfig())
 
-    assert calls == ["lost", "expired", "paused", "advanced", "assigned", "busy"]
-    assert result == {"lost": 1, "expired": 0, "paused": 1, "advanced": 1, "assigned": 1, "busy": 1}
+    assert calls == ["lost", "expired", "paused", "stopped", "advanced", "assigned"]
+    assert result == {"lost": 1, "expired": 0, "paused": 1, "stopped": 1, "advanced": 1, "assigned": 1}
     assert "Engine-Schritt expired fehlgeschlagen (RuntimeError)" in caplog.text
 
 
@@ -512,7 +557,7 @@ def test_advisory_lock_skips_steps(db_engine):
         finally:
             blocker.rollback()
 
-    assert result == {"lost": 0, "expired": 0, "paused": 0, "advanced": 0, "assigned": 0, "busy": 0}
+    assert result == {"lost": 0, "expired": 0, "paused": 0, "stopped": 0, "advanced": 0, "assigned": 0}
 
 
 def test_runner_stop_is_prompt(db_engine, monkeypatch):
@@ -549,3 +594,119 @@ def test_assign_does_not_lock_idle_workers(db_engine):
     assert assigned == 1
     assert elapsed < 2
     assert _rows(db_engine, "SELECT worker_id FROM jobs")[0]["worker_id"] == "b-target"
+
+
+@pytest.mark.parametrize("parallel", ["3", True, 0, 17])
+def test_invalid_parallel_setting_uses_single_asset_jobs(db_engine, parallel):
+    workflow_id = _workflow(db_engine)
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE workflow_modules SET settings = :settings WHERE workflow_id = :id AND id = 'copy'").bindparams(
+                bindparam("settings", type_=JSONB)
+            ),
+            {"id": workflow_id, "settings": {"parallel": parallel}},
+        )
+    for position in range(5):
+        _asset(db_engine, workflow_id, f"asset-{position}", list_position=position)
+    _worker(db_engine)
+
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
+    assert len(_rows(db_engine, "SELECT id FROM jobs")) == 1
+    assert len(_rows(db_engine, "SELECT asset_id FROM job_assets")) == 1
+
+
+def test_parallel_batches_waiting_assets_in_list_order(db_engine):
+    workflow_id = _workflow(
+        db_engine,
+        [_module("watch", "watchfolder"), _module("copy", "copy_file")],
+        [_connection("watch", "success", "copy")],
+    )
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE workflow_modules SET settings = '{\"parallel\": 3}'::jsonb WHERE workflow_id = :id AND id = 'copy'"),
+            {"id": workflow_id},
+        )
+    for position in range(5):
+        _asset(db_engine, workflow_id, f"asset-{position}", list_position=position)
+    _worker(db_engine)
+
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 3
+    jobs = _rows(db_engine, "SELECT id FROM jobs")
+    assert len(jobs) == 1
+    assigned_assets = _rows(
+        db_engine,
+        "SELECT ja.asset_id FROM job_assets AS ja JOIN assets AS a ON a.id = ja.asset_id "
+        "WHERE ja.job_id = :job_id ORDER BY a.list_position, a.id",
+        job_id=jobs[0]["id"],
+    )
+    assert [row["asset_id"] for row in assigned_assets] == [f"asset-{index}" for index in range(3)]
+
+
+def test_asset_without_path_is_failed_and_excluded_from_batch(db_engine):
+    workflow_id = _workflow(
+        db_engine,
+        [_module("watch", "watchfolder"), _module("copy", "copy_file")],
+        [_connection("watch", "success", "copy")],
+    )
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE workflow_modules SET settings = '{\"parallel\": 2}'::jsonb WHERE workflow_id = :id AND id = 'copy'"),
+            {"id": workflow_id},
+        )
+    _asset(db_engine, workflow_id, "missing", metadata={}, list_position=0)
+    _asset(db_engine, workflow_id, "valid-1", list_position=1)
+    _asset(db_engine, workflow_id, "valid-2", list_position=2)
+    _worker(db_engine)
+
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 3
+    assert _asset_row(db_engine, "missing")["status"] == "failed"
+    assert _history(db_engine, "missing")[0]["text"] == "Asset hat keine Datei"
+    assert {row["asset_id"] for row in _rows(db_engine, "SELECT asset_id FROM job_assets")} == {"valid-1", "valid-2"}
+
+
+def test_skill_rank_example_and_tick_worker_limit(db_engine):
+    workflow_id = _workflow(db_engine)
+    _asset(db_engine, workflow_id, "copy-asset", current_module_id="copy", list_position=1)
+    _asset(db_engine, workflow_id, "move-asset", current_module_id="move", list_position=2)
+    _worker(db_engine, "worker-a", name="A", skills=["copy_file", "move_file"])
+    _worker(db_engine, "worker-b", name="B", skills=["move_file", "copy_file"])
+
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 2
+    assigned = {
+        row["asset_id"]: row["worker_id"]
+        for row in _rows(db_engine, "SELECT ja.asset_id, j.worker_id FROM job_assets AS ja JOIN jobs AS j ON j.id = ja.job_id")
+    }
+    assert assigned == {"copy-asset": "worker-a", "move-asset": "worker-b"}
+
+
+def test_busy_best_rank_worker_falls_back_to_next_candidate(db_engine):
+    workflow_id = _workflow(db_engine)
+    _asset(db_engine, workflow_id, "active", step_status="running")
+    _job(db_engine, workflow_id, job_id="active-job", asset_id="active", worker_id="worker-a")
+    _asset(db_engine, workflow_id, "waiting", list_position=2)
+    _worker(db_engine, "worker-a", name="A", skills=["copy_file", "move_file"])
+    _worker(db_engine, "worker-b", name="B", skills=["move_file", "copy_file"])
+
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
+    assert _rows(db_engine, "SELECT worker_id FROM jobs WHERE id <> 'active-job'")[0]["worker_id"] == "worker-b"
+
+
+def test_equal_skill_rank_prefers_worker_name(db_engine):
+    workflow_id = _workflow(db_engine)
+    _asset(db_engine, workflow_id)
+    _worker(db_engine, "z-worker", name="Zulu", skills=["copy_file"])
+    _worker(db_engine, "b-worker", name="Alpha", skills=["copy_file"])
+    _worker(db_engine, "a-worker", name="Alpha", skills=["copy_file"])
+
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
+    assert _rows(db_engine, "SELECT worker_id FROM jobs")[0]["worker_id"] == "a-worker"
+
+
+def test_asset_without_path_fails_without_available_worker(db_engine):
+    workflow_id = _workflow(db_engine)
+    _asset(db_engine, workflow_id, metadata={})
+
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
+    assert _asset_row(db_engine, "asset-1")["status"] == "failed"
+    assert _history(db_engine, "asset-1")[0]["text"] == "Asset hat keine Datei"
+    assert _rows(db_engine, "SELECT id FROM jobs") == []

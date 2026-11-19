@@ -26,7 +26,7 @@ from marathon.server.db.__main__ import main
 table_names = {
     "module_types", "workflows", "workflow_versions", "workflow_modules",
     "workflow_connections", "workers", "assets", "jobs", "job_assets",
-    "asset_history", "log_lines", "watch_modules", "watch_files", "alembic_version",
+    "asset_history", "log_lines", "watch_modules", "watch_files", "settings", "alembic_version",
 }
 
 
@@ -46,8 +46,8 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0007"
-    assert upgrade_database(db_engine) == "0007"
+    assert upgrade_database(db_engine) == "0009"
+    assert upgrade_database(db_engine) == "0009"
 
 
 def test_engine_columns_exist(db_engine):
@@ -59,7 +59,7 @@ def test_engine_columns_exist(db_engine):
         connection.execute(text("INSERT INTO jobs (id, workflow_id, module_id, status) VALUES ('job-running', 'wf-engine', 'module', 'running')"))
         connection.execute(text("INSERT INTO job_assets (job_id, asset_id) VALUES ('job-running', 'asset-engine')"))
         defaults = connection.execute(text(
-            "SELECT assets.attempts, workflows.pausing, workers.priorities, workers.client_slots, "
+            "SELECT assets.attempts, workflows.pausing, "
             "jobs.settings, job_assets.output_id, module_types.execution "
             "FROM assets CROSS JOIN workflows CROSS JOIN workers CROSS JOIN jobs "
             "CROSS JOIN job_assets CROSS JOIN module_types "
@@ -71,8 +71,6 @@ def test_engine_columns_exist(db_engine):
     assert defaults == {
         "attempts": 0,
         "pausing": False,
-        "priorities": {},
-        "client_slots": 1,
         "settings": {},
         "output_id": None,
         "execution": "none",
@@ -105,7 +103,164 @@ def test_downgrade_0005(db_engine):
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM jobs WHERE id = 'job-downgrade'")).scalar_one() == "cancelled"
     assert "attempts" not in {column["name"] for column in inspect(db_engine).get_columns("assets")}
-    assert upgrade_database(db_engine) == "0007"
+    assert upgrade_database(db_engine) == "0009"
+
+
+def _migration_config(connection):
+    from alembic.config import Config
+
+    from marathon.server.db.engine import migrations_dir
+
+    config = Config()
+    config.set_main_option("script_location", str(migrations_dir))
+    config.attributes["connection"] = connection
+    return config
+
+
+def test_worker_cleanup_migration_up_down_up(db_engine):
+    from alembic import command
+
+    statuses = {
+        "new": "stopped",
+        "locked": "stopped",
+        "busy": "ready",
+        "offline": "ready",
+        "updating": "ready",
+        "ready": "ready",
+        "stopping": "stopping",
+        "stopped": "stopped",
+    }
+    with db_engine.begin() as connection:
+        config = _migration_config(connection)
+        command.downgrade(config, "0008")
+        connection.execute(
+            text("INSERT INTO workers (id, name, status) VALUES " + ", ".join(
+                f"('worker-{status}', 'Worker {status}', '{status}')" for status in statuses
+            ))
+        )
+        command.upgrade(config, "0009")
+        migrated = connection.execute(
+            text("SELECT id, status FROM workers WHERE id LIKE 'worker-%' ORDER BY id")
+        ).mappings().all()
+        assert {row["id"]: row["status"] for row in migrated} == {
+            f"worker-{status}": expected for status, expected in statuses.items()
+        }
+
+    assert not {"priorities", "max_parallel", "client_slots"} & {
+        column["name"] for column in inspect(db_engine).get_columns("workers")
+    }
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO workers (id, name, status) VALUES ('worker-invalid', 'Invalid', 'busy')"
+            ))
+
+    with db_engine.begin() as connection:
+        config = _migration_config(connection)
+        command.downgrade(config, "0008")
+        restored_columns = {column["name"] for column in inspect(connection).get_columns("workers")}
+        assert {"priorities", "max_parallel", "client_slots"} <= restored_columns
+        assert connection.execute(
+            text("SELECT status FROM workers WHERE id = 'worker-stopped'")
+        ).scalar_one() == "locked"
+        connection.execute(text(
+            "INSERT INTO workers (id, name, status) VALUES ('worker-defaults', 'Defaults', 'ready')"
+        ))
+        defaults = connection.execute(text(
+            "SELECT priorities, max_parallel, client_slots FROM workers WHERE id = 'worker-defaults'"
+        )).mappings().one()
+        assert defaults == {"priorities": {}, "max_parallel": 1, "client_slots": 1}
+        command.upgrade(config, "head")
+
+    assert upgrade_database(db_engine) == "0009"
+
+
+def test_worker_release_migration_up_down_up(db_engine):
+    from alembic import command
+
+    finished_at = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    outcomes = {"succeeded": "result", "failed": "error", "cancelled": "cancelled", "interrupted": "interrupted"}
+    with db_engine.begin() as connection:
+        config = _migration_config(connection)
+        command.downgrade(config, "0007")
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-worker-release', 'Worker release')"))
+        connection.execute(
+            text(
+                "INSERT INTO workers (id, name, status, capabilities, priorities) "
+                "VALUES ('worker-offline', 'Offline', 'offline', CAST(:capabilities AS jsonb), CAST(:priorities AS jsonb)), "
+                "('worker-ready', 'Ready', 'ready', '[]'::jsonb, '{}'::jsonb)"
+            ),
+            {"capabilities": '["a", "b", "c", "d"]', "priorities": '{"c": "preferred", "b": "last", "d": "off"}'},
+        )
+        connection.execute(
+            text("INSERT INTO workers (id, name, status) VALUES ('worker-defaults', 'Defaults', 'ready')")
+        )
+        for status in outcomes:
+            asset_id = f"asset-{status}"
+            job_id = f"job-{status}"
+            connection.execute(
+                text("INSERT INTO assets (id, workflow_id, name, status) VALUES (:id, 'wf-worker-release', :name, 'pending')"),
+                {"id": asset_id, "name": asset_id},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO jobs (id, workflow_id, module_id, status, finished_at) "
+                    "VALUES (:id, 'wf-worker-release', 'module', :status, :finished_at)"
+                ),
+                {"id": job_id, "status": status, "finished_at": finished_at},
+            )
+            connection.execute(text("INSERT INTO job_assets (job_id, asset_id) VALUES (:job_id, :asset_id)"), {"job_id": job_id, "asset_id": asset_id})
+            if status == "succeeded":
+                extra_asset_id = "asset-succeeded-extra"
+                connection.execute(
+                    text("INSERT INTO assets (id, workflow_id, name, status) VALUES (:id, 'wf-worker-release', :name, 'pending')"),
+                    {"id": extra_asset_id, "name": extra_asset_id},
+                )
+                connection.execute(
+                    text("INSERT INTO job_assets (job_id, asset_id) VALUES (:job_id, :asset_id)"),
+                    {"job_id": job_id, "asset_id": extra_asset_id},
+                )
+
+    assert upgrade_database(db_engine) == "0009"
+    with db_engine.begin() as connection:
+        worker = connection.execute(
+            text("SELECT skills, online FROM workers WHERE id = 'worker-offline'")
+        ).mappings().one()
+        assert worker == {"skills": ["c", "a", "b"], "online": False}
+        assert connection.execute(
+            text("SELECT online FROM workers WHERE id = 'worker-ready'")
+        ).scalar_one() is True
+        assert connection.execute(
+            text("SELECT skills FROM workers WHERE id = 'worker-defaults'")
+        ).scalar_one() == []
+        assert connection.execute(
+            text("SELECT online FROM workers WHERE id = 'worker-defaults'")
+        ).scalar_one() is True
+        migrated_outcomes = connection.execute(
+            text(
+                "SELECT jobs.status, job_assets.outcome, job_assets.finished_at = jobs.finished_at AS timestamp_matches "
+                "FROM jobs JOIN job_assets ON jobs.id = job_assets.job_id ORDER BY jobs.status"
+            )
+        ).mappings().all()
+        assert {row["status"]: row["outcome"] for row in migrated_outcomes} == outcomes
+        assert sum(row["status"] == "succeeded" for row in migrated_outcomes) == 2
+        assert all(row["timestamp_matches"] for row in migrated_outcomes)
+        connection.execute(text("UPDATE workers SET status = 'stopped' WHERE id = 'worker-offline'"))
+        connection.execute(
+            text("INSERT INTO log_lines (workflow_id, asset_id, level, text) VALUES ('wf-worker-release', 'asset-saved', 'info', 'test')")
+        )
+        config = _migration_config(connection)
+        command.downgrade(config, "0007")
+        assert connection.execute(
+            text("SELECT status FROM workers WHERE id = 'worker-offline'")
+        ).scalar_one() == "locked"
+
+    assert "settings" not in inspect(db_engine).get_table_names()
+    assert not {"skills", "online"} & {column["name"] for column in inspect(db_engine).get_columns("workers")}
+    assert not {"outcome", "finished_at", "error"} & {column["name"] for column in inspect(db_engine).get_columns("job_assets")}
+    assert "asset_id" not in {column["name"] for column in inspect(db_engine).get_columns("log_lines")}
+    assert upgrade_database(db_engine) == "0009"
+    assert "settings" in inspect(db_engine).get_table_names()
 
 
 def test_ensure_database_creates_then_reuses(db_config):
@@ -189,7 +344,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0007" in captured.out
+    assert "Revision 0009" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 
@@ -271,7 +426,7 @@ def test_schedule_waiting_migration_up_down_up_preserves_data_rules(db_engine):
             ("legacy-waiting", False, False),
         ]
         command.upgrade(config, "head")
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0007"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0009"
 
 
 def test_schedule_constraints(db_engine):

@@ -40,7 +40,7 @@ export function ModuleActivityPanel({ workflow_id, data, on_close }: { workflow_
   const worker_columns = useMemo<Column<Worker>[]>(() => [
     { key: 'name', label: 'Name' },
     { key: 'status', label: 'Status', render: row => <StatusBadge meta={worker_status_meta[shown_worker_status(row, connected)]} /> },
-    { key: 'running_jobs', label: 'Jobs', render: row => `${row.running_jobs} / ${row.max_parallel}` },
+    { key: 'running_jobs', label: 'Jobs', render: row => row.running_jobs },
     { key: 'client_version', label: 'Version' },
   ], [connected])
   return (

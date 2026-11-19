@@ -19,7 +19,16 @@ def _job(source, settings, stop=None):
 def test_module_catalog_entry():
     assert MODULE["has_input"] is True
     assert [output["id"] for output in MODULE["outputs"]] == ["success", "error"]
-    assert [setting["key"] for setting in MODULE["settings"]] == ["target", "checksum", "numbered"]
+    assert [setting["key"] for setting in MODULE["settings"]] == ["target", "checksum", "numbered", "parallel"]
+    assert MODULE["settings"][-1] == {
+        "key": "parallel",
+        "label": "Parallele Verarbeitung",
+        "type": "number",
+        "default": 1,
+        "min": 1,
+        "max": 16,
+        "help": "So viele Assets bearbeitet ein Job gleichzeitig, jedes in einem eigenen Strom",
+    }
     assert MODULE["settings"][1]["options"] == ["Keine", "MD5", "SHA-256"]
 
 
@@ -32,6 +41,23 @@ def test_validate_settings(tmp_path):
     assert validate_settings({"target": str(tmp_path), "numbered": "ja"}) == {
         "numbered": "Ja oder Nein erwartet",
     }
+
+@pytest.mark.parametrize("parallel", [1, 16])
+def test_validate_parallel_setting_accepts_bounds(tmp_path, parallel):
+    assert validate_settings({"target": str(tmp_path), "parallel": parallel}) == {}
+
+
+@pytest.mark.parametrize("parallel", [0, 17, 2.5, True, "2"])
+def test_validate_parallel_setting_rejects_invalid_values(tmp_path, parallel):
+    assert validate_settings({"target": str(tmp_path), "parallel": parallel}) == {
+        "parallel": "Ganze Zahl von 1 bis 16",
+    }
+
+
+def test_run_invalid_parallel_raises_labeled_value_error(tmp_path):
+    source = tmp_path / "a.mxf"
+    with pytest.raises(ValueError, match="Parallele Verarbeitung: Ganze Zahl von 1 bis 16"):
+        run(_job(source, {"target": str(tmp_path), "parallel": 0}))
 
 
 def test_run_copies_without_checksum(tmp_path):

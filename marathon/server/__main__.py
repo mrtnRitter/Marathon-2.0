@@ -17,8 +17,17 @@ from marathon.server.worker_supervisor import server_url
 
 
 # FUNC
+def _begin_shutdown(app: FastAPI) -> None:
+    """Signal pending worker polls and close live streams."""
+    app.state.shutdown_event.set()
+    try:
+        app.state.live_hub.close_streams()
+    except Exception:
+        pass
+
+
 def serve(app: FastAPI, host: str, port: int) -> None:
-    """Run Uvicorn while closing live streams as soon as shutdown starts."""
+    """Run Uvicorn while signaling shutdown as soon as it starts."""
     config = uvicorn.Config(
         app,
         host=host,
@@ -26,7 +35,7 @@ def serve(app: FastAPI, host: str, port: int) -> None:
         log_level="warning",
         timeout_graceful_shutdown=5,
     )
-    _LiveServer(config, app.state.live_hub.close_streams).run()
+    _LiveServer(config, lambda: _begin_shutdown(app)).run()
 
 
 class _LiveServer(uvicorn.Server):

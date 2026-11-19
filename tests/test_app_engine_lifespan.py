@@ -18,6 +18,19 @@ def _static_dir(tmp_path: Path) -> Path:
 
 
 # TESTS
+def test_begin_shutdown_sets_event(monkeypatch):
+    from marathon.server.__main__ import _begin_shutdown
+
+    app = server_app.create_app()
+    closed = []
+    monkeypatch.setattr(app.state.live_hub, "close_streams", lambda: closed.append(True))
+
+    _begin_shutdown(app)
+
+    assert app.state.shutdown_event.is_set()
+    assert closed == [True]
+
+
 def test_lifespan_starts_and_stops_engine_and_server_worker(monkeypatch, db_engine, tmp_path):
     events = []
     engine_instances = []

@@ -125,7 +125,7 @@ def _running_server_and_worker(db_engine, tmp_path, resolve_module=None):
     if resolve_module is not None:
         runtime_options["resolve_module"] = resolve_module
     runtime = WorkerRuntime(
-        url, "e2e", "server-worker", "Server", 2, worker_capabilities(), **runtime_options
+        url, "e2e", "server-worker", "Server", worker_capabilities(), **runtime_options
     )
 
     def run_worker() -> None:
@@ -145,6 +145,9 @@ def _running_server_and_worker(db_engine, tmp_path, resolve_module=None):
             10,
             "Worker hat sich nicht am Server angemeldet",
         )
+        started = httpx.post(f"{url}/api/v1/workers/server-worker/start", timeout=3)
+        assert started.status_code == 200, started.text
+        assert started.json()["status"] == "ready"
         yield url
     finally:
         worker_stop.set()
@@ -284,7 +287,7 @@ def test_wait_module_end_to_end(db_engine, tmp_path):
             5,
             "Warte-Workflow wurde nicht rechtzeitig abgeschlossen",
         )
-        assert _job_statuses(db_engine, workflow_id) == []
+        assert _job_statuses(db_engine, workflow_id) == ["succeeded"]
 
 
 def _job_status_for_asset(db_engine, asset_id: str) -> str | None:

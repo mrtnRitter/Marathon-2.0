@@ -1,6 +1,6 @@
 // Single data access point for all pages; talks to the server API.
 import { notify } from '../components/Toast'
-import type { Asset, AssetDetail, AssetStatus, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput } from './types'
+import type { Asset, AssetDetail, AssetStatus, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Settings, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput } from './types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -86,11 +86,16 @@ export const get_workers = (): Promise<Worker[]> => request<Worker[]>('/workers'
 export const update_worker = (id: string, input: WorkerInput): Promise<Worker> =>
   request<Worker>(`/workers/${encodeURIComponent(id)}`, { method: 'PUT', body: input }).then(data => data!)
 
-export const approve_worker = (id: string): Promise<Worker> =>
-  request<Worker>(`/workers/${encodeURIComponent(id)}/approve`, { method: 'POST' }).then(data => data!)
+export const start_worker = (id: string): Promise<Worker> =>
+  request<Worker>(`/workers/${encodeURIComponent(id)}/start`, { method: 'POST' }).then(data => data!)
 
-export const lock_worker = (id: string): Promise<Worker> =>
-  request<Worker>(`/workers/${encodeURIComponent(id)}/lock`, { method: 'POST' }).then(data => data!)
+export const stop_worker = (id: string): Promise<Worker> =>
+  request<Worker>(`/workers/${encodeURIComponent(id)}/stop`, { method: 'POST' }).then(data => data!)
+
+export const get_settings = (): Promise<Settings> => request<Settings>('/settings').then(data => data!)
+
+export const save_settings = (input: Settings): Promise<Settings> =>
+  request<Settings>('/settings', { method: 'PUT', body: input }).then(data => data!)
 
 export const get_dashboard = (): Promise<DashboardData> => request<DashboardData>('/dashboard').then(data => data!)
 

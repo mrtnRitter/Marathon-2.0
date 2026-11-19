@@ -58,8 +58,8 @@ def insert_records(engine: Engine, now: datetime) -> None:
         {"workflow_id": "wf-b", "version": 1, "source_module_id": "m1", "source_output_id": "success", "target_module_id": "m2"},
     ]
     workers = [
-        {"id": "w1", "name": "WORKER-01", "status": "busy", "ip_address": "10.0.0.21", "capabilities": ["test"], "max_parallel": 1, "client_version": "2.0.0", "last_seen": now, "created_at": ago(1439)},
-        {"id": "w2", "name": "WORKER-02", "status": "ready", "ip_address": None, "capabilities": [], "max_parallel": 1, "client_version": "", "last_seen": None, "created_at": ago(1438)},
+        {"id": "w1", "name": "WORKER-01", "status": "ready", "ip_address": "10.0.0.21", "capabilities": ["test"], "client_version": "2.0.0", "last_seen": now, "created_at": ago(1439)},
+        {"id": "w2", "name": "WORKER-02", "status": "ready", "ip_address": None, "capabilities": [], "client_version": "", "last_seen": None, "created_at": ago(1438)},
     ]
     assets = [
         {"id": "a-done", "workflow_id": "wf-a", "name": "a-done", "status": "done", "current_module_id": "m3", "step_status": None, "list_position": 1, "metadata": {}, "created_at": ago(90), "updated_at": ago(1)},
@@ -123,8 +123,8 @@ def insert_records(engine: Engine, now: datetime) -> None:
             connections, {},
         ),
         (
-            "INSERT INTO workers (id, name, status, ip_address, capabilities, max_parallel, client_version, last_seen, created_at) "
-            "VALUES (:id, :name, :status, :ip_address, :capabilities, :max_parallel, :client_version, :last_seen, :created_at)",
+            "INSERT INTO workers (id, name, status, ip_address, capabilities, client_version, last_seen, created_at) "
+            "VALUES (:id, :name, :status, :ip_address, :capabilities, :client_version, :last_seen, :created_at)",
             workers, {"capabilities": JSONB()},
         ),
         (

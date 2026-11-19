@@ -21,7 +21,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--server", required=True)
     parser.add_argument("--worker-id", required=True)
     parser.add_argument("--name", required=True)
-    parser.add_argument("--max-parallel", type=int, required=True)
     parser.add_argument("--exit-on-stdin-eof", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -60,7 +59,6 @@ def main(argv: list[str] | None = None) -> int:
             token,
             args.worker_id,
             args.name,
-            args.max_parallel,
             worker_capabilities(),
         )
         return runtime.run(stop)

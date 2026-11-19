@@ -12,7 +12,7 @@ import { set_workflows_active, use_pausing_notice } from '../lib/workflows'
 import type { Worker, Workflow } from '../data/types'
 import { use_data } from '../data/use_data'
 import { use_server_connected } from '../data/use_connection'
-import { workflow_state_meta, asset_status_meta, asset_statuses, is_online, online_meta } from '../theme/status'
+import { workflow_state_meta, asset_status_meta, asset_statuses, online_meta } from '../theme/status'
 import './DashboardPage.css'
 
 function WorkflowRow({ workflow, on_changed }: { workflow: Workflow; on_changed: () => void }) {
@@ -53,7 +53,7 @@ export function DashboardPage() {
   const { data, reload } = use_data(get_dashboard, [], { live: ['workflows', 'assets', 'jobs', 'workers'] })
   use_pausing_notice(data?.workflows)
   const worker_columns = useMemo<Column<Worker>[]>(() => [
-    { key: 'status', label: 'Status', render: row => <StatusBadge meta={online_meta(is_online(row, connected))} />, sort_value: row => Number(is_online(row, connected)) },
+    { key: 'status', label: 'Status', render: row => <StatusBadge meta={online_meta(connected && row.online)} />, sort_value: row => Number(connected && row.online) },
     { key: 'name', label: 'Name', render: row => <strong>{row.name}</strong> },
     { key: 'ip_address', label: 'IP-Adresse', render: row => <span className={row.ip_address === null ? 'dim' : undefined}>{row.ip_address ?? '–'}</span> },
   ], [connected])

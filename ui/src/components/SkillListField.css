@@ -1,0 +1,14 @@
+.skill-list-field { min-width: 0; }
+.skill-list-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.skill-list-table th { padding: 0 var(--space-1) var(--space-1); text-align: left; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 500; }
+.skill-list-table th:first-child { width: 48px; }
+.skill-list-table th:last-child { width: 112px; }
+.skill-list-table td { padding: var(--space-1); border-top: 1px solid var(--border); }
+.skill-list-number { color: var(--text-muted); text-align: center; }
+.skill-list-actions { display: flex; justify-content: flex-end; gap: 2px; }
+.skill-list-icon-button { display: inline-flex; align-items: center; justify-content: center; padding: 5px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; }
+.skill-list-icon-button:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
+.skill-list-icon-button:disabled { opacity: 0.4; cursor: default; }
+.skill-list-empty { padding: var(--space-2) 0; color: var(--text-dim); font-size: var(--font-size-sm); }
+.skill-list-add { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+.skill-list-add .input { min-width: 0; flex: 1; }

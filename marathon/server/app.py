@@ -5,6 +5,7 @@ from pathlib import Path
 from collections.abc import AsyncIterator
 import logging
 import os
+from threading import Event
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -78,6 +79,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 _logger.warning("Server-Worker konnte nicht gestartet werden (%s)", type(error).__name__)
         yield
     finally:
+        app.state.shutdown_event.set()
         try:
             app.state.live_hub.close_streams()
         except Exception:
@@ -126,6 +128,7 @@ def create_app(
         openapi_url=None,
         lifespan=_lifespan,
     )
+    app.state.shutdown_event = Event()
     app.state.engine = engine
     app.state.engine_owned = engine is None
     app.state.scheduler_interval_s = scheduler_interval_s

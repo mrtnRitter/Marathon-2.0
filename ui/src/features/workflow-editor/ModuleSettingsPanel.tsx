@@ -32,7 +32,7 @@ export function ModuleSettingsForm({ data, on_change, read_only = false, width }
   }
 
   return (
-    <>
+    <div className={`module-settings-form${read_only ? ' read-only' : ''}`}>
       <p className="muted">{data.module_type.description}</p>
       <FormSection title="Allgemein">
         <div onBlur={read_only ? undefined : () => {
@@ -98,7 +98,7 @@ export function ModuleSettingsForm({ data, on_change, read_only = false, width }
           </div>
         ))}
       </FormSection>
-    </>
+    </div>
   )
 }
 

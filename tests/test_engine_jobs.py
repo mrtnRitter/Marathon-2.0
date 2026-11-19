@@ -105,13 +105,13 @@ def _asset(
 
 def _worker(db_engine, worker_id: str = "worker-1", name: str = "GPU") -> None:
     statement = text(
-        "INSERT INTO workers (id, name, status, capabilities, priorities, max_parallel, client_slots) "
-        "VALUES (:id, :name, 'ready', :capabilities, :priorities, 2, 2) ON CONFLICT (id) DO NOTHING"
-    ).bindparams(bindparam("capabilities", type_=JSONB), bindparam("priorities", type_=JSONB))
+        "INSERT INTO workers (id, name, status, capabilities) "
+        "VALUES (:id, :name, 'ready', :capabilities) ON CONFLICT (id) DO NOTHING"
+    ).bindparams(bindparam("capabilities", type_=JSONB))
     with db_engine.begin() as connection:
         connection.execute(
             statement,
-            {"id": worker_id, "name": name, "capabilities": ["copy_file", "move_file"], "priorities": {}},
+            {"id": worker_id, "name": name, "capabilities": ["copy_file", "move_file"]},
         )
 
 
@@ -524,3 +524,283 @@ def test_graph_impact(db_engine):
         edge_cases = graph_impact(connection, workflow_id, ["watch", "move"], [("watch", "success", "move")])
     assert edge_cases["outcomes"] == {"rerouted": 1, "done": 0, "failed": 2}
     assert edge_cases["assets"] == sum(edge_cases["outcomes"].values()) == 3
+
+
+# RELEASE WORKER TESTS
+
+def _create_batch(db_engine, asset_ids: list[str], *, attempts: list[int] | None = None, module_id: str = "copy"):
+    from marathon.server.engine import jobs as job_ops
+
+    workflow_id = _workflow(db_engine)
+    attempts = attempts or [0] * len(asset_ids)
+    for index, (asset_id, attempt) in enumerate(zip(asset_ids, attempts, strict=True), start=1):
+        _asset(db_engine, workflow_id, asset_id, current_module_id=module_id, attempts=attempt, list_position=index)
+    _worker(db_engine)
+    with db_engine.begin() as connection:
+        graph = load_graph(connection, workflow_id)
+        job_id = job_ops.create_batch_job(connection, asset_ids, graph, "worker-1", NOW, 5)
+    return workflow_id, job_id
+
+
+def _start_batch_job(db_engine, job_id: str) -> None:
+    from marathon.server.engine import jobs as job_ops
+
+    with db_engine.begin() as connection:
+        assert job_ops.start_job(connection, job_id, "worker-1", NOW) is True
+
+
+def _create_wait_job(db_engine, asset_id: str = "wait-asset"):
+    from marathon.server.engine import jobs as job_ops
+
+    workflow_id = _workflow(
+        db_engine,
+        modules=[_module("watch", "watchfolder"), _module("wait", "wait"), _module("move", "move_file")],
+        connections=[_connection("watch", "success", "wait"), _connection("wait", "success", "move")],
+    )
+    _asset(db_engine, workflow_id, asset_id, current_module_id="wait")
+    with db_engine.begin() as connection:
+        graph = load_graph(connection, workflow_id)
+        job_id = job_ops.create_engine_job(connection, asset_id, graph, NOW)
+    return workflow_id, job_id
+
+
+def test_create_batch_job_three_assets_tracks_attempts_and_assignment_logs(db_engine):
+    workflow_id, job_id = _create_batch(db_engine, ["batch-a", "batch-b", "batch-c"], attempts=[1, 4, 2])
+    job = _job_row(db_engine, job_id)
+    assert job["attempt"] == 5
+    with db_engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT asset_id FROM job_assets WHERE job_id = :job_id ORDER BY asset_id"), {"job_id": job_id}
+        ).scalars().all()
+        logs = connection.execute(
+            text("SELECT asset_id, text FROM log_lines WHERE job_id = :job_id ORDER BY id"), {"job_id": job_id}
+        ).mappings().all()
+    assert rows == ["batch-a", "batch-b", "batch-c"]
+    assert [(row["asset_id"], row["text"]) for row in logs] == [
+        (asset_id, "Zugeteilt an GPU") for asset_id in rows
+    ]
+    assert _job_row(db_engine, job_id)["workflow_id"] == workflow_id
+
+
+@pytest.mark.parametrize(
+    ("outputs", "job_output"),
+    [(["success", "success", "success"], "success"), (["success", None, "success"], None)],
+)
+def test_asset_results_track_progress_and_common_output(db_engine, outputs, job_output):
+    from marathon.server.engine import jobs as job_ops
+
+    _workflow_id, job_id = _create_batch(db_engine, ["result-a", "result-b", "result-c"])
+    _start_batch_job(db_engine, job_id)
+    for index, (asset_id, output) in enumerate(zip(["result-a", "result-b", "result-c"], outputs, strict=True)):
+        with db_engine.begin() as connection:
+            assert job_ops.apply_asset_result(
+                connection, job_id, asset_id, "worker-1", {"outcome": "result", "output": output}, NOW, 3
+            ) is True
+        job = _job_row(db_engine, job_id)
+        if index == 0:
+            assert (job["status"], job["progress"]) == ("running", 33)
+    job = _job_row(db_engine, job_id)
+    assert (job["status"], job["progress"], job["output_id"]) == ("succeeded", 100, job_output)
+    with db_engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT outcome, finished_at FROM job_assets WHERE job_id = :job_id"), {"job_id": job_id}
+        ).mappings().all()
+    assert len(rows) == 3 and all(row["outcome"] == "result" and row["finished_at"] is not None for row in rows)
+
+
+def test_mixed_asset_error_and_result_fails_job_with_first_error(db_engine):
+    from marathon.server.engine import jobs as job_ops
+
+    _workflow_id, job_id = _create_batch(db_engine, ["mixed-a", "mixed-b"])
+    _start_batch_job(db_engine, job_id)
+    with db_engine.begin() as connection:
+        assert job_ops.apply_asset_result(
+            connection, job_id, "mixed-a", "worker-1", {"outcome": "error", "error": "Erster Fehler"}, NOW, 3
+        ) is True
+    assert _job_row(db_engine, job_id)["status"] == "running"
+    with db_engine.begin() as connection:
+        assert job_ops.apply_asset_result(
+            connection, job_id, "mixed-b", "worker-1", {"outcome": "result", "output": "success"}, NOW, 3
+        ) is True
+    job = _job_row(db_engine, job_id)
+    assert (job["status"], job["error"]) == ("failed", "Erster Fehler")
+
+
+def test_late_result_for_finished_asset_is_rejected_and_logged(db_engine):
+    from marathon.server.engine import jobs as job_ops
+
+    workflow_id, job_id = _create_batch(db_engine, ["late-a", "late-b"])
+    _start_batch_job(db_engine, job_id)
+    result = {"outcome": "result", "output": "success"}
+    with db_engine.begin() as connection:
+        assert job_ops.apply_asset_result(connection, job_id, "late-a", "worker-1", result, NOW, 3) is True
+    with db_engine.begin() as connection:
+        assert job_ops.apply_asset_result(connection, job_id, "late-a", "worker-1", result, NOW, 3) is False
+    with db_engine.connect() as connection:
+        log = connection.execute(
+            text("SELECT asset_id, text FROM log_lines WHERE job_id = :job_id ORDER BY id DESC LIMIT 1"),
+            {"job_id": job_id},
+        ).mappings().one()
+    assert (log["asset_id"], log["text"]) == ("late-a", "Spätes Ergebnis verworfen")
+    assert _job_row(db_engine, job_id)["progress"] == 50
+    assert _asset_row(db_engine, "late-a")["current_module_id"] == "move"
+    assert workflow_id == _asset_row(db_engine, "late-a")["workflow_id"]
+
+
+def test_asset_result_for_asset_outside_job_raises_job_not_found(db_engine):
+    from marathon.server.engine import jobs as job_ops
+
+    _workflow_id, job_id = _create_batch(db_engine, ["member-a"])
+    with db_engine.begin() as connection, pytest.raises(JobNotFound):
+        job_ops.apply_asset_result(
+            connection, job_id, "not-a-member", "worker-1", {"outcome": "result", "output": "success"}, NOW, 3
+        )
+
+
+def test_cancelling_batch_finishes_and_returns_each_cancelled_asset(db_engine):
+    from marathon.server.engine import jobs as job_ops
+
+    _workflow_id, job_id = _create_batch(db_engine, ["cancel-a", "cancel-b"])
+    _start_batch_job(db_engine, job_id)
+    with db_engine.begin() as connection:
+        job_ops.cancel_job(connection, job_id, "Workflow gestoppt", NOW)
+    assert _job_row(db_engine, job_id)["status"] == "cancelling"
+    for asset_id in ("cancel-a", "cancel-b"):
+        with db_engine.begin() as connection:
+            assert job_ops.apply_asset_result(
+                connection, job_id, asset_id, "worker-1", {"outcome": "cancelled"}, NOW, 3
+            ) is True
+    job = _job_row(db_engine, job_id)
+    assert job["status"] == "cancelled"
+    with db_engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT outcome, finished_at FROM job_assets WHERE job_id = :job_id"), {"job_id": job_id}
+        ).mappings().all()
+    assert len(rows) == 2 and all(row["outcome"] == "cancelled" and row["finished_at"] is not None for row in rows)
+    assert all(_asset_row(db_engine, asset_id)["step_status"] == "waiting" for asset_id in ("cancel-a", "cancel-b"))
+
+
+def test_interrupt_batch_only_affects_open_assets_and_rejects_late_results(db_engine):
+    from marathon.server.engine import jobs as job_ops
+
+    _workflow_id, job_id = _create_batch(db_engine, ["interrupt-a", "interrupt-b", "interrupt-c"])
+    _start_batch_job(db_engine, job_id)
+    with db_engine.begin() as connection:
+        assert job_ops.apply_asset_result(
+            connection, job_id, "interrupt-a", "worker-1", {"outcome": "result", "output": "success"}, NOW, 3
+        ) is True
+    with db_engine.begin() as connection:
+        job_ops.interrupt_job(connection, job_id, "Worker antwortet nicht", NOW, 3)
+    assert _job_row(db_engine, job_id)["status"] == "interrupted"
+    assert _asset_row(db_engine, "interrupt-a")["current_module_id"] == "move"
+    assert _asset_row(db_engine, "interrupt-a")["attempts"] == 0
+    with db_engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT asset_id, outcome, finished_at FROM job_assets WHERE job_id = :job_id ORDER BY asset_id"),
+            {"job_id": job_id},
+        ).mappings().all()
+    assert [(row["asset_id"], row["outcome"]) for row in rows] == [
+        ("interrupt-a", "result"), ("interrupt-b", "interrupted"), ("interrupt-c", "interrupted")
+    ]
+    assert all(row["finished_at"] is not None for row in rows)
+    with db_engine.begin() as connection:
+        assert job_ops.apply_asset_result(
+            connection, job_id, "interrupt-b", "worker-1", {"outcome": "result", "output": "success"}, NOW, 3
+        ) is False
+    assert _asset_row(db_engine, "interrupt-b")["current_module_id"] == "copy"
+
+
+def test_drop_unstarted_batch_finishes_and_restores_all_assets(db_engine):
+    from marathon.server.engine import jobs as job_ops
+
+    _workflow_id, job_id = _create_batch(db_engine, ["drop-a", "drop-b"])
+    with db_engine.begin() as connection:
+        job_ops.drop_unstarted_job(connection, job_id, NOW)
+    assert _job_row(db_engine, job_id)["status"] == "cancelled"
+    with db_engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT outcome, finished_at FROM job_assets WHERE job_id = :job_id"), {"job_id": job_id}
+        ).mappings().all()
+    assert len(rows) == 2 and all(row["outcome"] == "cancelled" and row["finished_at"] is not None for row in rows)
+    assert all(_asset_row(db_engine, asset_id)["step_status"] == "waiting" for asset_id in ("drop-a", "drop-b"))
+
+
+def test_engine_wait_job_applies_result_and_asset_logs(db_engine):
+    from marathon.server.engine import jobs as job_ops
+
+    workflow_id, job_id = _create_wait_job(db_engine)
+    with db_engine.connect() as connection:
+        job = connection.execute(text("SELECT worker_id, status FROM jobs WHERE id = :id"), {"id": job_id}).mappings().one()
+        start_log = connection.execute(
+            text("SELECT asset_id, text FROM log_lines WHERE job_id = :id ORDER BY id"), {"id": job_id}
+        ).mappings().one()
+    assert (job["worker_id"], job["status"]) == (None, "running")
+    assert (start_log["asset_id"], start_log["text"]) == ("wait-asset", "Wartezeit gestartet: 60 s")
+    with db_engine.begin() as connection:
+        assert job_ops.apply_asset_result(
+            connection,
+            job_id,
+            "wait-asset",
+            None,
+            {"outcome": "result", "output": "success", "log": ["Wartezeit abgelaufen"]},
+            NOW + timedelta(seconds=60),
+            3,
+        ) is True
+    assert _job_row(db_engine, job_id)["status"] == "succeeded"
+    with db_engine.connect() as connection:
+        logs = connection.execute(
+            text("SELECT asset_id, text FROM log_lines WHERE job_id = :id ORDER BY id"), {"id": job_id}
+        ).mappings().all()
+        asset_job = connection.execute(
+            text("SELECT outcome, finished_at FROM job_assets WHERE job_id = :id"), {"id": job_id}
+        ).mappings().one()
+    assert [(row["asset_id"], row["text"]) for row in logs] == [
+        ("wait-asset", "Wartezeit gestartet: 60 s"),
+        ("wait-asset", "Wartezeit abgelaufen"),
+        ("wait-asset", "Ergebnis: Erfolg"),
+    ]
+    assert asset_job["outcome"] == "result" and asset_job["finished_at"] is not None
+    assert _asset_row(db_engine, "wait-asset")["current_module_id"] == "move"
+    assert _asset_row(db_engine, "wait-asset")["workflow_id"] == workflow_id
+
+
+@pytest.mark.parametrize("action", ["cancel", "pause"])
+def test_engine_job_cancel_and_pause_are_immediate_and_clear_wait(db_engine, action):
+    from marathon.server.engine import jobs as job_ops
+
+    workflow_id, job_id = _create_wait_job(db_engine, f"wait-{action}")
+    with db_engine.begin() as connection:
+        if action == "cancel":
+            job_ops.cancel_job(connection, job_id, "Workflow gestoppt", NOW)
+        else:
+            assert job_ops.request_pause(connection, workflow_id, NOW) is True
+    assert _job_row(db_engine, job_id)["status"] == "cancelled"
+    with db_engine.connect() as connection:
+        asset_job = connection.execute(
+            text("SELECT outcome, finished_at FROM job_assets WHERE job_id = :id"), {"id": job_id}
+        ).mappings().one()
+    assert asset_job["outcome"] == "cancelled" and asset_job["finished_at"] is not None
+    asset = _asset_row(db_engine, f"wait-{action}")
+    assert asset["wait_until"] is None and asset["step_status"] == "waiting"
+
+
+def test_engine_job_removed_module_is_completed_once(db_engine):
+    from marathon.server.engine import jobs as job_ops
+
+    workflow_id, job_id = _create_wait_job(db_engine, "wait-removed")
+    with db_engine.begin() as connection:
+        save_graph(
+            connection,
+            workflow_id,
+            2,
+            [_module("watch", "watchfolder"), _module("move", "move_file")],
+            [_connection("watch", "success", "move")],
+        )
+        job_ops.remove_missing_modules(connection, workflow_id, NOW)
+    assert _job_row(db_engine, job_id)["status"] == "cancelled"
+    with db_engine.connect() as connection:
+        asset_job = connection.execute(
+            text("SELECT outcome, finished_at FROM job_assets WHERE job_id = :id"), {"id": job_id}
+        ).mappings().one()
+    assert asset_job["outcome"] == "cancelled" and asset_job["finished_at"] is not None
+    assert _asset_row(db_engine, "wait-removed")["wait_until"] is None

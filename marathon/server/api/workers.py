@@ -1,5 +1,7 @@
 """Worker management endpoints."""
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.engine import Connection, Engine
@@ -7,9 +9,10 @@ from sqlalchemy.engine import Connection, Engine
 from marathon.server.api.deps import get_engine
 from marathon.server.db.queries import get_worker
 from marathon.server.db.worker_writes import (
+    WorkerConflict,
     WorkerValidationError,
-    approve_worker,
-    lock_worker,
+    start_worker,
+    stop_worker,
     update_worker,
 )
 
@@ -18,8 +21,7 @@ class WorkerInput(BaseModel):
     """Editable worker configuration."""
 
     name: str
-    max_parallel: int
-    priorities: dict[str, str]
+    skills: list[str]
 
 
 router = APIRouter(tags=["workers"])
@@ -39,33 +41,36 @@ def put_worker(
     payload: WorkerInput,
     engine: Engine = Depends(get_engine),
 ) -> dict:
-    """Replace a worker's name, concurrency limit, and module priorities."""
+    """Replace a worker's name and ordered skills."""
     try:
         with engine.begin() as connection:
-            changed = update_worker(
-                connection, worker_id, payload.name, payload.max_parallel, payload.priorities
-            )
+            changed = update_worker(connection, worker_id, payload.name, payload.skills)
             worker = _worker_response(connection, changed, worker_id)
     except WorkerValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return worker
 
 
-@router.post("/workers/{worker_id}/approve")
-def post_worker_approve(
+@router.post("/workers/{worker_id}/start")
+def post_worker_start(
     worker_id: str,
     engine: Engine = Depends(get_engine),
 ) -> dict:
-    """Approve a worker by setting it to ready."""
-    with engine.begin() as connection:
-        return _worker_response(connection, approve_worker(connection, worker_id), worker_id)
+    """Start a stopped worker."""
+    try:
+        with engine.begin() as connection:
+            worker = _worker_response(connection, start_worker(connection, worker_id), worker_id)
+    except WorkerConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return worker
 
 
-@router.post("/workers/{worker_id}/lock")
-def post_worker_lock(
+@router.post("/workers/{worker_id}/stop")
+def post_worker_stop(
     worker_id: str,
     engine: Engine = Depends(get_engine),
 ) -> dict:
-    """Lock a worker so it receives no new jobs."""
+    """Stop a worker after requesting cancellation of its active jobs."""
     with engine.begin() as connection:
-        return _worker_response(connection, lock_worker(connection, worker_id), worker_id)
+        changed = stop_worker(connection, worker_id, datetime.now(timezone.utc))
+        return _worker_response(connection, changed, worker_id)

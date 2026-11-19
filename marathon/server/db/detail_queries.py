@@ -28,8 +28,9 @@ def get_graph(connection: Connection, workflow_id: str) -> dict[str, Any] | None
         "AND asset.current_module_id = module.id AND asset.step_status = 'running') AS running, "
         "(SELECT COUNT(*) FROM assets AS asset WHERE asset.workflow_id = module.workflow_id "
         "AND asset.current_module_id = module.id AND asset.status = 'failed') AS failed, "
-        "(SELECT COUNT(*) FROM jobs AS job WHERE job.workflow_id = module.workflow_id "
-        "AND job.module_id = module.id AND job.status = 'succeeded') AS done "
+        "(SELECT COUNT(*) FROM job_assets AS job_asset JOIN jobs AS job ON job.id = job_asset.job_id "
+        "WHERE job.workflow_id = module.workflow_id AND job.module_id = module.id "
+        "AND job_asset.outcome = 'result' AND job_asset.output_id IS DISTINCT FROM 'error') AS done "
         "FROM workflow_modules AS module WHERE module.workflow_id = :workflow_id "
         "AND module.version = :version ORDER BY module.id"
     ), {"workflow_id": workflow_id, "version": workflow["version"]}).mappings()
@@ -102,8 +103,14 @@ def get_module_activity(
             worker_ids.add(worker_id)
     workers = [worker for worker in list_workers(connection) if worker["id"] in worker_ids]
     logs = connection.execute(text(
-        "SELECT ts, level, text FROM log_lines WHERE workflow_id = :workflow_id "
-        "AND module_id = :module_id AND job_id IS NULL ORDER BY ts, id"
+        "SELECT ts, level, text, asset, worker FROM ("
+        "SELECT log.id, log.ts, log.level, log.text, asset.name AS asset, worker.name AS worker "
+        "FROM log_lines AS log LEFT JOIN assets AS asset ON asset.id = log.asset_id "
+        "LEFT JOIN jobs AS job ON job.id = log.job_id "
+        "LEFT JOIN workers AS worker ON worker.id = job.worker_id "
+        "WHERE log.workflow_id = :workflow_id AND log.module_id = :module_id "
+        "ORDER BY log.ts DESC, log.id DESC LIMIT 500"
+        ") AS recent_logs ORDER BY ts, id"
     ), {"workflow_id": workflow_id, "module_id": module_id}).mappings()
     return {"jobs": jobs, "assets": assets, "workers": workers, "logs": [dict(row) for row in logs]}
 
@@ -153,7 +160,7 @@ def get_asset_detail(connection: Connection, asset_id: str, now: datetime | None
 
     timeline_rows = connection.execute(text(
         "SELECT job.module_id, COALESCE(module.name, job.module_id) AS module_name, job.id AS job_id, "
-        "job.status, job.attempt, job.worker_id, worker.name AS worker, job.output_id, module_type.outputs, "
+        "job.status, job.attempt, job.worker_id, worker.name AS worker, job_asset.output_id, module_type.outputs, "
         "job.created_at, job.started_at, job.finished_at "
         "FROM job_assets AS job_asset JOIN jobs AS job ON job.id = job_asset.job_id "
         "JOIN assets AS asset ON asset.id = job_asset.asset_id "

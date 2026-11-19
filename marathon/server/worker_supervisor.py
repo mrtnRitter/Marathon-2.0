@@ -39,8 +39,6 @@ def server_worker_command(url: str, config: ServerWorkerConfig) -> list[str]:
         "server-worker",
         "--name",
         "Server-Worker",
-        "--max-parallel",
-        str(config.max_parallel),
         "--exit-on-stdin-eof",
     ]
     return command

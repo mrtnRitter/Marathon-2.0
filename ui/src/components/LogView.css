@@ -8,6 +8,11 @@
   line-height: 1.7;
 }
 .log-line { display: flex; gap: var(--space-3); white-space: pre-wrap; }
+.log-line-context {
+  display: grid;
+  grid-template-columns: max-content 5ch minmax(6ch, 1fr) minmax(8ch, 1fr) minmax(0, 3fr);
+}
+.log-asset, .log-worker { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-ts { color: var(--text-dim); }
 .log-level { font-weight: 700; }
 .log-cursor { color: var(--accent); animation: blink 1s steps(2) infinite; }

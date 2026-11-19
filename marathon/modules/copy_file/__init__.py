@@ -11,7 +11,7 @@ from marathon.modules.watchfolder.rules import validate_path
 
 
 # CONFIG
-defaults = {"target": "", "checksum": "Keine", "numbered": False}
+defaults = {"target": "", "checksum": "Keine", "numbered": False, "parallel": 1}
 MODULE = {
     "execution": "worker",
     "id": "copy_file",
@@ -47,6 +47,15 @@ MODULE = {
             "default": False,
             "help": "Ist der Name im Ziel belegt, wird _1, _2 … angehängt; sonst Fehler",
         },
+        {
+            "key": "parallel",
+            "label": "Parallele Verarbeitung",
+            "type": "number",
+            "default": 1,
+            "min": 1,
+            "max": 16,
+            "help": "So viele Assets bearbeitet ein Job gleichzeitig, jedes in einem eigenen Strom",
+        }
     ],
     "sort_order": 30,
 }
@@ -66,6 +75,9 @@ def validate_settings(settings: Mapping[str, Any]) -> dict[str, str]:
 
     if not isinstance(settings.get("numbered", defaults["numbered"]), bool):
         errors["numbered"] = "Ja oder Nein erwartet"
+    parallel = settings.get("parallel", defaults["parallel"])
+    if type(parallel) is not int or not 1 <= parallel <= 16:
+        errors["parallel"] = "Ganze Zahl von 1 bis 16"
     return errors
 
 
@@ -76,6 +88,7 @@ def run(job: ModuleJob) -> ModuleResult:
         "target": "Zielordner",
         "checksum": "Checksumme",
         "numbered": "Namenskonflikt lösen",
+        "parallel": "Parallele Verarbeitung",
     }
     for key, label in labels.items():
         if key in errors:

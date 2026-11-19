@@ -135,12 +135,13 @@ def _fail_locked_asset(connection: Connection, asset: dict[str, Any], message: s
     )
     connection.execute(
         text(
-            "INSERT INTO log_lines (workflow_id, module_id, job_id, level, text) "
-            "VALUES (:workflow_id, :module_id, NULL, 'error', :text)"
+            "INSERT INTO log_lines (workflow_id, module_id, job_id, asset_id, level, text) "
+            "VALUES (:workflow_id, :module_id, NULL, :asset_id, 'error', :text)"
         ),
         {
             "workflow_id": asset["workflow_id"],
             "module_id": asset["current_module_id"],
+            "asset_id": asset["id"],
             "text": message,
         },
     )

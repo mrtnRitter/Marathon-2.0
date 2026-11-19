@@ -11,7 +11,7 @@ from marathon.modules.watchfolder.rules import validate_path
 
 
 # CONFIG
-defaults = {"target": ""}
+defaults = {"target": "", "parallel": 1}
 MODULE = {
     "execution": "worker",
     "id": "move_file",
@@ -24,13 +24,24 @@ MODULE = {
         {"id": "success", "label": "Erfolg", "description": "Datei liegt im Zielordner"},
         {"id": "error", "label": "Fehler", "description": "Verschieben fehlgeschlagen oder Name im Ziel belegt"},
     ],
-    "settings": [{
-        "key": "target",
-        "label": "Zielordner",
-        "type": "path",
-        "default": "",
-        "help": "Echtes Verschieben nur auf demselben Laufwerk bzw. derselben Freigabe. Liegt das Ziel woanders, wird die Datei kopiert und die Quelle gelöscht – ohne Checksumme.",
-    }],
+    "settings": [
+        {
+            "key": "target",
+            "label": "Zielordner",
+            "type": "path",
+            "default": "",
+            "help": "Echtes Verschieben nur auf demselben Laufwerk bzw. derselben Freigabe. Liegt das Ziel woanders, wird die Datei kopiert und die Quelle gelöscht – ohne Checksumme.",
+        },
+        {
+            "key": "parallel",
+            "label": "Parallele Verarbeitung",
+            "type": "number",
+            "default": 1,
+            "min": 1,
+            "max": 16,
+            "help": "So viele Assets bearbeitet ein Job gleichzeitig, jedes in einem eigenen Strom",
+        },
+    ],
     "sort_order": 40,
 }
 
@@ -38,15 +49,23 @@ MODULE = {
 # FUNC
 def validate_settings(settings: Mapping[str, Any]) -> dict[str, str]:
     """Validate move-file settings and return field-specific error messages."""
-    error = validate_path(str(settings.get("target", defaults["target"])))
-    return {"target": error} if error else {}
+    errors = {}
+    target_error = validate_path(str(settings.get("target", defaults["target"])))
+    if target_error:
+        errors["target"] = target_error
+    parallel = settings.get("parallel", defaults["parallel"])
+    if type(parallel) is not int or not 1 <= parallel <= 16:
+        errors["parallel"] = "Ganze Zahl von 1 bis 16"
+    return errors
 
 
 def run(job: ModuleJob) -> ModuleResult:
     """Move the input file to the configured folder and report the result."""
     errors = validate_settings(job.settings)
-    if errors:
-        raise ValueError(f"Zielordner: {errors['target']}")
+    labels = {"target": "Zielordner", "parallel": "Parallele Verarbeitung"}
+    for key, label in labels.items():
+        if key in errors:
+            raise ValueError(f"{label}: {errors[key]}")
 
     check_stop(job.stop)
     source = Path(job.asset_path)

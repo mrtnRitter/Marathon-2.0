@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent } from 'react'
 import {
-  Background, BackgroundVariant, Controls, MiniMap, ReactFlow, ReactFlowProvider, SelectionMode, addEdge, reconnectEdge, useEdgesState, useNodesState, useReactFlow, useStore, useStoreApi,
-  type Connection, type Edge, type FinalConnectionState, type IsValidConnection, type NodeMouseHandler, type OnBeforeDelete,
+  Background, BackgroundVariant, Controls, getBezierPath, MiniMap, ReactFlow, ReactFlowProvider, SelectionMode, SmoothStepEdge, addEdge, reconnectEdge, useEdgesState, useNodesState, useReactFlow, useStore, useStoreApi,
+  type Connection, type ConnectionLineComponentProps, type Edge, type EdgeProps, type FinalConnectionState, type IsValidConnection, type NodeMouseHandler, type OnBeforeDelete,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { Button } from '../../components/Toolbar'
@@ -23,9 +23,39 @@ import { ModuleNode } from './ModuleNode'
 import { ModulePalette } from './ModulePalette'
 import { covered_node_ids, ignore_select_changes, to_flow_rect } from './selection'
 import { ModuleSettingsPanel } from './ModuleSettingsPanel'
+import { connection_points, saved_edge_points } from './handle_geometry'
 import './editor.css'
 
 const node_types = { module: ModuleNode }
+
+function RimSmoothStepEdge(props: EdgeProps) {
+  const points = saved_edge_points(
+    { x: props.sourceX, y: props.sourceY },
+    { x: props.targetX, y: props.targetY },
+  )
+  return <SmoothStepEdge {...props} sourceX={points.source.x} sourceY={points.source.y} targetX={points.target.x} targetY={points.target.y} />
+}
+
+// Persisted edges retain the built-in smooth-step path and all original edge props.
+const edge_types = { smoothstep: RimSmoothStepEdge }
+
+function RimConnectionLine({ connectionLineStyle, fromX, fromY, fromHandle, toX, toY, toHandle, connectionStatus, fromPosition, toPosition }: ConnectionLineComponentProps<ModuleFlowNode>) {
+  const points = connection_points(
+    { x: fromX, y: fromY },
+    fromHandle,
+    { x: toX, y: toY },
+    connectionStatus === 'valid' ? toHandle : null,
+  )
+  const [path] = getBezierPath({
+    sourceX: points.source.x,
+    sourceY: points.source.y,
+    sourcePosition: fromPosition,
+    targetX: points.target.x,
+    targetY: points.target.y,
+    targetPosition: toPosition,
+  })
+  return <path className="react-flow__connection-path" d={path} fill="none" style={connectionLineStyle} />
+}
 
 const settings_width_key = 'marathon.editor.settings_width'
 const settings_width_range = { min: 260, max: 640, initial: 320 }
@@ -346,6 +376,8 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale 
                 onReconnect={on_reconnect}
                 onReconnectEnd={on_reconnect_end}
                 edgesReconnectable={editing}
+                edgeTypes={edge_types}
+                connectionLineComponent={RimConnectionLine}
                 isValidConnection={is_valid_connection}
                 onNodeClick={on_node_click}
                 onNodeDoubleClick={on_node_double_click}

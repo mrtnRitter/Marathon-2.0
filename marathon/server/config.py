@@ -16,6 +16,8 @@ pg_data_dir = data_dir / "postgres"
 pg_password_file = data_dir / "postgres.pass"
 pg_log_file = data_dir / "postgres.log"
 _database_identifier = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+_server_address_pattern = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
+_skill_id_pattern = re.compile(r"^[a-z0-9_]{1,64}$")
 
 
 # FUNC
@@ -41,9 +43,14 @@ class EngineConfig:
 
 
 @dataclass(frozen=True)
+class FolderDialogConfig:
+    server_address: str = ""
+
+
+@dataclass(frozen=True)
 class ServerWorkerConfig:
     enabled: bool = True
-    max_parallel: int = 1
+    skills: tuple[str, ...] = ("copy_file", "move_file", "rename_file")
 
 
 @dataclass(frozen=True)
@@ -53,6 +60,7 @@ class ServerConfig:
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
     server_worker: ServerWorkerConfig = field(default_factory=ServerWorkerConfig)
+    folder_dialog: FolderDialogConfig = field(default_factory=FolderDialogConfig)
 
 
 def _validated_value(
@@ -114,14 +122,30 @@ def load_server_config(config_file: Path = default_config_file) -> ServerConfig:
         pickup_timeout_s=_validated_value(engine_data, "engine", "pickup_timeout_s", 10.0, 1, 600, config_file),
         max_attempts=_validated_value(engine_data, "engine", "max_attempts", 3, 1, 10, config_file, integer=True),
     )
+    folder_dialog_data = data.get("folder_dialog", {})
+    if not isinstance(folder_dialog_data, dict):
+        raise ConfigError(f"[folder_dialog] in {config_file} muss eine Tabelle sein")
+    server_address = folder_dialog_data.get("server_address", "")
+    if not isinstance(server_address, str) or (server_address and not _server_address_pattern.fullmatch(server_address)):
+        raise ConfigError(
+            f"[folder_dialog] server_address in {config_file} muss ein Rechnername oder eine IP-Adresse sein"
+        )
+    folder_dialog = FolderDialogConfig(server_address)
+
     worker_data = data.get("server_worker", {})
     if not isinstance(worker_data, dict):
         raise ConfigError(f"[server_worker] in {config_file} muss eine Tabelle sein")
     enabled = worker_data.get("enabled", True)
     if not isinstance(enabled, bool):
         raise ConfigError(f"[server_worker] enabled in {config_file} muss true oder false sein")
-    max_parallel = _validated_value(
-        worker_data, "server_worker", "max_parallel", 1, 1, 64, config_file, integer=True
-    )
-    server_worker = ServerWorkerConfig(enabled, max_parallel)
-    return ServerConfig(config.host, config.port, database, engine, server_worker)
+    skills = worker_data.get("skills", ["copy_file", "move_file", "rename_file"])
+    if (
+        not isinstance(skills, list)
+        or any(not isinstance(skill, str) or not _skill_id_pattern.fullmatch(skill) for skill in skills)
+        or len(set(skills)) != len(skills)
+    ):
+        raise ConfigError(
+            f"[server_worker] skills in {config_file} muss eine Liste von Modultyp-IDs ohne Doppelte sein"
+        )
+    server_worker = ServerWorkerConfig(enabled=enabled, skills=tuple(skills))
+    return ServerConfig(config.host, config.port, database, engine, server_worker, folder_dialog)

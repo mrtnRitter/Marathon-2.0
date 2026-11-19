@@ -15,6 +15,9 @@ worker_timeout_s = 30   # Ohne Meldung gilt ein Worker danach als ausgefallen (1
 pickup_timeout_s = 10   # Abhol-Frist für zugeteilte Jobs (1–600)
 max_attempts = 3        # Unterbrochene Versuche je Asset und Modul (1–10)
 
+[folder_dialog]
+server_address = ""     # Standard für die Server-Adresse im Ordner-Dialog (Rechnername oder IP, z. B. 10.0.77.11); danach gilt der Wert aus der Oberfläche
+
 [server_worker]
-enabled = true          # Server-Worker mit dem Server starten
-max_parallel = 1        # Parallele Jobs des Server-Workers (1–64)
+enabled = true                                      # Server-Worker mit dem Server starten
+skills = ["copy_file", "move_file", "rename_file"]  # Fähigkeiten ab Werk, oben = höchste Prio; danach gilt die Worker-Seite

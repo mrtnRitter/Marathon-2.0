@@ -31,8 +31,6 @@ def reprocess_assets(
     unique_ids = list(dict.fromkeys(asset_ids))
     if not unique_ids:
         raise AssetValidationError("Keine Assets gewählt")
-    if len(unique_ids) > 1000:
-        raise AssetValidationError("Zu viele Assets (max. 1000)")
 
     connection.execute(text("SET LOCAL lock_timeout = '10s'"))
     target_workflow = None

@@ -6,6 +6,27 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - `[ ]` geplant · `[ ]` eingebaut, Abnahme offen · `[x]` eingebaut und abgenommen
 - Grundlage: `docs/m2_architektur_vorueberlegungen.md`
 
+### Abnahme offen – Release Worker-Steuerung
+
+Vertrag: `docs/worker_spec.md`
+
+- [ ] Einstellungsseite speichert in die Datenbank; einzige echte Einstellung: Server-Adresse für den Ordner-Dialog (Standard `[folder_dialog] server_address`; `host` bleibt nur in der Konfiguration); die Platzhalter Server, Rollout, Aufräumen entfallen
+- [ ] Standardwerte aus `config/marathon.toml` gehen beim Start mit `run.py` in die Datenbank, solange dort kein Wert steht; danach gilt die Datenbank
+- [ ] Ordner-Dialog: Umschalter „Laufwerke“ | „Server“; „Server“ zeigt die Freigaben von `\\<Server-Adresse>`
+- [ ] Vorrang-Stufen entfallen überall; Fähigkeiten je Worker als sortierbare Liste (oben = höhere Prio, nicht gelistet = übernimmt nicht, wählbar nur gemeldete Modultypen); neue Worker ab Werk mit allen gemeldeten Modultypen
+- [ ] Zuteilung nach Rang in der Fähigkeiten-Liste; gleicher Rang → Name
+- [ ] Server-Worker ab Werk mit Kopieren, Verschieben, Umbenennen (`[server_worker] skills`), in der Oberfläche einstellbar; startet bei der Ersteinrichtung automatisch
+- [ ] „Starten“ / „Stoppen“ statt „Freigeben“ / „Sperren“, auch in der Liste; Status „bereit“, „Wird gestoppt“, „gestoppt“; „Online“ / „Offline“ getrennt; Spalte „Jobs“
+- [ ] Neuer Worker meldet sich „gestoppt“ an; Stoppen bricht alle Jobs ab, Asset zurück an den letzten fertigen Ausgang, zählt nicht als Versuch
+- [ ] Ein Worker macht nur einen Job; ein Job bündelt bis zu N Assets desselben Moduls, bearbeitet in N Strömen, Ergebnis je Asset; N = „Parallele Verarbeitung“ (1–16) bei Kopieren und Verschieben
+- [ ] Warten wie Fachmodule: Wartezeit je Asset ab Übergabe, Anzeige „läuft“ / „erledigt“ / „Fehler“, kein „wartet“; läuft als Job ohne Worker
+- [ ] Modul-Log zeigt jede Aktivität (Zeit, Stufe, Asset, Worker, Text; neueste 500)
+- [ ] Prioliste: „Bearbeiten“ statt „Metadaten bearbeiten“
+- [ ] Verbindungslinien beginnen und enden am Rand der Kreise, auch beim Ziehen
+- [ ] Erneut verarbeiten ohne Obergrenze
+- [ ] Überwachen → Einstellungen: Werte ausgegraut
+- [ ] `stop` beendet den Server ohne Fehlermeldungen (offene Worker-Anfrage endet sofort)
+
 ### Abnahme offen
 
 - [ ] Der Server teilt zu, der Worker holt ab: Seine Anfrage bleibt ca. 25 s offen; Verbindungen nur vom Worker zum Server
@@ -27,28 +48,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ## Geplant
 
-### Nächster Release: Worker-Steuerung, Watchfolder auf Workern, Live-Kanal
-
-#### Einstellungen - next
-
-- [ ] Die Einstellungsseite speichert in die Datenbank; erste echte Einstellung ist die Server-Adresse für den Ordner-Dialog
-  - Standardwert im neuen Eintrag `[folder_dialog] server_address` in `config/marathon.toml`; `host` bleibt die Adresse, an der Marathon selbst erreichbar ist, und ist nicht in der Oberfläche änderbar
-- [ ] Standardwerte stehen in `config/marathon.toml` und gehen beim Build in die Datenbank, sofern dort noch kein Wert steht; ab dann gilt die Datenbank, geändert wird in der Oberfläche
-- [ ] Ordner-Dialog: Button „Laufwerke“ wird Umschalter Laufwerke / Server; „Server“ zeigt die Freigaben von `\\<Server-Adresse>`
-
-#### Worker - next
-
-- [ ] Die Vorrang-Stufen (Bevorzugt, Normal, Letzte Wahl, Aus) entfallen überall: Oberfläche, Datenbank, Zuteilung
-- [ ] Fähigkeiten je Worker als sortierbare Liste im Stil der Prioliste; weiter oben = höhere Prio; nicht in der Liste = übernimmt diesen Modultyp nicht; wählbar sind nur Modultypen, die der Rechner meldet
-- [ ] Zuteilung: Ein Job geht an den Worker mit freiem Platz, bei dem der Modultyp am weitesten oben steht. Beispiel: Worker A [Transcode, Kopieren], Worker B [Kopieren, Transcode] → Transcode-Jobs vorrangig an A, Kopieren an B; ist A voll, transcodiert B
-- [ ] Gleicher Rang: zuerst der Worker, dem noch kein Job zugeteilt ist; sind beide frei, einer von beiden
-- [ ] Server-Worker ab Werk mit den Fähigkeiten Watchfolder, Kopieren, Verschieben, Umbenennen; einstellbar unter `[server_worker]` in `config/marathon.toml` (Fähigkeiten, parallele Jobs); diese Standardwerte gehen beim Build in die Datenbank, danach gilt die Datenbank
-- [ ] Alle Worker, auch der Server-Worker, werden in der Oberfläche eingestellt
-- [ ] „Freigeben“ und „Sperren“ werden ein Button „Starten“ / „Stoppen“, der je nach Zustand wechselt (wie bei Workflows); auch direkt in der Worker-Liste
-- [ ] Status „bereit“ oder „gestoppt“ (rot); beim Stoppen „Wird gestoppt“, bis alle Jobs abgebrochen sind; „online“ / „offline“ bleibt eine eigene Anzeige, die Auslastung zeigt die Spalte Jobs; „neu“, „beschäftigt“ und „gesperrt“ entfallen
-- [ ] Ein neuer Worker meldet sich „gestoppt“ an und bekommt erst nach „Starten“ Jobs (wie bisher nach „Freigeben“); der Server-Worker startet automatisch
-- [ ] Stoppen bricht alle laufenden Jobs des Workers ab, unfertige Ergebnisse werden verworfen, das Asset geht zurück auf den Ausgang des letzten Moduls, an dem es fertig war, und wird neu verteilt; der Abbruch zählt nicht als Versuch
-- [ ] Jobs und Worker: ein Worker kann nur einen Job machen - die Option für mehrer Jobs entfällt (vorerst). Ein Job kann aber mehrere Threads haben (zb. Kopieren 2 Assets parallel, oder API Abfragen 10x parallel). An einem Workflow können mehrere Worker parallel arbeiten.  
+### Nächster Release: Watchfolder auf Workern, Live-Kanal
 
 #### Watchfolder
 
@@ -66,18 +66,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Gefundene Assets gehen sofort in den nächsten Node und stehen dort auf „wartet“ oder werden direkt verarbeitet; am Watchfolder gibt es nur „erfasst“, keine Spalte „wartet“
 - [ ] Warten: Assets vom Watchfolder stehen in der Spalte „wartet“, solange ihre Wartezeit läuft (heute bleibt die Spalte leer); nach Ablauf zählen sie am Warten-Modul als erledigt und gehen über „Erfolg“ weiter
 - [ ] modul watchfolder: erfasst und neu als status: neu ist immer, was im lauf neu gefunden wurde, sobald lauf beendet ist, gehen die Assets in erfasst über - reihenfolge umstellen: neu links, erfasst rechts - wartet entfällt
-
-#### Warten - next
-- [ ] genauso behandeln wie fachmodule: assets, auf den gerade eine Wartezeit läuft, gelten als "in arbeit", asstes, deren wartezeit durchlaufen ist (und es keine fehler gab), gelten als "erledigt". Assets, die vom vorherigen Modul übergeben wurden, gehen sofort in "läuft" über, es gibt kein "Warten" für das Warten-Modul. Die eingestellte Wartezeit gilt pro Asset (tick 1: 10 Assets werden übergeben und warten 10 sekunden -- tick 2: die nächsten 5 assets werden übergeben und deren wartezeit startet frisch bei 10 sekunden, die ersten 10 haben eine Restwartezeit von 10 Sekunden - Zeit tick 1). 
-
-
-#### Module - next
-
-- [ ] Modul-Log: neben Fehlern auch jede Aktivität des Moduls (Zeit, Asset, Worker, Ergebnis); der Reiter „Jobs“ bleibt die Tabelle mit Status, Worker, Versuch und Fortschritt je Job
-- [ ] Parallele Verarbeitung (statt „Threads“): mehrere Assets gleichzeitig, jedes Asset in einem Strom; einstellbar heute nur für Kopieren und Verschieben
-- [ ] Prioliste: „Metadaten bearbeiten“ heißt „Bearbeiten“
-- [ ] Verbindung zwischen Nodes: Anfang und Ende der Linie liegen am Rand des Kreises – heute beginnt die Linie am Ausgang „Erfolg“ etwas innerhalb des Kreises, beim Ziehen liegen Anfang und Ende im Modul
-- [ ] Asset erneut verarbeiten: keine Beschränkung auf 1000 Assets
 
 ---
 ---
@@ -147,9 +135,3 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 - [ ] Workflows freigeben/sperren
   - Offen: Wie werden Workflows freigegeben und gesperrt?
   - Idee Ökosystem: Login auf einer Landingpage mit Übersicht der Tools, u. a. m2 → in m2 sind bestimmte Workflows gesperrt; ungern ein zweiter Login in m2
-
-
-### unsortiert Martin
-
-- [ ] Überwachen -> Einstellungen: Werte in Settings ausgrauen - dann ist klarer, dass man sie hier nicht editieren kann
-- [ ] mit "stop" beendet sich der Server, aber es kommen noch viele Fehlermeldungen in der Konsole. Sieht noch nach einem sehr harten stop aus.

@@ -68,7 +68,7 @@ def _save_graph(api_client, workflow_id: str, base_version: int, modules: list[d
 def _insert_worker_asset_job(db_engine, workflow_id: str, module_id: str, *, status: str = "running") -> None:
     with db_engine.begin() as connection:
         connection.execute(
-            text("INSERT INTO workers (id, name, status) VALUES ('worker-1', 'Worker', 'busy')")
+            text("INSERT INTO workers (id, name, status) VALUES ('worker-1', 'Worker', 'ready')")
         )
         connection.execute(
             text(

@@ -1,26 +1,24 @@
 import { useMemo, useState } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
 import { FormField, FormSection } from '../components/FormField'
+import { Icon } from '../components/Icon'
 import { PageHeader } from '../components/PageHeader'
+import { SkillListField } from '../components/SkillListField'
 import { SlidePanel } from '../components/SlidePanel'
 import { StatusBadge } from '../components/StatusBadge'
 import { StatusTabs } from '../components/StatusTabs'
 import { notify, not_available } from '../components/Toast'
-import { approve_worker, get_module_types, get_workers, lock_worker, update_worker } from '../data/api'
-import type { FieldSpec, ModuleType, Worker, WorkerInput, WorkerPriority, WorkerStatus } from '../data/types'
+import { get_module_types, get_workers, start_worker, stop_worker, update_worker } from '../data/api'
+import type { FieldSpec, Worker, WorkerInput, WorkerStatus } from '../data/types'
 import { use_data } from '../data/use_data'
 import { use_server_connected } from '../data/use_connection'
 import { format_datetime, format_relative } from '../lib/format'
-import { shown_worker_status, worker_status_meta } from '../theme/status'
+import { shown_skills } from '../lib/skills'
+import { is_online, online_meta, shown_worker_status, worker_status_meta } from '../theme/status'
 
 const name_field: FieldSpec = { key: 'name', label: 'Name', type: 'text' }
-const priority_choices: { value: WorkerPriority; label: string }[] = [
-  { value: 'preferred', label: 'Bevorzugt' },
-  { value: 'normal', label: 'Normal' },
-  { value: 'last', label: 'Letzte Wahl' },
-  { value: 'off', label: 'Aus' },
-]
-const status_tiles: WorkerStatus[] = ['ready', 'busy', 'new', 'updating', 'offline', 'locked']
+const status_tiles: WorkerStatus[] = ['ready', 'stopping', 'stopped']
+const skills_help = 'Weiter oben = höhere Priorität. Nicht in der Liste = übernimmt diesen Modultyp nicht.'
 
 export function WorkersPage() {
   const connected = use_server_connected()
@@ -30,29 +28,20 @@ export function WorkersPage() {
   const [form, set_form] = useState<WorkerInput | null>(null)
   const [saving, set_saving] = useState(false)
   const [acting, set_acting] = useState(false)
+  const [busy_ids, set_busy_ids] = useState<string[]>([])
   const workers = data?.[0]
   const module_types = data?.[1] ?? []
-  const columns = useMemo<Column<Worker>[]>(() => [
-    { key: 'name', label: 'Name', render: row => <strong>{row.name}</strong> },
-    { key: 'status', label: 'Status', render: row => <StatusBadge meta={worker_status_meta[shown_worker_status(row, connected)]} /> },
-    { key: 'capabilities', label: 'Fähigkeiten', render: row => row.capabilities.length ? row.capabilities.map(item => <span key={item} className="chip">{item}</span>) : <span className="dim">–</span> },
-    { key: 'max_parallel', label: 'Parallel', align: 'right' },
-    { key: 'running_jobs', label: 'Laufende Jobs', render: row => `${row.running_jobs} / ${row.max_parallel}`, sort_value: row => row.running_jobs, align: 'right' },
-    { key: 'client_version', label: 'Client-Version' },
-    { key: 'last_seen', label: 'Zuletzt gesehen', render: row => <span title={format_datetime(row.last_seen)}>{format_relative(row.last_seen)}</span>, sort_value: row => row.last_seen },
-  ], [connected])
+  const selected_workers = workers?.filter(worker => selected.includes(worker.id)) ?? []
+  const selected_stopping = selected_workers.some(worker => worker.status === 'stopping')
+  const start_selected = selected_workers.length > 0 && selected_workers.every(worker => worker.status === 'stopped')
 
   const edit = (worker: Worker) => {
     set_editing_worker(worker)
-    set_form({
-      name: worker.name,
-      max_parallel: worker.max_parallel,
-      priorities: Object.fromEntries(worker.capabilities.map(id => [id, worker.priorities[id] ?? 'normal'])),
-    })
+    set_form({ name: worker.name, skills: shown_skills(worker.skills, worker.capabilities) })
   }
 
   const save = async () => {
-    if (!editing_worker || !form || saving || !form.name.trim() || form.max_parallel < 1 || form.max_parallel > editing_worker.client_slots || form.max_parallel > 64) return
+    if (!editing_worker || !form || saving || !form.name.trim()) return
     set_saving(true)
     try {
       await update_worker(editing_worker.id, form)
@@ -67,23 +56,42 @@ export function WorkersPage() {
     }
   }
 
-  const change_worker_access = async (approve: boolean) => {
-    if (!selected.length || acting) return
+  const toggle_worker = async (worker: Worker) => {
+    if (worker.status === 'stopping' || busy_ids.includes(worker.id)) return
+    const start = worker.status === 'stopped'
+    set_busy_ids(ids => [...ids, worker.id])
+    try {
+      if (start) await start_worker(worker.id)
+      else await stop_worker(worker.id)
+      notify(start ? 'Worker gestartet' : 'Worker gestoppt')
+    } catch {
+      // The request already displays the error.
+    } finally {
+      set_busy_ids(ids => ids.filter(id => id !== worker.id))
+      reload()
+    }
+  }
+
+  const toggle_selected = async () => {
+    if (!selected_workers.length || acting || selected_stopping) return
     set_acting(true)
     let completed = 0
-    for (const id of selected) {
-      try {
-        if (approve) await approve_worker(id)
-        else await lock_worker(id)
-        completed += 1
-      } catch {
-        // Continue so every selected worker is attempted.
+    try {
+      for (const worker of selected_workers) {
+        try {
+          if (start_selected) await start_worker(worker.id)
+          else await stop_worker(worker.id)
+          completed += 1
+        } catch {
+          // Continue so every selected worker is attempted.
+        }
       }
+    } finally {
+      set_acting(false)
+      reload()
     }
-    reload()
-    if (completed === 1) notify(approve ? 'Worker freigegeben' : 'Worker gesperrt')
-    else if (completed > 1) notify(`${completed} Worker ${approve ? 'freigegeben' : 'gesperrt'}`)
-    set_acting(false)
+    if (completed === 1) notify(start_selected ? 'Worker gestartet' : 'Worker gestoppt')
+    else if (completed > 1) notify(`${completed} Worker ${start_selected ? 'gestartet' : 'gestoppt'}`)
   }
 
   const close_panel = () => {
@@ -91,27 +99,34 @@ export function WorkersPage() {
     set_form(null)
   }
 
-  const priority_field = (module: Pick<ModuleType, 'id' | 'name'>, priority: WorkerPriority): FieldSpec => ({
-    key: `priority-${module.id}`,
-    label: `Vorrang: ${module.name || module.id}`,
-    type: 'select',
-    options: priority_choices.map(choice => choice.label),
-    default: priority_choices.find(choice => choice.value === priority)?.label ?? 'Normal',
-  })
+  const columns = useMemo<Column<Worker>[]>(() => [
+    { key: 'run', label: '', width: '48px', sort_value: row => Number(row.status === 'ready'), render: row => <button type="button" className="button" title={row.status === 'stopping' ? 'Wird gestoppt' : row.status === 'stopped' ? 'Starten' : 'Stoppen'} aria-label={row.status === 'stopping' ? 'Wird gestoppt' : row.status === 'stopped' ? 'Starten' : 'Stoppen'} disabled={row.status === 'stopping' || busy_ids.includes(row.id)} onClick={event => { event.stopPropagation(); void toggle_worker(row) }} onDoubleClick={event => event.stopPropagation()}><Icon name={row.status === 'stopped' ? 'play' : 'stop'} size={14} /></button> },
+    { key: 'name', label: 'Name', render: row => <strong>{row.name}</strong> },
+    { key: 'status', label: 'Status', render: row => <StatusBadge meta={worker_status_meta[shown_worker_status(row, connected)]} /> },
+    { key: 'online', label: 'Verbindung', render: row => <StatusBadge meta={online_meta(is_online(row, connected))} />, sort_value: row => Number(is_online(row, connected)) },
+    { key: 'skills', label: 'Fähigkeiten', render: row => { const skills = shown_skills(row.skills, row.capabilities); return skills.length ? skills.map(id => <span key={id} className="chip">{module_types.find(module => module.id === id)?.name || id}</span>) : <span className="dim">–</span> }, sort_value: row => shown_skills(row.skills, row.capabilities).map(id => module_types.find(module => module.id === id)?.name || id).join(', ') },
+    { key: 'running_jobs', label: 'Jobs', render: row => row.running_jobs, sort_value: row => row.running_jobs, align: 'right' },
+    { key: 'client_version', label: 'Client-Version' },
+    { key: 'last_seen', label: 'Zuletzt gesehen', render: row => <span title={format_datetime(row.last_seen)}>{format_relative(row.last_seen)}</span>, sort_value: row => row.last_seen },
+  ], [busy_ids, connected, module_types])
 
-  const none = selected.length === 0
+  const status_items = [
+    ...status_tiles.map(status => ({ id: status, ...worker_status_meta[status], count: workers?.filter(worker => worker.status === status).length ?? 0 })),
+    { id: 'offline', ...online_meta(false), count: workers?.filter(worker => !is_online(worker, connected)).length ?? 0 },
+  ]
+  const none = selected_workers.length === 0
+
   return (
     <>
       <PageHeader title="Worker" actions={[
-        { label: 'Bearbeiten', icon: 'pencil', disabled: selected.length !== 1 || !workers, on_click: () => { const worker = workers?.find(item => item.id === selected[0]); if (worker) edit(worker) } },
-        { label: 'Freigeben', icon: 'check', disabled: none || acting, on_click: () => change_worker_access(true) },
-        { label: 'Sperren', icon: 'lock', disabled: none || acting, on_click: () => change_worker_access(false) },
+        { label: 'Bearbeiten', icon: 'pencil', disabled: selected_workers.length !== 1 || !workers, on_click: () => { const worker = selected_workers[0]; if (worker) edit(worker) } },
+        { label: selected_stopping ? 'Wird gestoppt' : start_selected ? 'Starten' : 'Stoppen', icon: start_selected && !selected_stopping ? 'play' : 'stop', disabled: none || acting || selected_stopping, on_click: toggle_selected },
         { label: 'Version ausrollen', icon: 'rocket', disabled: none, on_click: not_available },
       ]} />
       <div className="page-content">
         {!workers ? <div className="loading">Lade</div> : (
           <>
-            <StatusTabs items={status_tiles.map(status => ({ id: status, ...worker_status_meta[status], count: workers.filter(worker => shown_worker_status(worker, connected) === status).length }))} />
+            <StatusTabs items={status_items} />
             <DataTable columns={columns} rows={workers} row_key={row => row.id} selected={selected} on_selection_change={set_selected} on_row_open={edit} />
           </>
         )}
@@ -119,23 +134,17 @@ export function WorkersPage() {
       <SlidePanel open={editing_worker !== null && form !== null} title={editing_worker?.name ?? ''} icon="server" on_close={close_panel}
         actions={[
           { label: 'Abbrechen', icon: 'close', on_click: close_panel, disabled: saving },
-          { label: 'Speichern', icon: 'save', primary: true, on_click: save, disabled: !form?.name.trim() || !editing_worker || !form || form.max_parallel < 1 || form.max_parallel > (editing_worker?.client_slots ?? 0) || form.max_parallel > 64 || saving },
+          { label: 'Speichern', icon: 'save', primary: true, on_click: save, disabled: !form?.name.trim() || !editing_worker || !form || saving },
         ]}>
         {editing_worker && form && (
           <FormSection title="Allgemein">
             <FormField spec={name_field} value={form.name} disabled={saving} on_change={value => set_form(current => current ? { ...current, name: String(value) } : current)} />
-            <FormField spec={{ key: 'max_parallel', label: 'Parallele Jobs', type: 'number', min: 1, max: Math.min(64, editing_worker.client_slots), help: `Höchstens so viele, wie der Worker selbst anbietet (${editing_worker.client_slots})` }} value={form.max_parallel} disabled={saving} on_change={value => set_form(current => current ? { ...current, max_parallel: Number(value) } : current)} />
           </FormSection>
         )}
         {editing_worker && form && (
-          <FormSection title="Vorrang">
-            {editing_worker.capabilities.map(id => {
-              const module = module_types.find(item => item.id === id)
-              const priority = form.priorities[id] ?? 'normal'
-              const spec = priority_field(module ?? { id, name: id }, priority)
-              const label = priority_choices.find(choice => choice.value === priority)?.label ?? 'Normal'
-              return <FormField key={id} spec={spec} value={label} disabled={saving} on_change={value => set_form(current => current ? { ...current, priorities: { ...current.priorities, [id]: priority_choices.find(choice => choice.label === String(value))?.value ?? 'normal' } } : current)} />
-            })}
+          <FormSection title="Fähigkeiten">
+            <div className="form-field-help">{skills_help}</div>
+            <SkillListField value={form.skills} capabilities={editing_worker.capabilities} modules={module_types} disabled={saving} on_change={skills => set_form(current => current ? { ...current, skills } : current)} />
           </FormSection>
         )}
       </SlidePanel>

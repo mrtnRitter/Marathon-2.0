@@ -113,3 +113,11 @@ span.module-node-lock { cursor: default; }
 .module-settings-resizer:hover, .module-settings-resizer.active { background: var(--accent); opacity: 0.6; }
 
 .module-settings-description { display: block; width: 100%; resize: none; overflow: hidden; line-height: 1.4; }
+
+.module-settings-form.read-only input,
+.module-settings-form.read-only select,
+.module-settings-form.read-only textarea,
+.module-settings-form.read-only .form-field-unit { color: var(--text-dim); cursor: default; }
+.module-settings-form.read-only .form-switch-track { cursor: default; opacity: 0.6; }
+.module-settings-form.read-only .form-switch-track::before { background: var(--text-dim); }
+.module-settings-form.read-only .form-switch input:checked + .form-switch-track { background: var(--bg-hover); border-color: var(--text-dim); }

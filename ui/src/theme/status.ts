@@ -23,12 +23,9 @@ export const step_status_meta: Record<StepStatus, StatusMeta> = {
 }
 
 export const worker_status_meta: Record<WorkerStatus, StatusMeta> = {
-  new: { label: 'neu', color: color('new') },
   ready: { label: 'bereit', color: color('done') },
-  busy: { label: 'beschäftigt', color: color('in-progress') },
-  offline: { label: 'offline', color: color('offline') },
-  locked: { label: 'gesperrt', color: color('failed') },
-  updating: { label: 'Update', color: color('updating') },
+  stopping: { label: 'Wird gestoppt', color: color('on-hold') },
+  stopped: { label: 'gestoppt', color: color('failed') },
 }
 
 export const job_status_meta: Record<JobStatus, StatusMeta> = {
@@ -65,9 +62,9 @@ export const active_meta = (active: boolean): StatusMeta =>
 export const workflow_state_meta = (workflow: Pick<Workflow, 'active' | 'pausing'>): StatusMeta =>
   workflow.pausing ? { label: 'Wird gestoppt', color: color('on-hold') } : active_meta(workflow.active)
 
-export const shown_worker_status = (worker: Worker, connected: boolean): WorkerStatus => connected ? worker.status : 'offline'
+export const shown_worker_status = (worker: Worker, _connected: boolean): WorkerStatus => worker.status
 
-export const is_online = (worker: Worker, connected = true) => connected && worker.status !== 'offline'
+export const is_online = (worker: Worker, connected = true) => connected && worker.online
 
 export const online_meta = (online: boolean): StatusMeta => online ? { label: 'Online', color: color('done') } : { label: 'Offline', color: color('offline') }
 

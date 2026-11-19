@@ -14,7 +14,13 @@ from starlette.concurrency import run_in_threadpool
 
 from marathon.server.api.deps import get_engine
 from marathon.server.config import EngineConfig
-from marathon.server.engine.jobs import JobNotFound, JobWorkerMismatch, apply_job_result, start_job
+from marathon.server.engine.jobs import (
+    JobNotFound,
+    JobWorkerMismatch,
+    apply_asset_result,
+    apply_job_result,
+    start_job,
+)
 from marathon.server.engine.protocol import job_progress, poll_commands, register_worker, touch_worker
 from marathon.server.worker_auth import require_worker_token
 
@@ -27,7 +33,6 @@ class RegisterInput(BaseModel):
     name: str
     client_version: str
     capabilities: list[str]
-    max_parallel: int = Field(ge=1)
     protocol: int
 
 
@@ -101,14 +106,25 @@ def _consume_background_result(task: asyncio.Task) -> None:
         task.exception()
 
 
-async def _run_threadpool_until(deadline: float, function, *args):
-    """Run blocking database work without extending the poll's hard deadline."""
+async def _run_threadpool_until(deadline: float, stop_requested, function, *args):
+    """Run blocking database work while promptly honoring poll shutdown."""
     task = asyncio.create_task(run_in_threadpool(function, *args))
-    done, _pending = await asyncio.wait({task}, timeout=max(0.0, deadline - asyncio.get_running_loop().time()))
-    if task not in done:
-        task.add_done_callback(_consume_background_result)
-        return False, None
-    return True, task.result()
+    loop = asyncio.get_running_loop()
+    result_retrieved = False
+    try:
+        while True:
+            if await stop_requested():
+                return False, None
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return False, None
+            done, _pending = await asyncio.wait({task}, timeout=min(0.05, remaining))
+            if task in done:
+                result_retrieved = True
+                return True, task.result()
+    finally:
+        if not result_retrieved:
+            task.add_done_callback(_consume_background_result)
 
 
 def _utc_now() -> datetime:
@@ -121,8 +137,8 @@ def post_worker_register(
     request: Request,
     engine: Engine = Depends(get_engine),
 ) -> dict:
-    """Register or refresh a worker using protocol version 1."""
-    if payload.protocol != 1:
+    """Register or refresh a worker using protocol version 2."""
+    if payload.protocol != 2:
         raise HTTPException(status_code=409, detail="Protokollversion nicht unterstützt")
     config: EngineConfig = request.app.state.engine_config
     ip_address = request.client.host if request.client is not None else None
@@ -138,6 +154,14 @@ async def post_worker_poll(
 ) -> dict:
     """Wait asynchronously for commands while periodically refreshing the worker."""
     config: EngineConfig = request.app.state.engine_config
+    shutdown_event = request.app.state.shutdown_event
+
+    async def should_stop() -> bool:
+        if shutdown_event.is_set():
+            return True
+        disconnected = await request.is_disconnected()
+        return shutdown_event.is_set() or disconnected
+
     loop = asyncio.get_running_loop()
     started = loop.time()
     deadline = started + config.poll_timeout_s
@@ -145,14 +169,14 @@ async def post_worker_poll(
     last_seen: float | None = None
 
     while True:
-        if await request.is_disconnected():
+        if await should_stop():
             return _empty_poll
         current = loop.time()
         if last_seen is None or current - last_seen >= 5.0:
             completed, exists = await _run_threadpool_until(
-                hard_deadline, _touch, engine, payload.worker_id, _utc_now()
+                hard_deadline, should_stop, _touch, engine, payload.worker_id, _utc_now()
             )
-            if await request.is_disconnected():
+            if await should_stop():
                 return _empty_poll
             if not completed:
                 return _empty_poll
@@ -160,12 +184,12 @@ async def post_worker_poll(
                 raise HTTPException(status_code=404, detail="Worker unbekannt")
             last_seen = loop.time()
 
-        if await request.is_disconnected():
+        if await should_stop():
             return _empty_poll
         completed, response = await _run_threadpool_until(
-            hard_deadline, _poll, engine, payload.worker_id, payload.running
+            hard_deadline, should_stop, _poll, engine, payload.worker_id, payload.running
         )
-        if await request.is_disconnected():
+        if await should_stop():
             return _empty_poll
         if not completed:
             return _empty_poll
@@ -175,6 +199,8 @@ async def post_worker_poll(
         if remaining <= 0:
             return response
         await asyncio.sleep(min(0.5, remaining))
+        if await should_stop():
+            return _empty_poll
 
 
 @router.post("/jobs/{job_id}/start")
@@ -209,6 +235,33 @@ def post_worker_job_progress(
     except JobWorkerMismatch as exc:
         raise HTTPException(status_code=403, detail="Job gehört einem anderen Worker") from exc
     return {"cancel": cancel}
+
+
+@router.post("/jobs/{job_id}/assets/{asset_id}/result")
+def post_worker_asset_result(
+    job_id: str,
+    asset_id: str,
+    payload: ResultInput,
+    request: Request,
+    engine: Engine = Depends(get_engine),
+) -> dict[str, bool]:
+    """Apply one asset result from the assigned worker."""
+    try:
+        with engine.begin() as connection:
+            accepted = apply_asset_result(
+                connection,
+                job_id,
+                asset_id,
+                payload.worker_id,
+                payload.model_dump(exclude={"worker_id"}),
+                _utc_now(),
+                request.app.state.engine_config.max_attempts,
+            )
+    except JobNotFound as exc:
+        raise HTTPException(status_code=404, detail="Job nicht gefunden") from exc
+    except JobWorkerMismatch as exc:
+        raise HTTPException(status_code=403, detail="Job gehört einem anderen Worker") from exc
+    return {"accepted": accepted}
 
 
 @router.post("/jobs/{job_id}/result")

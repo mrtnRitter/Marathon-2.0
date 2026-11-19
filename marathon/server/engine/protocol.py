@@ -37,20 +37,18 @@ def register_worker(
     worker = connection.execute(
         text("SELECT status FROM workers WHERE id = :worker_id"), {"worker_id": worker_id}
     ).mappings().one_or_none()
-    priorities = {}
-    statement = text(
-        "INSERT INTO workers (id, name, status, capabilities, priorities, max_parallel, client_slots, "
-        "client_version, ip_address, last_seen, created_at) VALUES (:worker_id, :name, :status, "
-        ":capabilities, :priorities, :max_parallel, :max_parallel, :client_version, :ip_address, :now, :now)"
-    ).bindparams(bindparam("capabilities", type_=JSONB), bindparam("priorities", type_=JSONB))
 
     if worker is None:
-        status = "ready" if worker_id == "server-worker" else "new"
+        status = "ready" if worker_id == "server-worker" else "stopped"
+        statement = text(
+            "INSERT INTO workers (id, name, status, capabilities, skills, online, client_version, "
+            "ip_address, last_seen, created_at) VALUES (:worker_id, :name, :status, :capabilities, "
+            ":skills, true, :client_version, :ip_address, :now, :now)"
+        ).bindparams(bindparam("capabilities", type_=JSONB), bindparam("skills", type_=JSONB))
         connection.execute(statement, {
             "worker_id": worker_id, "name": payload["name"], "status": status,
-            "capabilities": payload["capabilities"], "priorities": priorities,
-            "max_parallel": payload["max_parallel"], "client_version": payload["client_version"],
-            "ip_address": ip_address, "now": now,
+            "capabilities": payload["capabilities"], "skills": payload["capabilities"],
+            "client_version": payload["client_version"], "ip_address": ip_address, "now": now,
         })
     else:
         jobs = list(connection.execute(
@@ -67,14 +65,12 @@ def register_worker(
         status_row = connection.execute(
             text(
                 "UPDATE workers SET client_version = :client_version, capabilities = :capabilities, "
-                "client_slots = :client_slots, ip_address = :ip_address, last_seen = :now, "
-                "status = CASE WHEN status = 'offline' THEN 'ready' ELSE status END "
+                "ip_address = :ip_address, last_seen = :now, online = true "
                 "WHERE id = :worker_id RETURNING status"
             ).bindparams(bindparam("capabilities", type_=JSONB)),
             {
                 "worker_id": worker_id, "client_version": payload["client_version"],
-                "capabilities": payload["capabilities"], "client_slots": payload["max_parallel"],
-                "ip_address": ip_address, "now": now,
+                "capabilities": payload["capabilities"], "ip_address": ip_address, "now": now,
             },
         ).mappings().one()
         status = status_row["status"]
@@ -82,18 +78,15 @@ def register_worker(
     return {
         "worker_id": worker_id,
         "status": status,
-        "protocol": 1,
+        "protocol": 2,
         "poll_timeout_s": config.poll_timeout_s,
     }
 
 
 def touch_worker(connection: Connection, worker_id: str, now: datetime) -> bool:
-    """Refresh a worker heartbeat, reviving it only when it was offline."""
+    """Refresh a worker heartbeat without changing its status."""
     result = connection.execute(
-        text(
-            "UPDATE workers SET last_seen = :now, "
-            "status = CASE WHEN status = 'offline' THEN 'ready' ELSE status END WHERE id = :worker_id"
-        ),
+        text("UPDATE workers SET last_seen = :now, online = true WHERE id = :worker_id"),
         {"worker_id": worker_id, "now": now},
     )
     return result.rowcount > 0
@@ -110,21 +103,24 @@ def poll_commands(connection: Connection, worker_id: str, running: Sequence[str]
         ), {"worker_id": worker_id}
     ).mappings()
     jobs = []
-    seen_jobs = set()
+    jobs_by_id = {}
     for row in job_rows:
-        if row["job_id"] in seen_jobs:
-            continue
-        seen_jobs.add(row["job_id"])
-        jobs.append({
-            "job_id": row["job_id"],
-            "type_id": row["type_id"],
-            "settings": row["settings"],
-            "asset": {
+        job = jobs_by_id.get(row["job_id"])
+        if job is None:
+            job = {
+                "job_id": row["job_id"],
+                "type_id": row["type_id"],
+                "settings": row["settings"],
+                "assets": [],
+            }
+            jobs_by_id[row["job_id"]] = job
+            jobs.append(job)
+        if row["asset_id"] is not None:
+            job["assets"].append({
                 "id": row["asset_id"],
                 "name": row["asset_name"],
                 "path": asset_file_path(row["metadata"] or {}),
-            },
-        })
+            })
 
     cancelling = list(connection.execute(
         text("SELECT id FROM jobs WHERE worker_id = :worker_id AND status = 'cancelling' ORDER BY id"),

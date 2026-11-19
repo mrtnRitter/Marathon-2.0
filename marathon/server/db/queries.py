@@ -80,11 +80,11 @@ def asset_totals(connection: Connection) -> dict[str, int]:
 
 
 _worker_select = (
-    "SELECT worker.id, worker.name, worker.status, worker.capabilities, worker.max_parallel, "
+    "SELECT worker.id, worker.name, worker.status, worker.online, worker.capabilities, worker.skills, "
     "(SELECT COUNT(*) FROM jobs WHERE jobs.status IN ('assigned', 'running', 'cancelling') "
     "AND jobs.worker_id = worker.id) AS running_jobs, worker.client_version, "
-    "COALESCE(worker.last_seen, worker.created_at) AS last_seen, worker.ip_address, "
-    "worker.priorities, worker.client_slots FROM workers AS worker "
+    "COALESCE(worker.last_seen, worker.created_at) AS last_seen, worker.ip_address "
+    "FROM workers AS worker "
 )
 
 

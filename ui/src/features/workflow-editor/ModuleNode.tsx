@@ -14,7 +14,7 @@ export function ModuleNode({ data, selected }: NodeProps<ModuleFlowNode>) {
   const update_node_internals = useUpdateNodeInternals()
   const previous_connection_state = useRef(connection_in_progress)
   const { module, module_type } = data
-  const counter_keys = module_type.id === 'watchfolder' ? ['discovered', 'waiting'] as const : ['waiting', 'running', 'done', 'failed'] as const
+  const counter_keys = module_type.id === 'wait' ? ['running', 'done', 'failed'] as const : module_type.id === 'watchfolder' ? ['discovered', 'waiting'] as const : ['waiting', 'running', 'done', 'failed'] as const
   const description = module.description?.trim() ?? ''
   const running = module.counters.running > 0
   const lock_icon = <Icon name="lock" size={13} />

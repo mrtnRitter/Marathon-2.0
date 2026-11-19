@@ -2,9 +2,8 @@
 
 export type AssetStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'on_hold'
 export type StepStatus = 'waiting' | 'running'
-export type WorkerStatus = 'new' | 'ready' | 'busy' | 'offline' | 'locked' | 'updating'
+export type WorkerStatus = 'ready' | 'stopping' | 'stopped'
 export type JobStatus = 'open' | 'assigned' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
-export type WorkerPriority = 'preferred' | 'normal' | 'last' | 'off'
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export interface PrioEntry { name: string; metadata: Record<string, unknown> }
 
@@ -145,6 +144,8 @@ export interface LogLine {
   ts: string
   level: LogLevel
   text: string
+  asset?: string | null
+  worker?: string | null
 }
 
 export interface AssetDetail extends Asset {
@@ -169,10 +170,9 @@ export interface Worker {
   id: string
   name: string
   status: WorkerStatus
+  online: boolean
   capabilities: string[]
-  max_parallel: number
-  priorities: Record<string, WorkerPriority>
-  client_slots: number
+  skills: string[]
   running_jobs: number
   client_version: string
   last_seen: string
@@ -218,8 +218,11 @@ export interface GraphImpact {
 
 export interface WorkerInput {
   name: string
-  max_parallel: number
-  priorities: Record<string, WorkerPriority>
+  skills: string[]
+}
+
+export interface Settings {
+  folder_dialog: { server_address: string }
 }
 
 export interface WorkflowInput {

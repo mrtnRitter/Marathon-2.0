@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ApiError, list_dirs } from '../data/api'
+import { ApiError, get_settings, list_dirs } from '../data/api'
 import { filter_dirs } from '../lib/folder_filter'
+import { folder_mode, server_root } from '../lib/folder_mode'
 import type { DirListing } from '../data/types'
 import { Icon } from './Icon'
 import { Toolbar } from './Toolbar'
@@ -24,6 +25,8 @@ export function FolderDialog({ open, initial_path, on_select, on_close }: Props)
   const [path_input, set_path_input] = useState('')
   const [loading, set_loading] = useState(false)
   const [error, set_error] = useState<string | null>(null)
+  const [server_address, set_server_address] = useState<string | null>(null)
+  const [server_settings_loaded, set_server_settings_loaded] = useState(false)
 
   const load_dirs = useCallback(async (path: string | null, preserve_error = false, fallback_to_roots = false): Promise<void> => {
     const current_request = ++request_number.current
@@ -69,6 +72,21 @@ export function FolderDialog({ open, initial_path, on_select, on_close }: Props)
 
   useEffect(() => {
     if (!open) return
+    let active = true
+    set_server_address(null)
+    set_server_settings_loaded(false)
+    void get_settings().then(settings => {
+      if (!active) return
+      set_server_address(settings.folder_dialog.server_address)
+      set_server_settings_loaded(true)
+    }).catch(() => {
+      if (active) set_server_settings_loaded(true)
+    })
+    return () => { active = false }
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
     path_input_ref.current?.focus()
   }, [open])
 
@@ -87,6 +105,7 @@ export function FolderDialog({ open, initial_path, on_select, on_close }: Props)
   if (!open) return null
 
   const is_host_root = listing?.path !== null && listing?.path !== undefined && /^\\\\[^\\/]+[\\/]?$/.test(listing.path)
+  const active_mode = folder_mode(listing?.path)
   const visible_dirs = listing ? filter_dirs(listing.dirs, listing.path, path_input) : []
 
   const actions = [
@@ -135,9 +154,21 @@ export function FolderDialog({ open, initial_path, on_select, on_close }: Props)
             <button type="button" className="button" onClick={() => void load_dirs(listing?.parent ?? null)} disabled={!listing || loading}>
               <Icon name="arrow-up" size={14} /><span>Nach oben</span>
             </button>
-            <button type="button" className="button" onClick={() => void load_dirs(null)} disabled={loading}>
-              <Icon name="server" size={14} /><span>Laufwerke</span>
-            </button>
+            <div className="folder-dialog-mode-switch" role="group" aria-label="Ordnerquelle">
+              <button type="button" className={`button folder-dialog-mode${active_mode === 'drives' ? ' active' : ''}`} aria-pressed={active_mode === 'drives'} onClick={() => void load_dirs(null)} disabled={loading}>
+                <span>Laufwerke</span>
+              </button>
+              <button type="button" className={`button folder-dialog-mode${active_mode === 'server' ? ' active' : ''}`} aria-pressed={active_mode === 'server'} onClick={() => {
+                const path = server_root(server_address ?? '')
+                if (!path) {
+                  set_error('Keine Server-Adresse eingestellt (Einstellungen)')
+                  return
+                }
+                void load_dirs(path)
+              }} disabled={loading || !server_settings_loaded}>
+                <span>Server</span>
+              </button>
+            </div>
           </div>
           {loading && <div className="folder-dialog-loading" role="status">Lade …</div>}
           {error && <div className="form-field-error" role="alert">{error}</div>}

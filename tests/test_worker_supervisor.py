@@ -40,11 +40,10 @@ def test_server_url():
 
 
 def test_server_worker_command():
-    command = server_worker_command("http://127.0.0.1:8080", ServerWorkerConfig(max_parallel=2))
+    command = server_worker_command("http://127.0.0.1:8080", ServerWorkerConfig())
     assert command == [
         sys.executable, "-m", "marathon.worker", "--server", "http://127.0.0.1:8080",
-        "--worker-id", "server-worker", "--name", "Server-Worker", "--max-parallel", "2",
-        "--exit-on-stdin-eof",
+        "--worker-id", "server-worker", "--name", "Server-Worker", "--exit-on-stdin-eof",
     ]
 
 

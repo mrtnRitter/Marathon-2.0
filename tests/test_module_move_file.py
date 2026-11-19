@@ -23,12 +23,38 @@ def test_catalog_contains_move_file_module():
     assert spec == {key: MODULE[key] for key in spec}
     assert spec["has_input"] is True
     assert [output["id"] for output in spec["outputs"]] == ["success", "error"]
-    assert [setting["key"] for setting in spec["settings"]] == ["target"]
+    assert [setting["key"] for setting in spec["settings"]] == ["target", "parallel"]
+    assert spec["settings"][-1] == {
+        "key": "parallel",
+        "label": "Parallele Verarbeitung",
+        "type": "number",
+        "default": 1,
+        "min": 1,
+        "max": 16,
+        "help": "So viele Assets bearbeitet ein Job gleichzeitig, jedes in einem eigenen Strom",
+    }
 
 
 def test_validate_settings_requires_absolute_target(tmp_path):
     assert validate_settings({"target": str(tmp_path)}) == {}
     assert validate_settings({}) == {"target": "Ordner fehlt"}
+
+@pytest.mark.parametrize("parallel", [1, 16])
+def test_validate_parallel_setting_accepts_bounds(tmp_path, parallel):
+    assert validate_settings({"target": str(tmp_path), "parallel": parallel}) == {}
+
+
+@pytest.mark.parametrize("parallel", [0, 17, 2.5, True, "2"])
+def test_validate_parallel_setting_rejects_invalid_values(tmp_path, parallel):
+    assert validate_settings({"target": str(tmp_path), "parallel": parallel}) == {
+        "parallel": "Ganze Zahl von 1 bis 16",
+    }
+
+
+def test_run_invalid_parallel_raises_labeled_value_error(tmp_path):
+    job = ModuleJob("source", {"target": str(tmp_path), "parallel": 0}, threading.Event())
+    with pytest.raises(ValueError, match="Parallele Verarbeitung: Ganze Zahl von 1 bis 16"):
+        run(job)
 
 
 def test_run_moves_file_on_same_filesystem(tmp_path):

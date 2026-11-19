@@ -111,7 +111,7 @@ export function PrioListField({ value, on_change, disabled = false }: Props) {
                     {!disabled && open_menu === index && (
                       <div className="priolist-menu" role="menu">
                         <button type="button" role="menuitem" onClick={() => { set_open_menu(null); not_available() }}>
-                          <Icon name="pencil" /> Metadaten bearbeiten
+                          <Icon name="pencil" /> Bearbeiten
                         </button>
                         <button type="button" role="menuitem" onClick={() => {
                           on_change(value.filter((_, item_index) => item_index !== index))

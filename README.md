@@ -2,7 +2,7 @@
 
 Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Version 2.0.0).
 
-**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und stoppen und zeitgesteuert laufen lassen (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuerter Workflow bleibt aktiv und wartet zwischen den Läufen auf den nächsten Termin. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Gestartete Workflows verarbeiten ihre Assets: Die Engine teilt Jobs an Worker zu; der Server bringt dafür einen eigenen Server-Worker mit (siehe [Engine und Worker](#engine-und-worker)). Alle Ansichten aktualisieren sich über einen Live-Kanal in Echtzeit; ist der Server nicht erreichbar, sperrt der Hinweis „Keine Verbindung zum Marathon-Server“ die Oberfläche, bis die Verbindung zurück ist. Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
+**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und stoppen und zeitgesteuert laufen lassen (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuerter Workflow bleibt aktiv und wartet zwischen den Läufen auf den nächsten Termin. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Gestartete Workflows verarbeiten ihre Assets: Die Engine teilt Jobs an Worker zu; der Server bringt dafür einen eigenen Server-Worker mit (siehe [Engine und Worker](#engine-und-worker)). Alle Ansichten aktualisieren sich über einen Live-Kanal in Echtzeit; ist der Server nicht erreichbar, sperrt der Hinweis „Keine Verbindung zum Marathon-Server“ die Oberfläche, bis die Verbindung zurück ist. Worker lassen sich starten und stoppen; ihre Fähigkeiten stehen in einer Rangliste. Die Einstellungsseite speichert in die Datenbank (siehe [Einstellungen](#einstellungen)). Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
 
 ## Voraussetzungen
 
@@ -79,30 +79,41 @@ Datei `config/marathon.toml`:
 | `[database] port` | Port der Datenbank | `5433` |
 | `[database] name` | Name der Datenbank | `marathon` |
 | `[database] user` | Datenbank-Benutzer; wird beim ersten `build.py` angelegt | `marathon` |
-
 | `[engine] tick_interval_s` | Takt der Engine in Sekunden (0.05–10) | `0.5` |
 | `[engine] poll_timeout_s` | So lange hält der Server die Anfrage eines Workers offen (1–60 s) | `25` |
 | `[engine] worker_timeout_s` | Ohne Meldung gilt ein Worker danach als ausgefallen (10–600 s) | `30` |
 | `[engine] pickup_timeout_s` | Abhol-Frist für zugeteilte Jobs (1–600 s) | `10` |
 | `[engine] max_attempts` | Unterbrochene Versuche je Asset und Modul (1–10) | `3` |
 | `[server_worker] enabled` | Server-Worker mit dem Server starten | `true` |
-| `[server_worker] max_parallel` | Parallele Jobs des Server-Workers (1–64); gilt auch für den schon angemeldeten Server-Worker | `1` |
+| `[server_worker] skills` | Fähigkeiten des Server-Workers ab Werk, oben = höchste Prio (Modultyp-IDs, ohne Doppelte) | `["copy_file", "move_file", "rename_file"]` |
+| `[folder_dialog] server_address` | Server-Adresse für den Ordner-Dialog ab Werk (Rechnername oder IP, leer = keine) | `""` |
+
+`[server_worker] skills` und `[folder_dialog] server_address` sind Standardwerte: Sie gehen beim Start mit `python run.py` in die Datenbank, solange dort noch kein Wert steht. Danach gilt die Datenbank, geändert wird in der Oberfläche (Worker-Seite bzw. Einstellungen).
 
 `name` und `user` erlauben nur Kleinbuchstaben, Ziffern und `_`. Den Benutzer nach dem Einrichten nicht mehr ändern, sonst die Datenbank zurücksetzen.
 
 ## Engine und Worker
 
-- **Server-Worker:** startet mit `python run.py` als eigener Prozess und meldet sich wie jeder Worker beim Server an (Worker-ID `server-worker`, Name „Server-Worker“; der Name gilt bei der ersten Anmeldung, danach auf der Worker-Seite änderbar). Stürzt er ab, startet der Server ihn neu. Ausgaben: `.data/server-worker.log`.
+- **Server-Worker:** startet mit `python run.py` als eigener Prozess und meldet sich wie jeder Worker beim Server an (Worker-ID `server-worker`, Name „Server-Worker“; der Name gilt bei der ersten Anmeldung, danach auf der Worker-Seite änderbar). Er ist ab Werk gestartet und wird wie jeder Worker auf der Worker-Seite eingestellt. Stürzt er ab, startet der Server ihn neu. Ausgaben: `.data/server-worker.log`.
 - **Zugang:** Worker melden sich mit dem Token aus `.data/worker.token` an; der Server legt die Datei beim ersten Bedarf an.
-- **Zuteilung:** Der Server teilt Jobs an Worker mit freiem Platz zu, die den Modultyp anbieten; laufende Workflows kommen reihum dran, im Workflow das oberste Asset zuerst. Worker holen ihre Jobs über eine offen gehaltene Anfrage ab.
-- **Worker-Seite:** Neue Worker freigeben, Worker sperren (laufende Jobs laufen weiter), bearbeiten: Name, parallele Jobs und Vorrang je Modultyp (Bevorzugt, Normal, Letzte Wahl, Aus).
-- **Stoppen:** bricht laufende Jobs ab; das Asset geht zurück an den Ausgang des vorherigen Moduls. Bis alle Jobs abgebrochen sind, zeigt der Workflow „Wird gestoppt“ und lässt sich nicht starten. Status: „aktiv“ oder „gestoppt“.
+- **Zuteilung:** Ein Worker macht höchstens einen Job gleichzeitig. Ein Job geht an den gestarteten, erreichbaren Worker ohne Job, bei dem der Modultyp in seiner Fähigkeiten-Liste am weitesten oben steht; bei gleichem Rang entscheidet der Name. Beispiel: Worker A [Datei kopieren, Datei verschieben], Worker B [Datei verschieben, Datei kopieren] → Kopieren vorrangig an A, Verschieben an B; ist A belegt, kopiert B. Laufende Workflows kommen reihum dran, im Workflow das oberste Asset zuerst. Ein Job bündelt bis zu so viele Assets desselben Moduls, wie dessen „Parallele Verarbeitung“ erlaubt; der Worker bearbeitet sie gleichzeitig und meldet das Ergebnis je Asset. Worker holen ihre Jobs über eine offen gehaltene Anfrage ab.
+- **Worker-Seite:** Starten / Stoppen in der Kopfleiste (für die Auswahl) oder direkt in der Zeile. Status „bereit“, „Wird gestoppt“ oder „gestoppt“; daneben „Online“ / „Offline“; die Spalte „Jobs“ zeigt die laufenden Jobs. Ein neuer Worker meldet sich „gestoppt“ an und bekommt erst nach „Starten“ Jobs. Bearbeiten: Name und Fähigkeiten als sortierbare Liste – weiter oben = höhere Priorität, nicht in der Liste = übernimmt diesen Modultyp nicht; wählbar sind nur Modultypen, die der Rechner meldet. Neue Worker haben ab Werk alle gemeldeten Modultypen in der Liste.
+- **Worker stoppen:** bricht alle laufenden Jobs des Workers ab; unfertige Ergebnisse werden verworfen, das Asset geht zurück an den Ausgang des letzten fertigen Moduls und wird neu verteilt. Der Abbruch zählt nicht als Versuch. Bis alle Jobs abgebrochen sind, zeigt der Worker „Wird gestoppt“ und lässt sich nicht starten.
+- **Workflow stoppen:** bricht laufende Jobs ab; das Asset geht zurück an den Ausgang des vorherigen Moduls. Bis alle Jobs abgebrochen sind, zeigt der Workflow „Wird gestoppt“ und lässt sich nicht starten. Status: „aktiv“ oder „gestoppt“.
 - **Zeitgesteuert:** Ein gestarteter zeitgesteuerter Workflow bleibt „aktiv“. Er wartet auf den nächsten Termin, läuft dann, bis kein Asset mehr aussteht oder in Arbeit ist, und wartet wieder. In der Wartezeit entstehen keine Jobs und der Watchfolder scannt nicht. Ein Lauf endet erst, wenn jeder Watchfolder seit Laufbeginn gescannt hat und keine Datei mehr auf Stabilität wartet.
-- **Ausfälle:** Meldet sich ein Worker 30 s nicht oder startet er neu, wird sein Job erneut vergeben. Nach 3 unterbrochenen Versuchen am selben Modul ist das Asset fehlgeschlagen.
+- **Ausfälle:** Meldet sich ein Worker 30 s nicht, gilt er als offline; startet er neu oder fällt er aus, wird sein Job erneut vergeben. Nach 3 unterbrochenen Versuchen am selben Modul ist das Asset fehlgeschlagen.
 - **Workflow ändern:** jederzeit speichern. Betrifft die Änderung laufende Assets (z. B. gelöschtes Modul), zeigt die Workflow-Ansicht vorher eine Warnung und speichert erst nach Bestätigung. Die Warnung nennt, wie viele Assets ab dem vorherigen Modul neu verteilt, als erledigt abgeschlossen oder als fehlgeschlagen markiert werden und wie viele Jobs abgebrochen werden.
-- **Überwachen:** Die Zähler in den Modulen aktualisieren sich bei Datenänderungen live. Ein Klick auf ein Modul zeigt Jobs, Assets, Worker, Logs und im Reiter „Einstellungen“ die Moduleinstellungen (nur lesen). Ein Doppelklick wechselt zu „Bearbeiten“, das Modul ist markiert und seine Einstellungen sind offen.
-- **Verbinden (Bearbeiten):** Verbindungen von einem Ausgang („Erfolg“, „Fehler“ …) ziehen und über dem Ziel-Modul loslassen; die Linie rastet am Eingang ein. Ziehen am verbundenen Eingang löst die zuletzt angelegte Verbindung: auf einem anderen Eingang loslassen verbindet neu, sonst wird sie entfernt.
-- **Erneut verarbeiten:** Das Asset beginnt am Anfang des Workflows, hinter Watchfolder bzw. am Modul ohne eingehende Verbindung.
+- **Überwachen:** Die Zähler in den Modulen aktualisieren sich bei Datenänderungen live. Ein Klick auf ein Modul zeigt Jobs, Assets, Worker, Logs und im Reiter „Einstellungen“ die Moduleinstellungen (ausgegraut, nur lesen). Der Reiter „Logs“ zeigt jede Aktivität des Moduls (die neuesten 500 Einträge) mit Zeit, Stufe, Asset, Worker und Text, z. B. „Zugeteilt an …“ und „Ergebnis: Erfolg“. „erledigt“ zählt Assets, die das Modul ohne Fehler verlassen haben. Ein Doppelklick wechselt zu „Bearbeiten“, das Modul ist markiert und seine Einstellungen sind offen.
+- **Verbinden (Bearbeiten):** Verbindungen von einem Ausgang („Erfolg“, „Fehler“ …) ziehen und über dem Ziel-Modul loslassen; die Linie rastet am Eingang ein. Anfang und Ende der Linie liegen am Rand der Kreise. Ziehen am verbundenen Eingang löst die zuletzt angelegte Verbindung: auf einem anderen Eingang loslassen verbindet neu, sonst wird sie entfernt.
+- **Erneut verarbeiten:** Das Asset beginnt am Anfang des Workflows, hinter Watchfolder bzw. am Modul ohne eingehende Verbindung. Es gibt keine Obergrenze für die Zahl der gewählten Assets.
+
+## Einstellungen
+
+Die Seite „Einstellungen“ speichert in die Datenbank („Speichern“).
+
+| Einstellung | Bedeutung | Standard |
+|---|---|---|
+| Ordner-Dialog: Server-Adresse | Rechnername oder IP-Adresse, z. B. `10.0.77.11`. „Server“ im Fenster „Ordner wählen“ zeigt die Freigaben von `\\<Adresse>`. | aus `[folder_dialog] server_address` |
 
 ## Workflows mit fehlerhaften Einstellungen
 
@@ -127,7 +138,7 @@ Datei `config/marathon.toml`:
 | Unterordner einbeziehen | Auch Dateien in Unterordnern übernehmen. | aus |
 
 - Pfade gelten aus Sicht des Servers. Das Konto, unter dem der Server läuft, braucht Lesezugriff auf den Ordner bzw. die Netzfreigabe.
-- Das Fenster „Ordner wählen“ zeigt nur Ordnernamen des Servers, keine Dateien. Die Eingabe `\\rechner` (z. B. `\\10.0.77.11`) zeigt die Freigaben dieses Rechners, von dort lässt sich weiter durchblättern (nur auf einem Windows-Server). Den Rechner selbst kann man nicht als Ordner wählen.
+- Das Fenster „Ordner wählen“ zeigt nur Ordnernamen des Servers, keine Dateien. Die Eingabe `\\rechner` (z. B. `\\10.0.77.11`) zeigt die Freigaben dieses Rechners, von dort lässt sich weiter durchblättern (nur auf einem Windows-Server). Den Rechner selbst kann man nicht als Ordner wählen. Der Umschalter „Laufwerke“ | „Server“ wechselt zwischen den Laufwerken und den Freigaben der eingestellten Server-Adresse (siehe [Einstellungen](#einstellungen)); ohne Adresse erscheint „Keine Server-Adresse eingestellt (Einstellungen)“.
 - Jede Datei wird je Pfad einmal übernommen. Eine unter gleichem Namen ersetzte Datei wird derzeit nicht erneut übernommen. Wird ein Asset gelöscht und liegt die Datei noch im Ordner, wird sie erneut übernommen.
 - Das Modul zeigt in „Überwachen“, wie viele Dateien es erfasst hat (Assets, die noch existieren) und wie viele warten.
 - Im Fenster „Ordner wählen“ filtert das Weitertippen im Adressfeld die Liste auf passende Ordner.
@@ -138,7 +149,7 @@ Warten, Datei kopieren, Datei verschieben und Umbenennen lassen sich im Workflow
 
 ### Warten (Kategorie „Steuerung“)
 
-Hält jedes Asset eine einstellbare Zeit an und gibt es dann über „Erfolg“ weiter. Für kurze Zeitspannen gedacht.
+Hält jedes Asset eine einstellbare Zeit an und gibt es dann über „Erfolg“ weiter. Für kurze Zeitspannen gedacht. Die Wartezeit gilt je Asset und beginnt, sobald das vorherige Modul es übergibt; das Modul zeigt „läuft“, „erledigt“ und „Fehler“ und führt jede Wartezeit als Job (ohne Worker).
 
 | Einstellung | Bedeutung | Standard |
 |---|---|---|
@@ -153,6 +164,7 @@ Kopiert die Datei des Assets unter ihrem Originalnamen in den Zielordner. Ausgä
 | Zielordner | Absoluter Pfad, Laufwerksbuchstabe oder Netzpfad | – |
 | Checksumme | `Keine`, `MD5` oder `SHA-256` | Keine |
 | Namenskonflikt lösen | Ist der Name im Ziel belegt, wird `_1`, `_2` … vor der Endung angehängt | aus |
+| Parallele Verarbeitung | So viele Assets bearbeitet ein Job gleichzeitig, jedes in einem eigenen Strom (1–16) | 1 |
 
 - Ohne Checksumme gilt die Kopie als erfolgreich, sobald das Betriebssystem den Schreibvorgang bestätigt. Mit Checksumme wird die Kopie nachgelesen; stimmen die Prüfsummen nicht, wird die Kopie gelöscht und das Asset geht auf „Fehler“.
 - Erfolg: Das Original ist im Durchlauf beendet (Log „Kopiert nach …“). Die Kopie wird ein neues Asset (Log „Kopie von …“) und läuft über „Erfolg“ weiter.
@@ -166,6 +178,7 @@ Verschiebt die Datei des Assets unter ihrem Originalnamen in den Zielordner. Aus
 | Einstellung | Bedeutung | Standard |
 |---|---|---|
 | Zielordner | Absoluter Pfad, Laufwerksbuchstabe oder Netzpfad | – |
+| Parallele Verarbeitung | So viele Assets bearbeitet ein Job gleichzeitig, jedes in einem eigenen Strom (1–16) | 1 |
 
 - Auf demselben Laufwerk bzw. derselben Freigabe verschiebt das Betriebssystem die Datei direkt.
 - Liegt das Ziel auf einem anderen Laufwerk, wird die Datei kopiert und die Quelle gelöscht – ohne Checksumme. Das Log weist darauf hin.
@@ -188,7 +201,7 @@ Präfix oder Suffix muss gesetzt sein. Nicht erlaubt sind `/ \ : * ? " < > |` un
 Liste von Einträgen mit Namen, z. B. „Kollektion Defa“, „Kollektion Cintec“. Die Position in der Liste ist die Priorität (Spalte „Prio“). Kein Eingang; der Ausgang „Prioliste“ wird zusätzlich zum Asset-Fluss mit dem Eingang des Moduls verbunden, das die Assets danach verarbeiten soll.
 
 - In den Moduleinstellungen: „Eintrag hinzufügen“, Name direkt bearbeiten, Pfeile zum Hoch- und Runtersetzen.
-- Drei-Punkte-Menü: „Metadaten bearbeiten“ (noch nicht verfügbar) und „Entfernen“.
+- Drei-Punkte-Menü: „Bearbeiten“ (noch nicht verfügbar) und „Entfernen“.
 - Namen sind Pflicht und eindeutig (Groß-/Kleinschreibung zählt nicht).
 
 ## Tests (optional)
@@ -214,7 +227,7 @@ Die Datenbank-Tests starten eine eigene, temporäre PostgreSQL-Instanz mit den P
 ```
 build.py               Einrichten und Bauen
 run.py                 Starten
-config/marathon.toml   Server-, Datenbank-, Engine- und Server-Worker-Einstellungen
+config/marathon.toml   Server-, Datenbank-, Engine-, Server-Worker- und Ordner-Dialog-Einstellungen
 requirements/          Python-Abhängigkeiten (server.txt)
 marathon/common/       Gemeinsame Grundlage (Version)
 marathon/worker/       Worker-Laufzeit (python -m marathon.worker)

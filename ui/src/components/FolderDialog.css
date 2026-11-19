@@ -18,3 +18,6 @@
 .folder-dialog-entry { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: var(--space-2); color: var(--text); text-align: left; background: transparent; border: 0; border-radius: var(--radius-sm); cursor: pointer; }
 .folder-dialog-entry:hover:not(:disabled) { background: var(--bg-hover); }
 .folder-dialog-entry:disabled { opacity: 0.6; cursor: default; }
+
+.folder-dialog-mode-switch { display: inline-flex; flex: none; gap: var(--space-1); }
+.folder-dialog-mode.active { background: var(--accent); border-color: var(--accent); color: var(--text-inverse); font-weight: 500; }

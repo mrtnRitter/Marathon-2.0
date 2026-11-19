@@ -11,6 +11,7 @@ from marathon.server.app import create_app
 from marathon.server.db.engine import create_db_engine
 from marathon.server.config import DatabaseConfig
 from records import insert_records
+from marathon.server.db.asset_writes import reprocess_assets
 
 
 fixed_now = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -154,3 +155,41 @@ def test_in_progress_conflict_uses_input_order(api_client):
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Asset „a-waiting“ wird gerade verarbeitet"
+
+
+class _ReprocessResult:
+    def __init__(self, rows=()):
+        self.rows = rows
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return self.rows
+
+
+class _ReprocessConnection:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def execute(self, statement, params=None):
+        if "FROM assets a JOIN workflows w" in str(statement):
+            return _ReprocessResult(self.rows)
+        return _ReprocessResult()
+
+
+def test_reprocess_more_than_1000_assets_is_not_rejected():
+    asset_ids = [f"asset-{index}" for index in range(1001)]
+    rows = [
+        {
+            "id": asset_id,
+            "workflow_id": "wf-a",
+            "name": asset_id,
+            "status": "pending",
+            "metadata": {},
+            "workflow_name": "Alpha",
+        }
+        for asset_id in asset_ids
+    ]
+
+    assert reprocess_assets(_ReprocessConnection(rows), asset_ids, None) == asset_ids

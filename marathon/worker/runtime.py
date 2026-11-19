@@ -24,11 +24,9 @@ logger = logging.getLogger("marathon.worker")
 @dataclass
 class _RunningJob:
     job_id: str
-    asset_path: str
-    settings: Mapping[str, Any]
     stop: threading.Event = field(default_factory=threading.Event)
-    done: threading.Event = field(default_factory=threading.Event)
-    thread: threading.Thread | None = None
+    threads: list[threading.Thread] = field(default_factory=list)
+    remaining_assets: int = 0
 
 
 def worker_capabilities() -> list[str]:
@@ -45,7 +43,6 @@ class WorkerRuntime:
         token: str,
         worker_id: str,
         name: str,
-        max_parallel: int,
         capabilities: Sequence[str],
         resolve_module: Callable[[str], Any | None] = catalog_module,
         request_timeout_s: float = 10.0,
@@ -54,8 +51,6 @@ class WorkerRuntime:
         result_deadline_s: float = 120.0,
         shutdown_timeout_s: float = 10.0,
     ) -> None:
-        if max_parallel < 1:
-            raise ValueError("max_parallel muss mindestens 1 sein")
         if request_timeout_s <= 0 or result_retry_s < 0 or result_deadline_s < 0 or shutdown_timeout_s < 0:
             raise ValueError("Zeitlimits müssen gültig und nicht negativ sein")
         if any(delay < 0 for delay in retry_delays_s):
@@ -64,7 +59,6 @@ class WorkerRuntime:
         self.token = token
         self.worker_id = worker_id
         self.name = name
-        self.max_parallel = max_parallel
         self.capabilities = list(capabilities)
         self.resolve_module = resolve_module
         self.request_timeout_s = request_timeout_s
@@ -131,8 +125,7 @@ class WorkerRuntime:
             "name": self.name,
             "client_version": app_version,
             "capabilities": self.capabilities,
-            "max_parallel": self.max_parallel,
-            "protocol": 1,
+            "protocol": 2,
         }
         attempt = 0
         while not stop.is_set():
@@ -182,37 +175,52 @@ class WorkerRuntime:
         job_id = str(offered.get("job_id", ""))
         if not job_id:
             return None, False
+        offered_assets = offered.get("assets")
+        if not isinstance(offered_assets, list):
+            return None, False
+        assets = [
+            asset for asset in offered_assets
+            if isinstance(asset, Mapping) and asset.get("id") not in (None, "")
+        ]
+        if not assets:
+            return None, False
         with self._jobs_lock:
-            if job_id in self._jobs or len(self._jobs) >= self.max_parallel:
+            if job_id in self._jobs or self._jobs:
                 return None, False
         status, _ = self._post_interruptible(
             f"/worker/jobs/{job_id}/start", {"worker_id": self.worker_id}, self.request_timeout_s, stop
         )
         if status != 200:
             return (3 if status == 401 else None), False
-        asset = offered.get("asset") or {}
-        state = _RunningJob(job_id, str(asset.get("path", "")), offered.get("settings") or {})
+        state = _RunningJob(job_id, remaining_assets=len(assets))
         with self._jobs_lock:
-            if job_id in self._jobs or len(self._jobs) >= self.max_parallel:
-                state.stop.set()
+            if self._jobs:
                 return None, False
             self._jobs[job_id] = state
-        state.thread = threading.Thread(
-            target=self._run_job,
-            args=(state, str(offered.get("type_id", ""))),
-            name=f"marathon-job-{job_id}",
-            daemon=True,
-        )
-        state.thread.start()
+        type_id = str(offered.get("type_id", ""))
+        settings = offered.get("settings") or {}
+        state.threads = [
+            threading.Thread(
+                target=self._run_asset,
+                args=(state, type_id, str(asset["id"]), str(asset.get("path", "")), settings),
+                name=f"marathon-asset-{job_id}-{asset['id']}",
+                daemon=True,
+            )
+            for asset in assets
+        ]
+        for thread in state.threads:
+            thread.start()
         return None, True
 
-    def _job_result(self, state: _RunningJob, type_id: str) -> dict[str, Any]:
+    def _job_result(
+        self, type_id: str, asset_path: str, settings: Mapping[str, Any], stop: threading.Event
+    ) -> dict[str, Any]:
         base = {"worker_id": self.worker_id}
         try:
             module = self.resolve_module(type_id)
             if module is None:
                 return {**base, "outcome": "error", "error": f"Modultyp unbekannt: {type_id}"}
-            result = module.run(ModuleJob(state.asset_path, state.settings, state.stop))
+            result = module.run(ModuleJob(asset_path, settings, stop))
         except JobStopped:
             return {**base, "outcome": "cancelled"}
         except Exception as error:
@@ -232,7 +240,7 @@ class WorkerRuntime:
             "spawned": spawned,
         }
 
-    def _send_result(self, state: _RunningJob, payload: Mapping[str, Any]) -> None:
+    def _send_result(self, state: _RunningJob, asset_id: str, payload: Mapping[str, Any]) -> None:
         deadline = time.monotonic() + self.result_deadline_s
         shutdown_attempted = False
         while True:
@@ -242,7 +250,7 @@ class WorkerRuntime:
             if shutting_down:
                 shutdown_attempted = True
             status, _ = self._post(
-                f"/worker/jobs/{state.job_id}/result", payload, self.request_timeout_s
+                f"/worker/jobs/{state.job_id}/assets/{asset_id}/result", payload, self.request_timeout_s
             )
             if status is not None and 200 <= status < 300 or status in (403, 404):
                 return
@@ -254,14 +262,22 @@ class WorkerRuntime:
             if self._stop.wait(min(self.result_retry_s, remaining)):
                 continue
 
-    def _run_job(self, state: _RunningJob, type_id: str) -> None:
+    def _run_asset(
+        self,
+        state: _RunningJob,
+        type_id: str,
+        asset_id: str,
+        asset_path: str,
+        settings: Mapping[str, Any],
+    ) -> None:
         try:
-            self._send_result(state, self._job_result(state, type_id))
+            self._send_result(state, asset_id, self._job_result(type_id, asset_path, settings, state.stop))
         finally:
             with self._jobs_lock:
-                if self._jobs.get(state.job_id) is state:
+                state.remaining_assets -= 1
+                if state.remaining_assets == 0 and self._jobs.get(state.job_id) is state:
+                    # Keep the job running until results are sent; otherwise the server may mark it stale.
                     del self._jobs[state.job_id]
-            state.done.set()
 
     def _handle_poll(self, response: Mapping[str, Any], stop: threading.Event) -> tuple[int | None, bool]:
         activity = False
@@ -287,17 +303,16 @@ class WorkerRuntime:
         stop.set()
         with self._jobs_lock:
             jobs = list(self._jobs.values())
+        threads: list[threading.Thread] = []
         for state in jobs:
             state.stop.set()
+            threads.extend(state.threads)
         deadline = time.monotonic() + self.shutdown_timeout_s
-        while True:
-            pending = [state for state in jobs if not state.done.is_set()]
-            if not pending:
-                return
+        for thread in threads:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return
-            pending[0].done.wait(min(remaining, 0.05))
+            thread.join(remaining)
 
     def run(self, stop: threading.Event) -> int:
         self._stop = stop

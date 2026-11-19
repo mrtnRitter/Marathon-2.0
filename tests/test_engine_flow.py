@@ -390,3 +390,17 @@ def test_fail_asset_writes_history_and_log(db_engine):
         "level": "error",
         "text": "Fehler aufgetreten",
     }]
+
+
+
+def test_fail_asset_log_records_asset_id(db_engine):
+    workflow_id = _workflow(db_engine, [_module("copy", "copy_file")])
+    _asset(db_engine, workflow_id, "logged-failure", status="in_progress", current_module_id="copy", step_status="waiting")
+    with db_engine.begin() as connection:
+        fail_asset(connection, "logged-failure", "Testfehler")
+    with db_engine.connect() as connection:
+        log = connection.execute(
+            text("SELECT asset_id, text FROM log_lines WHERE workflow_id = :workflow_id ORDER BY id DESC LIMIT 1"),
+            {"workflow_id": workflow_id},
+        ).mappings().one()
+    assert (log["asset_id"], log["text"]) == ("logged-failure", "Testfehler")

@@ -49,6 +49,8 @@ def test_dashboard_returns_totals_workflows_and_workers(api_client, db_engine):
     with db_engine.connect() as connection:
         assert data["totals"] == _asset_counts(connection)
     assert len(data["workers"]) == 2
+    assert all("online" in worker and "skills" in worker for worker in data["workers"])
+    assert all(not {"max_parallel", "priorities", "client_slots"} & worker.keys() for worker in data["workers"])
 
 
 def test_workflows_are_ordered_and_have_complete_asset_counts(api_client, db_engine):
