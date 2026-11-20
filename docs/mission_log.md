@@ -45,17 +45,17 @@ Reihenfolge = Umsetzungsreihenfolge. `Offen:` klären wir je Release Punkt für 
 Vertrag: noch nicht in `docs/spec.md`; wird nach Klärung der offenen Punkte ergänzt
 
 - [ ] Server spricht HTTPS; `public_url` ist eine `https://`-Adresse; Grundlage für Session-Cookies (`Secure`), Magic-Links, Worker-Tokens und die Rechner-Erkennung im Browser (Browser erlauben den Zugriff auf `127.0.0.1` nur von HTTPS-Seiten)
-  - Offen: Woher kommt das Zertifikat – interne Firmen-CA, eigene Marathon-CA aus `build.py`, gekauftes Zertifikat oder Reverse-Proxy vor Marathon?
-  - Offen: Unter welchem Rechnernamen ist der Server erreichbar? Das Zertifikat gilt für einen Namen, nicht für wechselnde IP-Adressen
-  - Offen: Wie kommt das Vertrauen in das Zertifikat auf die Arbeitsplätze (Gruppenrichtlinie, manueller Import, öffentliche CA)?
-  - Offen: Laufzeit und Erneuerung des Zertifikats – wer erneuert, und wie wird vor Ablauf gewarnt?
-  - Offen: Pfad zu Zertifikat und Schlüssel in `config/marathon.toml`; Schlüsseldatei unter `.data/` oder anderswo?
+  - Offen: Woher kommt das Zertifikat – interne Firmen-CA, eigene Marathon-CA aus `build.py`, gekauftes Zertifikat oder Reverse-Proxy vor Marathon? -> wir haben einen Reverse-Proxy und können darüber später ausrollen -- für die Entwicklung jetzt geht vielleicht Let's Encrypt?
+  - Offen: Unter welchem Rechnernamen ist der Server erreichbar? Das Zertifikat gilt für einen Namen, nicht für wechselnde IP-Adressen -> aktuell ist das laptop-martin-r
+  - Offen: Wie kommt das Vertrauen in das Zertifikat auf die Arbeitsplätze (Gruppenrichtlinie, manueller Import, öffentliche CA)? -> verstehe ich nicht
+  - Offen: Laufzeit und Erneuerung des Zertifikats – wer erneuert, und wie wird vor Ablauf gewarnt? -> das muss auf jeden Fall automatisch passieren
+  - Offen: Pfad zu Zertifikat und Schlüssel in `config/marathon.toml`; Schlüsseldatei unter `.data/` oder anderswo? -> .cert, wenn das mit Let's Encrypt sinnvoll ist
 - [ ] Anfragen über HTTP und über abweichende Rechnernamen werden auf `public_url` umgeleitet (gleicher Name für Cookies, Links und `Origin`-Prüfung)
-  - Offen: HTTP-Port weiter offen lassen (nur Umleitung) oder ganz schließen?
+  - Offen: HTTP-Port weiter offen lassen (nur Umleitung) oder ganz schließen? -> wir machen skript :443 und akzeptieren :80 gar nicht mehr, es sei denn, es ist technisch irgendwo nötig
 - [ ] `cookie_secure` folgt aus `public_url` (`https://` → `true`)
-  - Offen: Schlüssel `[auth] cookie_secure` dann streichen oder als Übersteuerung behalten?
+  - Offen: Schlüssel `[auth] cookie_secure` dann streichen oder als Übersteuerung behalten? -> verstehe ich nicht
 - [ ] Worker-Laufzeit prüft das Server-Zertifikat (CA-Datei einstellbar, Prüfung nie abschaltbar)
-  - Offen: Server-Worker weiter über `127.0.0.1` – eigener lokaler Zugang nur für ihn oder ebenfalls über den Rechnernamen mit Zertifikat?
+  - Offen: Server-Worker weiter über `127.0.0.1` – eigener lokaler Zugang nur für ihn oder ebenfalls über den Rechnernamen mit Zertifikat? -> keine sonderbehandlung für server-worker
 
 ### Release Zugang & Nutzer
 
