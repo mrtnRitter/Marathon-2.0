@@ -14,27 +14,9 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 Vertrag: `docs/spec.md` (Teil 2)
 
-- [ ] Einstellungsseite speichert in die Datenbank; einzige echte Einstellung: Server-Adresse für den Ordner-Dialog (Standard `[folder_dialog] server_address`; `host` bleibt nur in der Konfiguration); die Platzhalter Server, Rollout, Aufräumen entfallen
-- [ ] Standardwerte aus `config/marathon.toml` gehen beim Start mit `run.py` in die Datenbank, solange dort kein Wert steht; danach gilt die Datenbank
-- [ ] Ordner-Dialog: Umschalter „Laufwerke“ | „Server“; „Server“ zeigt die Freigaben von `\\<Server-Adresse>`
-- [ ] Vorrang-Stufen entfallen überall; Fähigkeiten je Worker als sortierbare Liste (oben = höhere Prio, nicht gelistet = übernimmt nicht, wählbar nur gemeldete Modultypen); neue Worker ab Werk mit allen gemeldeten Modultypen
-- [ ] Zuteilung nach Rang in der Fähigkeiten-Liste; gleicher Rang → Name
-- [ ] Server-Worker ab Werk mit Kopieren, Verschieben, Umbenennen (`[server_worker] skills`), in der Oberfläche einstellbar; startet bei der Ersteinrichtung automatisch
-- [ ] „Starten“ / „Stoppen“ statt „Freigeben“ / „Sperren“, auch in der Liste; Status „bereit“, „Wird gestoppt“, „gestoppt“; „Online“ / „Offline“ getrennt; Spalte „Jobs“
 - [ ] Neuer Worker meldet sich „gestoppt“ an; Stoppen bricht alle Jobs ab, Asset zurück an den letzten fertigen Ausgang, zählt nicht als Versuch
 - [ ] Ein Worker macht nur einen Job; ein Job bündelt bis zu N Assets desselben Moduls, bearbeitet in N Strömen, Ergebnis je Asset; N = „Parallele Verarbeitung“ (1–16) bei Kopieren und Verschieben
-- [ ] Warten wie Fachmodule: Wartezeit je Asset ab Übergabe, Anzeige „läuft“ / „erledigt“ / „Fehler“, kein „wartet“; läuft als Job ohne Worker
-- [ ] Modul-Log zeigt jede Aktivität (Zeit, Stufe, Asset, Worker, Text; neueste 500)
-- [ ] Prioliste: „Bearbeiten“ statt „Metadaten bearbeiten“
-- [ ] Verbindungslinien beginnen und enden am Rand der Kreise, auch beim Ziehen
-- [ ] Erneut verarbeiten ohne Obergrenze
-- [ ] Überwachen → Einstellungen: Werte ausgegraut
-- [ ] `stop` beendet den Server ohne Fehlermeldungen (offene Worker-Anfrage endet sofort)
 
-### Release Live-Kanal & Zeitplan-Wartemodus
-
-- [ ] Alle Ansichten aktualisieren sich über einen Live-Kanal (SSE) in Echtzeit; bei Verbindungsverlust sperrt der Hinweis „Keine Verbindung zum Marathon-Server“ die Oberfläche, bis die Verbindung zurück ist
-- [ ] Zeitgesteuerte Workflows bleiben zwischen Läufen „aktiv“, warten auf den nächsten Termin und scannen/vergeben während der Wartezeit keine Jobs
 
 ### Release Engine
 
@@ -51,7 +33,6 @@ Vertrag: `docs/spec.md` (Teil 2)
 - [ ] Nach 3 unterbrochenen Versuchen am selben Modul *Fehlgeschlagen*; der Log zeigt die Versuche
 - [ ] Als Versuch zählt nur ein Job, der schon lief; Pausieren und abgelaufene Abhol-Frist zählen nicht; der Zähler beginnt neu, wenn das Asset das Modul verlässt oder erneut verarbeitet wird
 - [ ] Server-Neustart: Jobs auf anderen Workern laufen weiter; meldet sich der Worker innerhalb von 30 s, wird sein Ergebnis übernommen
-- [ ] `last_choice` überall entfernt (Konfiguration, Worker-Anmeldung, Worker-Laufzeit)
 
 ---
 
@@ -260,3 +241,11 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
   - Offen: Übernimmt der übergeordnete Server nur den Login oder auch mehrere Instanzen/Mandanten?
 - [ ] Öffentlicher Zugang aus dem Internet (HTTPS im LAN kommt mit Release HTTPS)
   - Offen: Übernimmt den Zugang von außen ein übergeordneter Server / Reverse-Proxy?
+
+### Feedback Martin
+- [ ] wenn Serververbindung verloren ist, kommt overlay - das Icon soll noch ein rotes blinkendes X unten rechts bekommen
+- [ ] Überwachen → Einstellungen: Werte ausgegraut - sollte schon umgesetzt sein, aber die Werte sind noch nicht ausgegraut
+- [ ] Modul Warten: wenn man auf Assets klickt, kommt eine komplett leere Seite - getestet mit langer Liste über 5k Assets
+- [ ] Spinner scheint noch zu fehlen oder zu spät zu kommen - hab ihn trotz Ladezeiten >0.5s noch nie gesehen
+- [ ] Modullog soll so hoch sein, wie Seitenpanel und doch nur warnungen und fehler beinhalten, alles außer Info - liegt nichts dergleichen vor, dann steht dort: keine Fehler, keine Warnungen, oder allgemein Keine Vorkommnisse
+- [ ] 
