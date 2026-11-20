@@ -1,0 +1,709 @@
+# Marathon 2.0 – Architektur & verbindlicher Systemvertrag
+
+Zentrale, widerspruchsfreie Spezifikation für Marathon 2.0. Begleitendes Release- und Backlog-Protokoll: `docs/mission_log.md`.
+
+Bezeichner im Code englisch (`snake_case`), Texte für Nutzer deutsch und wörtlich wie hier.
+
+- **Teil 1** hält die entschiedenen Architektur-Grundsätze fest.
+- **Teil 2** beschreibt den **bereits umgesetzten** Systemvertrag für Kern, Engine und Worker-Steuerung (Stand Migration `0009`, Worker-Protokoll 2; Abnahme offen).
+- **Teil 3** beschreibt den **geplanten** Vertrag für den nächsten Release *Infrastruktur* (Migration `0010`, Worker-Protokoll 3; noch nicht umgesetzt). Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
+
+---
+
+# Teil 1: Architektur & Grundsätze
+
+## 1.1 Ziel, Rahmen & Leitplanken
+
+- **Workflow-Engine als Webanwendung** im lokalen Netz, optional später öffentlich erreichbar.
+- **Ein Server** liefert die Weboberfläche aus, steuert die Workflows und hält die PostgreSQL-Datenbank.
+- **Worker-Rechner** führen einen kleinen installierten Worker-Client aus, der ausschließlich ausgehende Verbindungen zum Server aufbaut.
+- **Node-Editor im Browser** (React Flow / xyflow) mit Bedienung und Oberfläche nach Vorbild FileFlows.
+- **Eigener, schlanker Kern** ohne Übernahme von Altcode; interne Bezeichnung „m2“, im Code `marathon`, Startversion **2.0.0**.
+- **Betriebssystem:** Start auf Windows 11 (Server und Worker), später Linux; der Code ist von Anfang an plattformunabhängig.
+- **Leitprinzip Entkopplung (Nutzer vs. Worker):** Nutzerkonten (`users`) und Worker-Rechner (`workers`) sind streng voneinander getrennt. Nutzer erhalten Zugriff auf Workflows über ihren Account; Worker authentifizieren sich als eigenständige Geräte über ihr individuelles Worker-Token (Details in Teil 3).
+
+**Leitplanken für Skalierbarkeit und Wartbarkeit**
+
+- **Kein fachlicher Zustand im Server-RAM:** Alle fachlichen Zustände stehen in PostgreSQL (mehrere Server-Prozesse parallel möglich). Transiente Kanal-/Long-Poll-Mechanismen halten keinen fachlichen Dauerzustand.
+- **Versionierte Schnittstellen:** Server, Worker-Client und Oberfläche sprechen nur über klar definierte, versionierte APIs (`/api/v1/…`, Worker-Protokollversion).
+- **Schemaänderungen nur über Migrationen** (`marathon/server/db/migrations/versions/`).
+- **Erweiterbarer Modulkatalog:** Neue Modultypen kommen unter `marathon/modules/` ohne Änderung am Engine-Kern dazu.
+- **Konfiguration statt Hardcoding:** Einstellungen liegen in `config/marathon.toml` (bzw. in der Tabelle `settings` mit Config-Startwerten), Zugangsdaten niemals im Code oder in `marathon.toml`.
+
+## 1.2 Kernidee & Begriffe
+
+> Es gibt eine **Liste von Assets**. Die Assets durchlaufen einen **Workflow** aus **Modulen**.
+> Damit ein Asset ein Modul durchläuft, erzeugt der Server einen **Job**. **Worker** holen sich Jobs ab, verarbeiten sie und melden Fortschritt, Logs und Ergebnis.
+> Mit jedem Ergebnis ändert sich der **Status** des Assets auf der Liste, bis es das Ende des Workflows erreicht.
+
+- **Der Server entscheidet, der Worker führt aus:** Der Worker kennt keinen Workflow, nur seinen Job.
+- **Abholen statt Zuschieben:** Worker bauen ausschließlich ausgehende Verbindungen zum Server auf.
+- **Asset-Neutralität:** Für den Kern ist ein Asset ein Listeneintrag mit Kennung, Name und frei belegbaren Metadaten; erst die Module interpretieren den Inhalt.
+
+| Begriff | Bedeutung |
+|---|---|
+| **Workflow** | Versionierte Definition aus Modulen und ihren Verbindungen. Jeder Workflow hat genau eine Asset-Liste. |
+| **Modultyp** | Baustein aus dem Katalog (`marathon/modules/`). Beschreibt Eingang, Ausgänge, Einstellungen und Ausführungsart (`worker`, `engine`, `none`). |
+| **Modul** | Ein im Workflow platzierter Modultyp mit eigenen Einstellungen. |
+| **Ausgang** | Benannter Ausgang eines Moduls (typischerweise *Erfolg* und *Fehler*). Verbindungen führen vom Ausgang zum nächsten Modul. |
+| **Asset** | Eintrag auf der Liste eines Workflows mit Gesamtstatus, Schrittstatus, Position (aktuelles Modul), Metadaten und Historie. |
+| **Job** | Arbeitsauftrag: ein Modul für ein oder mehrere Assets. Hat Versuche, Fortschritt und ein Ergebnis je Asset. |
+| **Worker** | Rechner mit Worker-Laufzeit/-Client. Hat gemeldete Fähigkeiten (`capabilities`), konfigurierte Fähigkeiten-Rangliste (`skills`), Status, Verbindungsstatus und Client-Version. |
+| **Historie** | Unveränderliche, angehängte Protokolleinträge zu Statuswechseln, Fehler- und Erfolgsmeldungen. |
+
+## 1.3 Datenhaltung, Oberfläche, Installation & Auto-Update
+
+- **Datenhaltung:** Eine **PostgreSQL**-Datenbank für alles. Der aktuelle Zustand wird direkt gespeichert; jede Zustandsänderung schreibt in derselben Transaktion die Historie/Logs mit.
+- **Oberfläche (Vorbild FileFlows):**
+  - Nur **Dark Theme** (vorerst kein helles Theme), zentrale Farben und Statusfarben (`ui/src/theme/`).
+  - Durchgängige Monospace-Schrift (**JetBrains Mono**, OFL), lokal ausgeliefert.
+  - Feste Seitenleiste (**Dashboard**, **Workflows**, **Assets**, **Worker**, **Einstellungen** – Sichtbarkeit ab Teil 3 rollenabhängig). Innerhalb eines Workflows Reiter **Module** (*Überwachen* / *Bearbeiten*) und **Assets**; Asset-Detail mit Kopfdaten, Metadaten, Zeitstrahl und Logs.
+- **Installation & Abhängigkeiten:** Alles lokal im Projektordner über `build.py` (`.venv`, gepinnte Requirements `requirements/server.txt` und künftig `requirements/client.txt`, lokales PostgreSQL unter `.tools/postgres`, lokales Node.js unter `.tools/node` nur zum Bauen, gebaute Oberfläche unter `marathon/server/static`). Zur Laufzeit wird nichts aus dem Internet nachgeladen.
+- **Architektur-Vorgabe Auto-Update (für späteren Rollout im Backlog):**
+  - Aufbau des Worker-Clients aus einem kleinen, selten geänderten **Starter** und der austauschbaren **Client-Laufzeit**.
+  - Rollout geht vom Server aus (Freigabe für alle oder ausgewählte Worker); Client erfährt per Lebenszeichen von neuen Versionen, lädt das Paket, prüft die Prüfsumme, lässt laufende Jobs auslaufen (Drain), tauscht die Laufzeit, startet neu und meldet die neue Version.
+  - **Rückfall:** Startet die neue Version nicht sauber, kehrt der Starter zur vorherigen Version zurück und meldet den Fehler.
+  - Server und Client tragen dieselbe Versionsnummer (Start `2.0.0`); Module sollen perspektivisch über denselben Weg verteilt werden.
+
+**Referenzen (Vorbild & Bausteine):** FileFlows Webconsole-Dokumentation (Dashboard, Files, Flows, Flow-Editor, Agents, Updates), React Flow (`xyflow/xyflow`, MIT).
+
+---
+
+# Teil 2: Aktueller Systemvertrag – Kern, Engine & Worker-Steuerung (umgesetzt, Migration `0009`, Protokoll 2)
+
+Widerspruchsfreie Zusammenfassung des aktuell umgesetzten Standes (Engine + Live-Kanal + Zeitplan-Wartemodus + Worker-Steuerung).
+
+## 2.1 Konfiguration `config/marathon.toml`
+
+Lader: `load_server_config()` in `marathon/server/config.py`. Enthält `host`, `port`, `[database]` sowie:
+
+```toml
+[engine]
+tick_interval_s = 0.5   # Takt der Engine in Sekunden (0.05–10)
+poll_timeout_s = 25     # So lange hält der Server die Anfrage eines Workers offen (1–60)
+worker_timeout_s = 30   # Ohne Meldung gilt ein Worker danach als ausgefallen (10–600)
+pickup_timeout_s = 10   # Abhol-Frist für zugeteilte Jobs (1–600)
+max_attempts = 3        # Unterbrochene Versuche je Asset und Modul (1–10)
+
+[server_worker]
+enabled = true                                      # Server-Worker mit dem Server starten
+skills = ["copy_file", "move_file", "rename_file"]  # Fähigkeiten ab Werk, oben = höchste Prio; danach gilt die Worker-Seite
+
+[folder_dialog]
+server_address = ""     # Standard für die Server-Adresse im Ordner-Dialog (Rechnername oder IP, z. B. 10.0.77.11); danach gilt der Wert aus der Oberfläche
+```
+
+```python
+@dataclass(frozen=True)
+class EngineConfig:
+    tick_interval_s: float = 0.5
+    poll_timeout_s: float = 25.0
+    worker_timeout_s: float = 30.0
+    pickup_timeout_s: float = 10.0
+    max_attempts: int = 3
+
+@dataclass(frozen=True)
+class ServerWorkerConfig:
+    enabled: bool = True
+    skills: tuple[str, ...] = ("copy_file", "move_file", "rename_file")
+
+@dataclass(frozen=True)
+class FolderDialogConfig:
+    server_address: str = ""
+
+# ServerConfig enthält zusätzlich:
+#   engine: EngineConfig = field(default_factory=EngineConfig)
+#   server_worker: ServerWorkerConfig = field(default_factory=ServerWorkerConfig)
+#   folder_dialog: FolderDialogConfig = field(default_factory=FolderDialogConfig)
+```
+
+Validierung:
+- Zahlen: `int` oder `float`, nie `bool`; `max_attempts` nur `int`.
+- Unbekannte Schlüssel (u. a. früheres `last_choice` oder `[server_worker] max_parallel`) werden ignoriert. `host` bleibt rein in der Konfiguration und ist nicht in der Oberfläche änderbar.
+- `server_address`: Text, leer oder `^[A-Za-z0-9._-]{1,253}$`; sonst `ConfigError` „[folder_dialog] server_address in {datei} muss ein Rechnername oder eine IP-Adresse sein“.
+- `skills`: Liste von Texten, je `^[a-z0-9_]{1,64}$`, ohne Doppelte; sonst `ConfigError` „[server_worker] skills in {datei} muss eine Liste von Modultyp-IDs ohne Doppelte sein“.
+- Übrige Fehler: `ConfigError` mit Abschnitt und Schlüssel, z. B. `[engine] poll_timeout_s in <datei> muss eine Zahl zwischen 1 und 60 sein`.
+
+## 2.2 Datenbank (Stand Migration `0009`) & Seed
+
+Aktueller Schema-Stand nach Migrationen `0001`–`0009` (`0005_engine.py`, `0006_live_notify.py`, `0007_schedule_waiting.py`, `0008_worker_release.py`, `0009_worker_cleanup.py`):
+
+| Tabelle | Wesentliche Spalten & Constraints |
+|---|---|
+| `module_types` | `execution TEXT NOT NULL DEFAULT 'none'` (`CHECK execution IN ('worker','engine','none')`) |
+| `workflows` | `pausing BOOLEAN NOT NULL DEFAULT false`, `last_assigned_at TIMESTAMPTZ NULL`, Zeitplan-Felder |
+| `assets` | `from_module_id TEXT NULL`, `from_output_id TEXT NULL`, `attempts INTEGER NOT NULL DEFAULT 0` (`CHECK >= 0`), `wait_until TIMESTAMPTZ NULL` *(Erweiterung um `locality_worker_id` in Teil 3)* |
+| `jobs` | `type_id TEXT NOT NULL DEFAULT ''`, `version INTEGER NULL`, `settings JSONB NOT NULL DEFAULT '{}'`, `pickup_deadline TIMESTAMPTZ NULL`, `error TEXT NULL`; `ck_jobs_status`: `status IN ('open','assigned','running','cancelling','succeeded','failed','cancelled','interrupted')`; Index `ix_jobs_status` |
+| `job_assets` | `output_id TEXT NULL`, `outcome TEXT NULL` (`CHECK outcome IS NULL OR outcome IN ('result','error','cancelled','interrupted')`), `finished_at TIMESTAMPTZ NULL`, `error TEXT NULL` |
+| `workers` | `skills JSONB NOT NULL DEFAULT '[]'`, `online BOOLEAN NOT NULL DEFAULT false`, `ck_workers_status`: `status IN ('ready','stopping','stopped')` (frühere Spalten `priorities`, `max_parallel`, `client_slots` sind mit `0009` entfernt; *Erweiterung um `draining`, `token_hash`, `approved`, `availability_config` usw. in Teil 3*) |
+| `log_lines` | `asset_id TEXT NULL` (ohne Fremdschlüssel, damit Logs das Löschen eines Assets überleben), Index `ix_log_lines_asset_id` |
+| `settings` | `key TEXT PRIMARY KEY`, `value JSONB NOT NULL`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()` |
+
+**Grundregeln:**
+- Aktive Jobs: `active_job_statuses = ("assigned", "running", "cancelling")`. Ein Asset hat höchstens einen aktiven Job.
+- Dateipfad eines Assets: `metadata["path"]`, sonst `metadata["source_path"]`; geändert wird immer `metadata["path"]`.
+
+**Standardwerte (`marathon/server/db/seed.py`):**
+
+```python
+def seed_defaults(connection: Connection, config: ServerConfig) -> None
+```
+
+Aufruf in `python -m marathon.server.db upgrade` nach `upgrade_database()` in eigener Transaktion (also bei jedem `run.py`-Start). Schreibt nur fehlende Werte (`ON CONFLICT DO NOTHING`):
+- `settings`: `folder_dialog.server_address` = `config.folder_dialog.server_address` (JSON-Text).
+- `workers`: Zeile `server-worker`, Name „Server-Worker“, `status 'ready'`, `online false`, `skills` = `config.server_worker.skills`, `capabilities '[]'`, `client_version ''`.
+
+## 2.3 Modulkatalog
+
+- Optionaler Schlüssel im Deskriptor `MODULE["execution"]`: `"worker"` (läuft als Job auf einem Worker), `"engine"` (erledigt die Engine), `"none"` (wird nicht ausgeführt). Standard `"none"`; anderer Wert → `CatalogError`. `build_catalog()` gibt den Schlüssel immer mit aus; `sync_module_types()` schreibt ihn in `module_types.execution`.
+- Ausgänge mit `"data": True` sind keine Asset-Wege (Prioliste `list`). Die Engine folgt ihnen nie und zählt sie nicht als eingehende Verbindung.
+- Aktuelle Werte: `wait` → `engine`; `copy_file`, `move_file`, `rename_file` → `worker`; `watchfolder`, `priolist` → `none` *(in Teil 3 wechselt `watchfolder` auf `worker`)*. Prioliste-Ausgang `list` hat `"data": True`.
+- `wait`: Wartezeit `settings["wait_s"]` (Standard 60).
+- `copy_file` und `move_file`: Einstellung `{"key": "parallel", "label": "Parallele Verarbeitung", "type": "number", "default": 1, "min": 1, "max": 16, "help": "So viele Assets bearbeitet ein Job gleichzeitig, jedes in einem eigenen Strom"}`; `validate_settings`: ganze Zahl (kein bool) 1–16, sonst „Ganze Zahl von 1 bis 16“.
+
+## 2.4 Zustände und Übergänge
+
+### Asset
+
+| `status` | `current_module_id` | `step_status` | Bedeutung |
+|---|---|---|---|
+| `pending` | Quellmodul oder NULL | NULL | wartet auf Eintritt in den Workflow |
+| `in_progress` | Modul | `waiting` | steht an einem Modul, kein aktiver Job |
+| `in_progress` | Modul | `running` | genau ein aktiver Job (Worker-Job oder Engine-Job `wait`) |
+| `done` | letztes Modul | NULL | Erledigt |
+| `failed` | Modul, an dem es endete | NULL | Fehlgeschlagen |
+| `on_hold` | – | – | Engine fasst es nicht an |
+
+Die Engine bewegt Assets nur in Workflows mit `active AND NOT pausing`. Ergebnisse laufender Jobs werden immer ausgewertet.
+
+### Job
+
+| Von | Ereignis | Nach | Asset |
+|---|---|---|---|
+| – | Zuteilung | `assigned` (Worker, `pickup_deadline`) | `running` |
+| `assigned` | Worker meldet Start | `running` (`started_at`) | – |
+| `assigned` | Abhol-Frist abgelaufen, Worker offline oder neu angemeldet | `cancelled`, Fehler „Nicht abgeholt“ | `waiting` am selben Modul, Versuche unverändert |
+| `assigned` | Pausieren / Modul entfernt / Worker gestoppt | `cancelled` | zurück (`return_asset`) |
+| `running` | Ergebnis | `succeeded` (`output_id`) | über den gemeldeten Ausgang weiter |
+| `running` | Fehler im Modul | `failed` (`error`) | über Ausgang `error`, ohne diesen Ausgang Fehlgeschlagen |
+| `running` | Pausieren / Modul entfernt / Worker gestoppt | `cancelling` | bleibt `running` |
+| `running`, `cancelling` | Worker antwortet nicht, neu angemeldet oder meldet ungefragt Abbruch | `interrupted` | Unterbrechungsregel |
+| `cancelling` | Ergebnis oder Fehler | `succeeded` / `failed` | wie bei `running` (fertiges Ergebnis wird übernommen) |
+| `cancelling` | Abbruch bestätigt | `cancelled` | zurück (`return_asset`) |
+| Endzustand | jede Meldung | unverändert | – (Log „Spätes Ergebnis verworfen“) |
+
+**Unterbrechungsregel:** `attempts + 1`; Historie (error) „Versuch {n} an „{modul}“ unterbrochen: {grund}“. Ist `attempts >= max_attempts`: Fehlgeschlagen mit „Nach {n} unterbrochenen Versuchen fehlgeschlagen“, sonst `return_asset`.
+
+### Worker (Stand Protokoll 2; Erweiterung um `draining` und Verfügbarkeit in Teil 3)
+
+`status`: `ready` („bereit“), `stopping` („Wird gestoppt“), `stopped` („gestoppt“, rot). Davon getrennt `online` (`bool`, Anzeige „online“ / „offline“).
+
+| Ereignis | Wirkung |
+|---|---|
+| erste Anmeldung | `status 'stopped'` (Worker-ID `server-worker`: `'ready'`), `skills` = gemeldete `capabilities` in gemeldeter Reihenfolge, `online true` |
+| erneute Anmeldung | `capabilities`, `client_version`, `ip_address`, `last_seen`, `online true`; `status`, `name`, `skills` bleiben; aktive Jobs: `assigned` → `drop_unstarted_job`, sonst `interrupt_job("Worker neu gestartet")` |
+| Anfrage (Long-Poll) | `last_seen`, `online true` |
+| Engine: `COALESCE(last_seen, created_at) < now - worker_timeout_s` | aktive Jobs wie bei Ausfall (`assigned` → `drop_unstarted_job`, sonst `interrupt_job("Worker antwortet nicht")`); `online false`; `status` bleibt |
+| `POST /workers/{id}/start` | `stopped` → `ready`; `ready` bleibt; `stopping` → 409 „Worker wird gerade gestoppt“ |
+| `POST /workers/{id}/stop` | `ready` → `stopping`; jeder aktive Job → `cancel_job(reason="Worker gestoppt")`; kein aktiver Job → sofort `stopped`; `stopped`/`stopping` bleiben |
+| Engine-Takt | `stopping` ohne aktiven Job → `stopped` |
+
+Stoppen zählt nicht als Versuch: bestätigter Abbruch → `return_asset`. Ein fertiges Ergebnis während `cancelling` wird übernommen; unfertige Kopien entfernen die Module selbst.
+
+### Workflow
+
+| Zustand | `active` | `pausing` |
+|---|---|---|
+| Läuft | true | false |
+| Wird pausiert | false | true |
+| Pausiert | false | false |
+
+Start während *Wird pausiert* → 409 „Workflow wird gerade pausiert“. *Wird pausiert* endet, sobald der Workflow keine aktiven Jobs mehr hat.
+
+## 2.5 Engine-Funktionen & Engine-Takt
+
+Alle Funktionen laufen in der Transaktion des Aufrufers. Sperrreihenfolge: `workflows` → `jobs` → `assets` → `workers` (`SELECT … FOR UPDATE`).
+
+### `marathon/server/engine/flow.py`
+
+```python
+@dataclass(frozen=True)
+class GraphModule:
+    id: str
+    name: str
+    type_id: str
+    settings: dict[str, Any]
+    execution: str              # worker | engine | none
+    has_input: bool
+    outputs: tuple[str, ...]    # Ausgangs-IDs ohne data-Ausgänge
+
+@dataclass(frozen=True)
+class Graph:
+    workflow_id: str
+    version: int
+    modules: dict[str, GraphModule]
+    routes: dict[tuple[str, str], str]   # (source_module_id, output_id) -> target_module_id, ohne data-Ausgänge
+
+def load_graph(connection, workflow_id: str) -> Graph | None
+def asset_file_path(metadata: Mapping[str, Any]) -> str | None
+def fail_asset(connection, asset_id: str, message: str) -> None
+def route_asset(connection, asset_id: str, graph: Graph, from_module_id: str, output_id: str, keep_attempts: bool = False) -> None
+def return_asset(connection, asset_id: str, graph: Graph) -> None
+def enter_asset(connection, asset_id: str, graph: Graph) -> None
+```
+
+- `fail_asset`: `status='failed'`, `step_status=NULL`, `wait_until=NULL`; Historie (error) `message`; Log-Zeile (error, `job_id` NULL, mit `asset_id`) am `current_module_id`.
+- `route_asset`: Fehlt `from_module_id` im Graphen → `fail_asset("Modul nicht mehr im Workflow")`. Gibt es ein Ziel: `current_module_id=Ziel`, `step_status='waiting'`, `status='in_progress'`, `from_module_id`, `from_output_id=output_id`, `wait_until=NULL`, `attempts=0` (außer `keep_attempts`). Kein Ziel: `current_module_id=from_module_id`, `step_status=NULL`, `wait_until=NULL`; bei `output_id == "error"` Fehlgeschlagen mit Historie (error) „Fehlgeschlagen an „{modulname}““, sonst `done` mit Historie (success) „Workflow abgeschlossen“.
+- `return_asset`: Ohne `from_module_id`: steht das Asset an einem Modul des Graphen → `waiting` dort (`wait_until=NULL`, Versuche bleiben); sonst `fail_asset("Modul nicht mehr im Workflow")`. Mit `from_module_id`: `route_asset(from_module_id, from_output_id, keep_attempts=(Ziel == current_module_id))`.
+- `enter_asset` (nur `pending`): `status='in_progress'`, dann
+  1. `current_module_id` ist ein Modul ohne Eingang im Graphen → `route_asset(current_module_id, "success")`;
+  2. `current_module_id` gesetzt, aber nicht im Graphen → `fail_asset("Modul nicht mehr im Workflow")`;
+  3. `current_module_id` ist ein Modul mit Eingang → `waiting` dort;
+  4. NULL: Quellmodule = Module ohne Eingang mit Ausgang `success`. Genau eins → `route_asset(quelle, "success")`. Keins: Module mit Eingang ohne eingehende Route; genau eins → `waiting` dort (`from_module_id` NULL). Sonst `fail_asset("Startpunkt nicht eindeutig")`.
+
+### `marathon/server/engine/jobs.py` (Jobs mit einem oder mehreren Assets & Warten als Engine-Job)
+
+```python
+active_job_statuses = ("assigned", "running", "cancelling")
+
+class JobNotFound(LookupError): ...
+class JobWorkerMismatch(Exception): ...
+
+def create_batch_job(connection, asset_ids: Sequence[str], graph: Graph, worker_id: str, now: datetime, pickup_timeout_s: float) -> str
+def create_job(connection, asset_id: str, graph: Graph, worker_id: str, now: datetime, pickup_timeout_s: float) -> str  # = create_batch_job([asset_id], ...)
+def create_engine_job(connection, asset_id: str, graph: Graph, now: datetime) -> str
+def apply_asset_result(connection, job_id: str, asset_id: str, worker_id: str | None, result: Mapping[str, Any], now: datetime, max_attempts: int) -> bool
+def apply_job_result(connection, job_id: str, worker_id: str | None, result: Mapping[str, Any], now: datetime, max_attempts: int) -> bool
+def start_job(connection, job_id: str, worker_id: str, now: datetime) -> bool
+def interrupt_job(connection, job_id: str, reason: str, now: datetime, max_attempts: int) -> None
+def cancel_job(connection, job_id: str, reason: str, now: datetime) -> None
+def drop_unstarted_job(connection, job_id: str, now: datetime) -> None
+def request_pause(connection, workflow_id: str, now: datetime) -> bool
+def remove_missing_modules(connection, workflow_id: str, now: datetime) -> None
+def graph_impact(connection, workflow_id: str, module_ids: Iterable[str]) -> dict[str, Any]
+```
+
+- `create_batch_job`: alle Assets `in_progress`/`waiting` am selben Modul des Graphen, keines mit aktivem Job, mindestens eins (sonst `ValueError`). Job `job-<12 hex>`, `status='assigned'`, `pickup_deadline = now + pickup_timeout_s`, `type_id`, `version=graph.version`, `settings`, `attempt` = größtes `attempts` der Assets + 1, `created_at = now`; je Asset eine Zeile in `job_assets`, Asset `step_status='running'`, Log (info, mit `asset_id`) „Zugeteilt an {workername}“.
+- `start_job`: `assigned` und passender Worker → `running`, `started_at=now`, `True`; sonst `False`. Unbekannt → `JobNotFound`.
+- `apply_asset_result`: Schlüssel von `result`: `outcome` (`result` | `error` | `cancelled`), `output` (`str | None`), `log` (`list[str]`), `asset_path` (`str | None`), `spawned` (`list[{path, output, log}]`), `error` (`str | None`).
+  - Job unbekannt oder Asset nicht im Job → `JobNotFound`; `worker_id` ≠ Worker des Jobs → `JobWorkerMismatch`.
+  - Job im Endzustand oder `job_assets.outcome` dieses Assets schon gesetzt → Log (warn, `asset_id`) „Spätes Ergebnis verworfen“, `False`. `assigned` zählt wie `running`.
+  - Asset steht nicht `running` am Modul des Jobs → nur `job_assets` abschließen, Log (warn) „Asset passt nicht zum Job“.
+  - `cancelled`: bei Job `cancelling` → `outcome 'cancelled'`, `return_asset`; sonst Unterbrechungsregel für dieses Asset mit Grund „Worker beendet“, `outcome 'interrupted'`.
+  - `error`: `outcome 'error'`, `job_assets.error`; Historie und Log (error) mit Fehlertext; hat das Modul den Ausgang `error` → `route_asset(..., "error")`, sonst `fail_asset(fehlertext)`.
+  - `result`: ungültiger Ausgang → wie `error` mit „Ungültiger Ausgang: {output}“. Sonst `outcome 'result'`, `job_assets.output_id`. Jede Log-Zeile → `log_lines` (info; error bei Ausgang `error`, mit `asset_id`) und Historie. `asset_path` → `metadata["path"]`. Jedes `spawned`: neues Asset (`as-<12 hex>`, Name = Dateiname, `metadata={"path": path}`, `status='in_progress'`, `current_module_id` = Modul des Jobs, `list_position` am Ende), Historie (info) aus `spawned.log`, dann `route_asset(modul, spawned.output)`. Original: `output` None → `done` mit Historie (success) „Erledigt an „{modulname}““, sonst `route_asset(modul, output)`.
+  - Immer `job_assets.finished_at = now`, danach Log (info bzw. error, `asset_id`) „Ergebnis: {label}“ (`label` = Beschriftung des Ausgangs aus `module_types.outputs`, „Erledigt“ bei `output` None, „Abgebrochen“ bei `cancelled`, „Fehler“ bei `error`). Rückgabe `True`.
+  - Job-Abschluss: Hat jedes Asset ein `outcome`, endet der Job: `cancelled` (wenn `cancelling` und mind. ein Asset `cancelled`), sonst `interrupted` (wenn mind. ein Asset `interrupted`), sonst `failed` (`error` = erster Fehlertext, wenn mind. ein Asset `error`), sonst `succeeded`. `output_id` = gemeinsamer Ausgang aller Assets, sonst NULL; `progress=100`; `finished_at=now`. Solange Assets offen sind: `progress` = gerundeter Anteil abgeschlossener Assets in %.
+- `apply_job_result`: wendet dasselbe Ergebnis in `asset_id`-Reihenfolge auf jedes offene Asset des Jobs an; Endzustand → Log (warn) „Spätes Ergebnis verworfen“, `False`.
+- `interrupt_job`: alle offenen Assets → `outcome 'interrupted'` + Unterbrechungsregel + Log (warn).
+- `drop_unstarted_job`: nur `assigned` → `cancelled`, `error="Nicht abgeholt"`, `finished_at`, alle Assets `outcome 'cancelled'` und `waiting` am selben Modul.
+- `cancel_job`: `assigned` → alle `cancelled` + `return_asset`; `running` → `cancelling`. Engine-Job (`worker_id` NULL): sofort `cancelled`, alle offenen Assets `outcome 'cancelled'`, `return_asset` (setzt `wait_until` NULL).
+- `request_pause`: Workflow fehlt → `False`. `active=false`, `scheduled_active=false`, `pausing=true`; jeder aktive Job → `cancel_job(reason="Workflow pausiert")`; Assets mit `wait_until` → `return_asset`; kein aktiver Job übrig → `pausing=false`. `True`.
+- `remove_missing_modules` (nach jedem Speichern): `in_progress`-Assets, deren `current_module_id` im neuen Graphen fehlt: mit aktivem Job → `cancel_job(reason="Modul aus dem Workflow entfernt")`, ohne → `return_asset`.
+- `graph_impact`: `{"removed_modules": [{"id", "name", "assets", "jobs"}], "assets": n, "jobs": n}` – nur entfernte Module mit `in_progress`-Assets.
+- **Warten als Engine-Job (`create_engine_job`):** Asset `waiting` an Modul `wait` → Job `running`, `worker_id` NULL, `started_at=now`, `attempt = attempts + 1`, `type_id='wait'`, `version`, `settings`; Zeile in `job_assets`; Asset `step_status='running'`, `wait_until = now + wait_s` (Standard 60); Log (info, `asset_id`) „Wartezeit gestartet: {wait_s:g} s“. Bei `wait_until <= now`: `apply_asset_result(..., worker_id=None, result={"outcome": "result", "output": "success", "log": ["Wartezeit abgelaufen"]})`.
+
+### Engine-Takt `marathon/server/engine/tick.py`
+
+```python
+def run_engine_tick(engine: Engine, now: datetime, config: EngineConfig) -> dict[str, int]
+class EngineRunner:  # start(), stop(timeout_s=5.0) -> bool, Thread "marathon-engine"
+    def __init__(self, engine_provider: Callable[[], Engine], config: EngineConfig, clock: Callable[[], datetime] = _utc_now) -> None
+```
+
+Jeder Schritt in eigener Transaktion mit `lock_timeout 5s`, `statement_timeout 10s` und `pg_try_advisory_xact_lock(hashtext('marathon.engine'))` (nicht erhalten → Schritt überspringen). Ausnahme in einem Schritt: Warnung im Logger `marathon.engine`, nächster Schritt läuft. Reihenfolge:
+
+1. **Ausfälle:** aktive Jobs, deren Worker `COALESCE(last_seen, created_at) < now - worker_timeout_s`: `assigned` → `drop_unstarted_job`, sonst `interrupt_job(reason="Worker antwortet nicht")`; solche Worker → `online false` (`status` bleibt).
+2. **Abhol-Frist:** `assigned` mit `pickup_deadline < now` → `drop_unstarted_job`.
+3. **Pausieren abschließen:** `pausing=false` für Workflows ohne aktive Jobs.
+4. **Worker-Stopp abschließen:** `stopping` ohne aktiven Job → `stopped` *(in Teil 3 analog für `draining` → `stopped`)*.
+5. **Assets bewegen** (nur `active AND NOT pausing`, je Workflow max. 500 Assets je Art, nach `list_position, id`): `pending` → `enter_asset`; `waiting` an `wait` → `create_engine_job`; `waiting` an anderem Modul mit `execution != 'worker'` → `fail_asset("Modul kann nicht ausgeführt werden: {type_id}")`; Modul fehlt → `fail_asset("Modul nicht mehr im Workflow")`; `running` mit `wait_until <= now` → Engine-Job abschließen.
+6. **Zuteilen:**
+   - Ein Worker hat höchstens **einen** aktiven Job. Kandidaten: `status = 'ready' AND online` und kein aktiver Job *(in Teil 3 zusätzlich `approved AND client_available` sowie Sticky-Locality-Filter)*.
+   - Angebot = `skills`, gefiltert auf `capabilities`, in Reihenfolge von `skills`. Rang für Modultyp T = Position im Angebot (0 = oben); nicht enthalten = kein Kandidat.
+   - Fairness: Durchgänge über laufende Workflows nach `last_assigned_at NULLS FIRST, id`, je Durchgang höchstens ein neuer Job je Workflow. Im Workflow das erste `waiting`-Asset (nach `list_position, id`, max. 200 geprüft) an einem Worker-Modul mit passendem Kandidaten. Bester Kandidat = kleinster `(Rang, Name, ID)`.
+   - Losgröße = Moduleinstellung `parallel` (1–16), sonst 1; bündelt weitere `waiting`-Assets desselben Moduls in Listenreihenfolge. Assets ohne Dateipfad → `fail_asset("Asset hat keine Datei")`.
+   - Danach `last_assigned_at = now + k µs` (k zählt je Zuteilung im Takt hoch). Ende, wenn ein Durchgang nichts zuteilt.
+
+## 2.6 Worker-Schnittstelle (Protokoll 2), Worker-Laufzeit & Server-Worker-Aufsicht
+
+### Worker-Schnittstelle (`/api/v1/worker/…`, Protokoll 2; Erweiterung auf Protokoll 3 in Teil 3)
+
+- Auth: `Authorization: Bearer <token>`, sonst 401 „Worker-Token ungültig“. Token in `.data/worker.token` (`marathon/server/worker_auth.py`: `load_or_create_token`, Vergleich mit `secrets.compare_digest`; Server-Worker erhält ihn über `MARATHON_WORKER_TOKEN`). *Ab Teil 3: individuelle Worker-Tokens je Rechner.*
+- `create_app(..., engine_config: EngineConfig | None = None, worker_token: str | None = None)`.
+
+| Endpunkt | Eingabe | Antwort |
+|---|---|---|
+| `POST /worker/register` | `worker_id` (`^[A-Za-z0-9_-]{1,64}$`), `name`, `client_version`, `capabilities: list[str]`, `protocol: 2` (unbekannte Felder wie `max_parallel` ignoriert) | `{"worker_id", "status", "protocol": 2, "poll_timeout_s"}`; `protocol != 2` → 409 „Protokollversion nicht unterstützt“ |
+| `POST /worker/poll` | `worker_id`, `running: list[str]` | `{"jobs": [{"job_id", "type_id", "settings", "assets": [{"id", "name", "path"}, …]}], "cancel": [...]}` (Assets nach `id`) |
+| `POST /worker/jobs/{job_id}/start` | `worker_id` | 200 `{"ok": true}`; 409 „Job nicht mehr gültig“; 404 |
+| `POST /worker/jobs/{job_id}/progress` | `worker_id`, `progress: 0–100`, `log: list[str] = []` | `{"cancel": bool}` (`true` bei `cancelling` oder Endzustand) |
+| `POST /worker/jobs/{job_id}/assets/{asset_id}/result` | `worker_id`, Ergebnis wie `apply_asset_result` | `{"accepted": bool}`; 404 „Job nicht gefunden“ (auch Asset nicht im Job); 403 „Job gehört einem anderen Worker“ |
+| `POST /worker/jobs/{job_id}/result` | `worker_id`, Ergebnis wie `apply_job_result` | `{"accepted": bool}`; 404; 403 |
+
+- **Long-Poll:** Unbekannter Worker → 404 „Worker unbekannt“. `last_seen` sofort und danach höchstens alle 5 s; `online true`. Sofortige Antwort bei nicht leerem `jobs`/`cancel`, sonst Prüfung alle 0,5 s bis `poll_timeout_s` oder Verbindungsende (`async`, DB via `run_in_threadpool`).
+- **Server-Stopp:** `app.state.shutdown_event` (`threading.Event`) wird bei Uvicorn-Shutdown gesetzt; offene Long-Polls antworten innerhalb von 0,5 s mit `{"jobs": [], "cancel": []}` ohne Ausnahme/Traceback.
+
+### Worker-Laufzeit (`marathon/worker/`)
+
+```bash
+python -m marathon.worker --server URL --worker-id ID --name NAME [--exit-on-stdin-eof]
+```
+
+- `--server`: Basis-URL (Laufzeit hängt `/api/v1` an). `MARATHON_WORKER_TOKEN` fehlt → stderr „MARATHON_WORKER_TOKEN fehlt“, Exit 2.
+- `capabilities` = IDs aller Katalogeinträge mit `execution == "worker"`; `client_version` = `app_version`; `protocol` = 2.
+- Nur Standardbibliothek (`urllib.request`, `json`, `threading`). Timeouts: 10 s je Anfrage, Long-Poll `poll_timeout_s + 10` s.
+- Ablauf: Anmelden (Backoff 1, 2, 5, 10, 10 … s) → Poll-Schleife. Netzfehler/5xx: Backoff ohne neue Anmeldung. 404 „Worker unbekannt“ → neu anmelden. 401 → „Worker-Token ungültig“, Exit 3.
+- Höchstens ein Job gleichzeitig. Nach `start` (200) läuft je Asset ein eigener Thread mit `catalog_module(type_id).run(ModuleJob(asset_path, settings, stop))` und gemeinsamem `threading.Event`. Ergebnis je Asset an `/worker/jobs/{job_id}/assets/{asset_id}/result` (Retry alle 2 s bis Erfolg, 403/404 oder 120 s; beim Beenden max. 1 Versuch). `ModuleResult` → `result`, `JobStopped` → `cancelled`, andere Ausnahme → `error`, unbekannter Modultyp → „Modultyp unbekannt: {type_id}“.
+- Beenden (SIGINT, SIGTERM, stdin-EOF bei `--exit-on-stdin-eof`): Event setzen, max. 10 s auf alle Asset-Threads warten, Exit 0.
+
+### Server-Worker-Aufsicht (`marathon/server/worker_supervisor.py`)
+
+```python
+def server_url(host: str, port: int) -> str          # 0.0.0.0, ::, "" -> 127.0.0.1
+def server_worker_command(url: str, config: ServerWorkerConfig) -> list[str]
+class WorkerSupervisor:
+    def __init__(self, command: list[str], env: Mapping[str, str], cwd: Path, log_file: Path,
+                 backoff_s: Sequence[float] = (1, 2, 5, 10, 30), stable_s: float = 60.0,
+                 graceful_timeout_s: float = 10.0, kill_timeout_s: float = 5.0) -> None
+    def start(self) -> None
+    def stop(self) -> bool
+```
+
+- Kommando: `[sys.executable, "-m", "marathon.worker", "--server", url, "--worker-id", "server-worker", "--name", "Server-Worker", "--exit-on-stdin-eof"]`.
+- Kindprozess mit `stdin=PIPE`, Ausgabe angehängt an `.data/server-worker.log`; POSIX `start_new_session=True`, Windows `CREATE_NEW_PROCESS_GROUP`.
+- Ungeplantes Ende: Warnung im Logger `marathon.supervisor`, Neustart nach Backoff; nach `stable_s` stabiler Laufzeit Neustart der Folge. `stop()`: stdin schließen → `graceful_timeout_s` warten → `terminate` → `kill_timeout_s` → `kill`.
+
+## 2.7 Verwaltung, Einstellungen & Oberfläche (aktueller Stand)
+
+- **Workflows:**
+  - `PUT /workflows/{id}/active` mit `active=false` → `request_pause`; Antwort enthält `pausing`. `active=true` während `pausing` → 409 „Workflow wird gerade pausiert“.
+  - `save_graph`: nach Speichern `remove_missing_modules`; Pausieren wegen fehlerhafter Einstellungen über `request_pause`.
+  - `POST /workflows/{id}/graph/impact` → `graph_impact` für die Modul-IDs der Eingabe (404 bei unbekanntem Workflow). Bei `assets > 0` Bestätigung im Seitenpanel „Änderung betrifft laufende Assets“ mit je Modul „{Name}: {n} Assets, {m} laufende Jobs werden abgebrochen“, Schaltflächen „Abbrechen“ und „Speichern“.
+  - `reprocess_assets`: setzt `from_module_id`, `from_output_id`, `wait_until` auf NULL, `attempts` auf 0; keine Obergrenze für die Anzahl der Assets.
+- **Worker-Verwaltung:**
+  - `PUT /workers/{id}` mit `{"name": str, "skills": list[str]}`: `name` 1–100 Zeichen nach `strip()` („Name fehlt“, „Name ist zu lang (max. 100 Zeichen)“); jede Fähigkeit `^[a-z0-9_]{1,64}$` („Ungültiger Modultyp: {id}“), ohne Doppelte („Fähigkeit doppelt: {id}“), in `capabilities` des Workers („Fähigkeit wird vom Rechner nicht gemeldet: {id}“) → sonst 422; 404 „Worker nicht gefunden“.
+  - `POST /workers/{id}/start`, `POST /workers/{id}/stop` *(in Teil 3 zusätzlich `/stop-now` und Trennung Drain vs. Sofort-Stopp)*.
+  - Worker-Datensatz: `id`, `name`, `status`, `online`, `capabilities`, `skills`, `running_jobs`, `client_version`, `last_seen` (`COALESCE(last_seen, created_at)`), `ip_address`.
+- **Einstellungen (`GET/PUT /api/v1/settings`):**
+  - Form: `{"folder_dialog": {"server_address": str}}` (fehlt der Datensatz: `""`). Validierung: leer oder `^[A-Za-z0-9._-]{1,253}$`, sonst 422 „Server-Adresse: nur Rechnername oder IP-Adresse, z. B. 10.0.77.11“. Upsert mit `updated_at`.
+  - Einstellungsseite zeigt nur echte Einstellungen (Abschnitt „Ordner-Dialog“, Feld „Server-Adresse“, Meldung „Gespeichert“). *(Erweiterung um `auth.allowed_domains` in Teil 3.)*
+  - Ordner-Dialog: Umschalter „Laufwerke“ | „Server“ (`\\<Server-Adresse>`, aktiv solange Pfad mit `\\` beginnt; ohne Adresse: „Keine Server-Adresse eingestellt (Einstellungen)“). *(Ausbau zum `FileBrowserDialog` in Teil 3.)*
+- **Oberfläche & Überwachen:**
+  - Job-Status: `assigned` „zugeteilt“, `running` „läuft“, `cancelling` „wird abgebrochen“, `interrupted` „unterbrochen“.
+  - *Wird pausiert*: Status-Badge „Wird pausiert“, Play/Pause-Buttons gesperrt; bei Dauer > 1 s Hinweis „Workflow wird gerade pausiert“.
+  - Zähler „erledigt“ je Modul = Anzahl `job_assets` von Jobs dieses Moduls mit `outcome 'result'` und `output_id IS DISTINCT FROM 'error'`. Warten-Modul zeigt aktuell „läuft“, „erledigt“, „Fehler“ *(Spalte „wartet“ kommt in Teil 3 zurück)*.
+  - Modul-Log (Reiter „Logs“): neueste 500 Einträge des Moduls (inkl. Jobs), aufsteigend nach Zeit: Zeit, Stufe, Asset (Name oder –), Worker (Name oder –), Text.
+  - Asset-Zeitleiste: Ausgang je Asset aus `job_assets.output_id`.
+  - Prioliste: Menüpunkt „Bearbeiten“. Überwachen → Einstellungen: Werte ausgegraut (nur lesen). Verbindungslinien beginnen/enden am äußeren Rand der Kreise, auch beim Ziehen.
+  - Worker-Seite: Starten/Stoppen in Liste und Kopfleiste, Status/Verbindung/Fähigkeiten/Jobs/Client-Version/Zuletzt gesehen, Kacheln (bereit, Wird gestoppt, gestoppt, offline), Bearbeiten (Name + sortierbare Fähigkeiten-Liste mit Hilfetext „Weiter oben = höhere Priorität. Nicht in der Liste = übernimmt diesen Modultyp nicht.“), „Version ausrollen“ weiterhin „Noch nicht verfügbar“.
+
+---
+
+# Teil 3: Nächster Release – Infrastruktur (geplant, Migration `0010`, Protokoll 3)
+
+Verbindlicher Architektur- und Umsetzungsvertrag (v2: User und Worker strikt getrennt) für den nächsten Release *Infrastruktur – Nutzer, Worker-Client, lokale Watchfolder & Datei-Dialog*. Wo dieser Teil Regeln aus Teil 2 erweitert oder ersetzt, gilt bei Umsetzung dieses Releases Teil 3.
+
+## 3.1 Konfiguration `config/marathon.toml` und Geheimnisse
+
+```toml
+[auth]
+public_url = "http://127.0.0.1:8080"   # Basis-URL für Magic-Links und Worker-Links (ohne abschließenden Slash)
+admin_emails = []                      # Break-Glass-Admins (immer Admin, in UI nicht herabstufbar/löschbar)
+allowed_domains = []                   # Startwert für erlaubte Mail-Domains (danach gilt DB-Einstellung)
+session_days = 180                     # Sliding-Expiration-Dauer einer Nutzer-Session in Tagen (1–365)
+magic_link_ttl_minutes = 15            # Gültigkeit von Login-Link und Einmalcode in Minuten (1–60)
+cookie_secure = false                  # true bei HTTPS / Reverse-Proxy; false für reines LAN-HTTP
+
+[smtp]
+host = ""                              # SMTP-Server (leer = Mailversand nicht konfiguriert)
+port = 587                             # 1–65535
+username = ""                          # Optionaler Login-Name
+use_tls = true                         # STARTTLS aktivieren
+from_address = ""                      # Absenderadresse, z. B. marathon@looks.film
+from_name = "Marathon"                 # Anzeigename des Absenders
+
+[worker_client]
+require_admin_approval = false         # true = neue Worker müssen vor dem ersten Start einmalig vom Admin zugelassen werden
+local_bridge_port = 47291              # Loopback-Port (127.0.0.1) des Tray-Clients zur lokalen Rechner-Erkennung im Browser
+control_session_hours = 12             # Gültigkeit der lokalen Worker-Steuerungs-Session im Browser (1–168)
+```
+
+Regeln:
+- **Keine Zugangsdaten in `marathon.toml` oder im Code:** Das SMTP-Passwort wird ausschließlich aus der Umgebungsvariable `MARATHON_SMTP_PASSWORD` oder (Fallback) aus `.data/smtp.pass` (Dateirechte `0600` unter Linux) gelesen.
+- **Validierung beim Start:**
+  - `admin_emails` und `allowed_domains` werden auf Kleinbuchstaben normalisiert und auf gültige Syntax geprüft; ungültige Einträge liefern `ConfigError`.
+  - `session_days` (1–365), `magic_link_ttl_minutes` (1–60), `smtp.port` (1–65535), `worker_client.local_bridge_port` (1024–65535), `worker_client.control_session_hours` (1–168).
+- **Seed (`marathon/server/db/seed.py`):**
+  - `settings`: Schlüssel `auth.allowed_domains` wird beim Start mit `config.auth.allowed_domains` angelegt, sofern noch kein Eintrag existiert; danach gilt die Datenbank.
+  - `users`: Jede Adresse aus `config.auth.admin_emails` wird beim Start angelegt oder auf `role = 'admin', active = true` synchronisiert.
+
+## 3.2 Datenbank (Migration `0010_infrastructure.py`)
+
+Ausschließlich ergänzende Migration auf Basis von `0009_worker_cleanup.py`, mit vollständigem Downgrade.
+
+### Neue Tabellen
+
+| Tabelle | Spalten & Constraints |
+|---|---|
+| `users` | `id TEXT PRIMARY KEY`, `email TEXT NOT NULL UNIQUE`, `display_name TEXT NOT NULL DEFAULT ''`, `role TEXT NOT NULL CHECK (role IN ('user','admin'))`, `active BOOLEAN NOT NULL DEFAULT true`, `external_subject TEXT NULL UNIQUE`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `last_login_at TIMESTAMPTZ NULL` |
+| `auth_tokens` | `id TEXT PRIMARY KEY`, `email TEXT NOT NULL`, `token_hash TEXT NOT NULL UNIQUE`, `code_hash TEXT NOT NULL`, `expires_at TIMESTAMPTZ NOT NULL`, `consumed_at TIMESTAMPTZ NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(email, expires_at)` |
+| `sessions` | `id TEXT PRIMARY KEY`, `user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE`, `token_hash TEXT NOT NULL UNIQUE`, `expires_at TIMESTAMPTZ NOT NULL`, `last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `user_agent TEXT NOT NULL DEFAULT ''`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(user_id)` |
+| `user_module_permissions` | `user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE`, `module_type TEXT NOT NULL`, `allowed BOOLEAN NOT NULL`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `PRIMARY KEY (user_id, module_type)` |
+| `workflow_shares` | `workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE`, `user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE`, `access TEXT NOT NULL CHECK (access IN ('view','edit'))`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `PRIMARY KEY (workflow_id, user_id)` |
+| `worker_ephemeral_tokens` | `token_hash TEXT PRIMARY KEY`, `worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE`, `purpose TEXT NOT NULL CHECK (purpose IN ('control_link','presence'))`, `expires_at TIMESTAMPTZ NOT NULL`, `consumed_at TIMESTAMPTZ NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(worker_id, expires_at)` |
+| `worker_control_sessions` | `id TEXT PRIMARY KEY`, `worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE`, `token_hash TEXT NOT NULL UNIQUE`, `expires_at TIMESTAMPTZ NOT NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(worker_id)` |
+
+### Erweiterungen bestehender Tabellen
+
+| Tabelle | Änderung |
+|---|---|
+| `workflows` | `owner_user_id TEXT NULL REFERENCES users(id) ON DELETE SET NULL` · Index `(owner_user_id)` |
+| `workers` | `token_hash TEXT NULL UNIQUE`; `approved BOOLEAN NOT NULL DEFAULT true`; `availability_config JSONB NOT NULL DEFAULT '{}'`; `client_available BOOLEAN NOT NULL DEFAULT true`; `availability_reason TEXT NOT NULL DEFAULT ''`; `ck_workers_status` erweitern auf `('ready','draining','stopping','stopped')` |
+| `assets` | `locality_worker_id TEXT NULL REFERENCES workers(id) ON DELETE SET NULL` · Index `(locality_worker_id)` |
+
+*(Bewusst **kein** `owner_user_id` auf `workers` – Worker gehören Rechnern, nicht Nutzerkonten.)*
+
+## 3.3 Zugang, Authentifizierung & Berechtigungen
+
+### Auth-Schnittstelle (Andockstelle fürs spätere Ökosystem)
+
+- `marathon/server/auth/provider.py` definiert eine klare Schnittstelle (`resolve_session`, `start_login`, `complete_login`).
+- Standard-Implementierung: `MagicLinkProvider`.
+- Durch `users.external_subject` und normalisierte `users.email` kann später ein OIDC- oder Reverse-Proxy-Header-Provider eingehängt werden, ohne `users`, `workflow_shares` oder `user_module_permissions` umzubauen.
+
+### Magic-Link- & Code-Anmeldung (SafeLinks-sicher)
+
+1. **`POST /api/v1/auth/request-link`** mit `{ "email": "…" }`:
+   - E-Mail trimmen & `casefold()`.
+   - Prüfen: Existiert der Nutzer und ist `active = true`? Falls nein: Liegt die Domain exakt in `settings['auth.allowed_domains']` oder steht die Adresse in `config.auth.admin_emails`? Sonst `403` mit *„Diese E-Mail-Domain ist nicht freigegeben“*. Ist ein bestehendes Konto deaktiviert: `403` mit *„Dieses Konto ist deaktiviert“*.
+   - Erzeugt kryptografisch starken Token (`secrets.token_urlsafe(32)`) und 6-stelligen Zifferncode; speichert nur SHA-256-Hashes in `auth_tokens` (gültig für `magic_link_ttl_minutes`).
+   - Sendet E-Mail über den zentralen SMTP-Dienst mit Link `<public_url>/login/verify?token=<token>` **und** dem 6-stelligen Code.
+   - Rate-Limit: max. 5 Anfragen pro E-Mail / 15 Minuten.
+2. **`GET /api/v1/auth/verify?token=<token>`**:
+   - Prüft ausschließlich, ob der Token existiert, nicht abgelaufen und nicht verbraucht ist. **Verbraucht den Token nicht** (Schutz gegen automatische Firmen-Linkscanner).
+3. **`POST /api/v1/auth/confirm`** mit `{ "token": "…" }` **oder** `{ "email": "…", "code": "123456" }`:
+   - Konsumiert den Eintrag atomar (`UPDATE auth_tokens SET consumed_at = now() WHERE … AND consumed_at IS NULL AND expires_at > now()`).
+   - Existiert kein `users`-Eintrag, wird er jetzt angelegt (`role = 'admin'` wenn in `admin_emails`, sonst `'user'`).
+   - Erstellt Session in `sessions`, setzt Cookie `marathon_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` gemäß `cookie_secure`, `Max-Age = session_days * 86400`).
+4. **Sliding Expiration:** Bei authentifizierten Anfragen wird `sessions.expires_at` automatisch verlängert, sobald weniger als 80 % der Laufzeit übrig sind (und das Cookie im Response aufgefrischt).
+5. **`POST /api/v1/auth/logout`**, **`GET /api/v1/auth/me`**: Session serverseitig löschen bzw. aktuellen Nutzer inkl. Rolle und erlaubter Modultypen liefern.
+
+### Break-Glass-Admin
+
+- Alle Adressen aus `config.auth.admin_emails` sind geschützte Bootstrap-Admins:
+  - In der UI sind Rolle und Aktiv-Status gesperrt (Hinweis *„In Konfiguration festgelegt“*).
+  - API lehnt Herabstufen/Deaktivieren geschützter Admins sowie des letzten aktiven Admins mit `409 Conflict` ab.
+- **Lokaler CLI-Notfallzugang (ohne SMTP):**
+  - `python run.py admin-link <email>` (ruft `python -m marathon.server.auth admin-link <email>` auf).
+  - Erzeugt für einen aktiven Admin (oder eine Adresse aus `admin_emails`) einen 15-Minuten-Eintrag in `auth_tokens` und gibt den fertigen Link + 6-stelligen Code ausschließlich lokal auf stdout aus.
+
+### Freigaben für Workflows und Module
+
+**Modultyp-Freigaben**
+- Standard für normale Nutzer: **alle Modultypen freigegeben** (Opt-out über `user_module_permissions.allowed = false`).
+- Admins haben immer alle Modultypen freigegeben und können je Nutzer einzelne Modultypen sperren/freigeben (`PUT /api/v1/users/{user_id}/modules`).
+- Im Workflow-Editor zeigt die Modul-Palette nur für den Nutzer freigegebene Modultypen.
+
+**Workflow-Freigaben (`workflow_shares`)**
+- Stufen je `(workflow_id, user_id)`:
+  - Kein Eintrag = **nicht geteilt** (kein Zugriff).
+  - `view` = **Teilen zur Ansicht**: Workflow, Module, Assets, Logs und Status ansehen; **kein** Bearbeiten, **kein** Speichern, **kein** Starten/Stoppen/Zeitplan ändern, **kein** erneutes Verarbeiten.
+  - `edit` = **Teilen zur Bearbeitung und Ausführung**: zusätzlich Bearbeiten, Speichern, Starten, Stoppen, Zeitplan, Assets erneut verarbeiten.
+- Eigentümer (`owner_user_id`) hat implizit `edit` (solange kein verwendetes Modul gesperrt wurde); Admins haben immer Vollzugriff und können Eigentümer/Freigaben verwalten.
+
+**Verbindliche Konsistenzregeln (Modul- × Workflow-Freigabe)**
+1. **Freigabeversuch auf `edit` (`PUT /api/v1/workflows/{id}/shares`):**
+   - Server ermittelt alle im Workflow verwendeten Modultypen und prüft sie gegen die gesperrten Modultypen des Zielnutzers.
+   - Ist mindestens ein Modultyp gesperrt → `409 Conflict` mit `detail`: *„Freigabe zur Bearbeitung nicht möglich: Für <Nutzer> sind folgende Module gesperrt: <Modulnamen>. Es ist nur die Freigabe zur Ansicht möglich.“* und `blocked_modules: [...]`.
+2. **Nachträgliche Modulsperrung (`effective_access`):**
+   - Effektive Stufe wird bei jedem API-Aufruf live berechnet: Hat ein Nutzer `edit` (oder Eigentümerschaft), enthält der Workflow aber einen für ihn gesperrten Modultyp, fällt die **effektive** Stufe automatisch auf `view` zurück (`effective_access = 'view'`, `downgraded_reason = 'blocked_modules'`, `blocked_modules = [...]`).
+   - UI zeigt ein klares Hinweisbanner und schaltet Editor/Steuerung auf schreibgeschützte Ansicht um. Wird das Modul später wieder freigegeben (oder aus dem Workflow entfernt), greift wieder `edit`.
+3. **Save-Guard bei laufender Bearbeitung (`PUT /api/v1/workflows/{id}`):**
+   - Beim Speichern prüft der Server sowohl die effektive Berechtigung am bestehenden Workflow **als auch** alle Modultypen im eingereichten neuen Graphen gegen die aktuellen Modulfreigaben des Nutzers.
+   - Ist mindestens ein Modultyp gesperrt → `403 Forbidden` mit *„Speichern nicht möglich: Folgende Module sind für Dich gesperrt: <Modulnamen>.“*; der Workflow bleibt unverändert.
+   - Ändert ein Admin Modulfreigaben eines Nutzers, sendet der Server das SSE-Event `permissions.changed` für diesen Nutzer, sodass geöffnete Editor-Ansichten sofort warnen.
+
+### Rollen-Abgrenzung in Oberfläche, API & Live-Kanal
+
+- **Admin (eingeloggt):** Voller Zugriff auf alle Workflows, alle Worker (inkl. Server-Worker, Zulassung und Fähigkeiten-Rangliste), Servereinstellungen (`/settings`), Nutzer- und Modulfreigaben (`/users`).
+- **Normaler Nutzer (eingeloggt):**
+  - Sieht keine Servereinstellungen (`/settings`), keine Nutzerverwaltung (`/users`) und keine Gesamtliste fremder Worker (entsprechende Admin-Routen liefern `403`).
+  - Sieht in Workflows/Dashboard/Reports/SSE-Events ausschließlich eigene und für ihn freigegebene Workflows.
+  - Sitzt er vor einem Rechner mit laufendem Worker-Client, kann er genau diesen lokalen Worker im Browser steuern (über Tray-Link oder den lokalen Worker-Link in der UI) und für lokale Workflows aktivieren.
+- **Person vor einem Worker OHNE Marathon-Login:**
+  - Öffnet per Doppelklick / Rechtsklick im Tray-Icon die dedizierte Steuerungsansicht `/worker-control` (abgesichert über das lokale `marathon_worker_control`-Cookie für genau diese `worker_id`).
+  - Darf dort ausschließlich **diesen einen Worker** starten, stoppen (sanft), sofort stoppen und dessen Verfügbarkeitsregeln pflegen; sieht keine Workflows, keine Assets, keine Nutzer, keine Servereinstellungen und keine fremden Worker.
+
+## 3.4 Worker-Client (Windows-Tray), Entkopplung & Verfügbarkeitsregeln
+
+### Client-Aufbau, Registrierung & Systemtray
+
+- Paketstruktur: `marathon/client/` (dünner Starter + Tray-Steuerung + Loopback-Bridge) nutzt die bestehende Laufzeit `marathon/worker/runtime.py`; eigene gepinnte `requirements/client.txt` (u. a. `pystray`, `Pillow`, `psutil` für CPU/RAM/Prozesse; Windows-API `GetLastInputInfo` via `ctypes`; GPU-Auslastung best-effort via `nvidia-smi`/NVML oder Windows-PDH, ohne Absturz wenn kein GPU-Sensor vorliegt).
+- **Laufzeitkontext unter Windows:** Läuft im **Benutzerkontext** (Autostart / Benutzer-Aufgabenplanung), **nicht** als Windows-Dienst in Session 0 – nur so stehen Tray-Icon, Benutzereingaben (`GetLastInputInfo`) und lokale/gemappte Laufwerke zur Verfügung.
+- **Geräte-Registrierung ohne Nutzerkonto (`POST /api/v1/worker/enroll`):**
+  1. Startet der Client ohne `%LOCALAPPDATA%\MarathonWorker\worker.json`, sendet er `POST /api/v1/worker/enroll` mit `{ "hostname", "platform", "client_version" }`.
+  2. Der Server erzeugt eine stabile `worker_id` und ein kryptografisches `worker_token` (`secrets.token_urlsafe(32)`), speichert nur `token_hash` (SHA-256) in `workers`, setzt `status = 'stopped'` sowie `approved = not config.worker_client.require_admin_approval` und gibt `{ "worker_id", "worker_token", "approved" }` genau einmal zurück.
+  3. Der Client speichert `server_url`, `worker_id` und `worker_token` lokal in `%LOCALAPPDATA%\MarathonWorker\worker.json`.
+  4. **Worker-Authentifizierung (`marathon/server/worker_auth.py`):** Jede Anfrage unter `/api/v1/worker/…` prüft `Authorization: Bearer <token>` per SHA-256-Hash gegen `workers.token_hash` und bindet den Request strikt an diese eine `worker_id` (der interne `server-worker` behält sein eigenes lokales Server-Token).
+- **Kein eigenes Einstellungs-UI im Tray:**
+  - Doppelklick oder Rechtsklick → **„Worker-Einstellungen öffnen“** ruft mit dem eigenen `worker_token` `POST /api/v1/worker/control-link` auf und öffnet die zurückgegebene Einmal-URL im Standardbrowser.
+  - Rechtsklick-Menü minimal: *Worker-Einstellungen öffnen*, *Diesen Rechner im Browser verknüpfen* (Fallback für lokale Erkennung), *Status: <Zustand + Grund>* (Infozeile), *Beenden*.
+- **Download aus Marathon:** `GET /api/v1/client/download` liefert das von `build.py` erzeugte Client-Paket mit vorausgefüllter `server_url` aus.
+
+### Lokale Worker-Steuerung ohne Marathon-Login (`/worker-control`)
+
+1. Client sendet `POST /api/v1/worker/control-link` (authentifiziert mit `worker_token`).
+2. Server legt einen Eintrag in `worker_ephemeral_tokens` (`purpose = 'control_link'`, TTL 60 s) an und liefert `{ "url": "<public_url>/worker-control?token=<einmal_token>" }`.
+3. Browser öffnet die URL → `GET /api/v1/worker-control/exchange?token=<einmal_token>` (bzw. Bestätigungs-POST auf der Route) konsumiert den Einmal-Token atomar, legt eine `worker_control_sessions`-Zeile an (TTL `control_session_hours`), setzt das `HttpOnly; SameSite=Lax`-Cookie `marathon_worker_control` und zeigt die fokussierte Einstellungsseite genau dieses Workers.
+4. Über diese Session sind **ausschließlich** Lesen/Steuern/Verfügbarkeitsregeln dieser einen `worker_id` erlaubt (`GET/PUT /api/v1/worker-control/self`, `POST /api/v1/worker-control/self/{start|stop|stop-now}`), sowie optional ein Live-Event-Stream nur für diesen einen Worker. Fähigkeiten-Rangliste bleibt schreibgeschützt (nur Admin). Ist `worker.approved == false`, zeigt die Seite den Hinweis *„Dieser Worker wartet auf Freigabe durch einen Administrator“*.
+
+### Lokale Rechner-Erkennung im Browser (Loopback-Bridge + Fallback)
+
+1. **Loopback-Endpunkt im Tray-Client (`127.0.0.1:<local_bridge_port>`):**
+   - Bindet strikt auf `127.0.0.1` (aus dem Netzwerk physisch nicht erreichbar).
+   - Prüft bei jedem Request den `Origin`-Header exakt gegen `server_url` (Schema + Host + Port); abweichende oder fehlende Origins erhalten `403` ohne CORS-Header. Für die gültige Origin werden `Access-Control-Allow-Origin: <origin>` und `Access-Control-Allow-Private-Network: true` gesetzt.
+   - `GET http://127.0.0.1:<port>/presence`:
+     - Der Client hält ein kurzlebiges `presence_token` (TTL 5 Min., bezogen über `POST /api/v1/worker/presence-token` mit seinem `worker_token`, rechtzeitig erneuert).
+     - Antwortet ausschließlich mit `{ "worker_id": "…", "worker_name": "…", "online": true, "status": "…", "presence_token": "…" }`.
+     - Gibt **niemals** `worker_token` und **niemals** lokale Dateien direkt aus.
+2. **Sicherheitsnachweis am Server:**
+   - Sendet der Browser das `presence_token` im Header `X-Marathon-Worker-Presence` (zusammen mit einer gültigen User-Session `marathon_session`), verifiziert der Server den Hash gegen `worker_ephemeral_tokens` (`purpose = 'presence'`, nicht abgelaufen).
+   - Nur damit darf ein normaler Nutzer diesen Worker als lokalen Ziel-Worker in einem Workflow aktivieren und im Datei-Dialog (`source=worker`) dessen lokale Laufwerke browsen. Fremde Workstations im Netz bleiben unzugänglich.
+3. **Fallback (falls Browser Loopback blockiert):**
+   - Über Tray → *„Diesen Rechner im Browser verknüpfen“* öffnet der Client `<public_url>/worker-presence?token=<einmal_token>`, der ein rein browser-lokales `HttpOnly`-Cookie `marathon_local_worker` für genau diese `worker_id` setzt (unabhängig vom User-Account, gebunden an die lokale Browser-Instanz).
+
+### Steuerbefehle & Zustände (`ready`, `draining`, `stopping`, `stopped`)
+
+| Aktion | Zielzustand | Verhalten |
+|---|---|---|
+| **Starten** | `ready` | Worker darf Jobs annehmen (sofern `approved = true`, `online = true` und `client_available = true`). |
+| **Stoppen** (sanft / Drain) | `draining` | Server vergibt keine neuen Jobs mehr. Laufende Jobs laufen sauber zu Ende. Sobald `running_jobs == 0`, wechselt der Server automatisch auf `stopped`. |
+| **Sofort stoppen** (hart) | `stopping` | Laufende Jobs werden über das Abbruchsignal hart abgebrochen; Assets gehen zurück auf den letzten fertigen Ausgang und werden neu verteilt (zählt nicht als Fehlversuch). Nach Abbruch → `stopped`. |
+
+### Verfügbarkeitsregeln als Positivliste (`availability_config`) & Protokoll 3
+
+Alle Einstellungen werden zentral in Marathon gepflegt (erreichbar über `/worker-control` und Admin-`/workers/<id>`) und beantworten durchgängig die Frage: **„Wann ist der Worker verfügbar?“**
+
+```json
+{
+  "mode": "rules",
+  "schedule": {
+    "enabled": true,
+    "timezone": "Europe/Berlin",
+    "days": {
+      "mon": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
+      "tue": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
+      "wed": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
+      "thu": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
+      "fri": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
+      "sat": [{"start": "00:00", "end": "24:00"}],
+      "sun": [{"start": "00:00", "end": "24:00"}]
+    }
+  },
+  "idle": {
+    "enabled": true,
+    "minutes": 15,
+    "max_cpu_percent": 25,
+    "max_ram_percent": 75,
+    "max_gpu_percent": 20
+  },
+  "blocked_processes": ["Resolve.exe", "Adobe Premiere Pro.exe"]
+}
+```
+
+Auswertungslogik (im Worker-Client, alle 5 s):
+1. **Programm-Bedingung (harte Voraussetzung):** Läuft einer der Prozesse aus `blocked_processes` (case-insensitiver Vergleich auf Prozessname) → `available = false`, Grund: *„Programm <Name> aktiv“*.
+2. **Freigabe-Bedingung (Positivliste):**
+   - `mode == "always"` → positiv erfüllt.
+   - `mode == "rules"` → positiv erfüllt, wenn (`schedule.enabled` **und** aktuelle lokale Uhrzeit liegt in einem positiven Fenster für den heutigen Wochentag) **ODER** (`idle.enabled` **und** Inaktivitätsbedingung erfüllt).
+3. **Inaktivitätsbedingung (Schutz vor Selbst-Deaktivierung):**
+   - **Im Leerlauf (kein aktiver Marathon-Job):** Keine Maus-/Tastatureingabe seit `>= idle.minutes` (`GetLastInputInfo`) **UND** geglättete Systemwerte (30-Sekunden-Mittel) für CPU `< max_cpu_percent`, RAM `< max_ram_percent` und GPU `< max_gpu_percent` (falls GPU-Sensor vorhanden).
+   - **Während ein Marathon-Job läuft:** CPU/RAM/GPU-Schwellenwerte werden ausgesetzt (da der eigene Job Last erzeugt); geprüft werden nur noch Maus-/Tastatureingabe und `blocked_processes`.
+4. **Übergang `available: true → false` während laufendem Job:** Client meldet sofort `available: false` samt Grund an den Server; laufende Jobs laufen sauber zu Ende (Drain). Neue Jobs vergibt der Server erst wieder bei `available: true`.
+5. **Worker-Protokoll Version 3 (`/api/v1/worker/…`):**
+   - `POST /worker/register` und `POST /worker/poll` akzeptieren `protocol: 3`, `available: bool`, `availability_reason: str`.
+   - `POST /worker/poll` liefert zusätzlich bei Konfigurationsänderung `availability_config` (mit Hash/Version) sowie ggf. ausstehende `fs_request`- und `path_check`-Aufträge.
+
+## 3.5 Watchfolder auf Workern, lokale Pfade & Rechnerwechsel
+
+### Strukturiertes Pfadmodell & Rechnerwechsel (Rechner 1 → Rechner 2)
+
+```json
+{
+  "path_scope": "local",
+  "worker_id": "wrk_01j…",
+  "path": "D:\\Ingest"
+}
+```
+
+- Bei Netzwerkpfaden (`\\server\freigabe\…`): `path_scope = "network"`, `worker_id = null`.
+- Migration bestehender Einstellungen: fehlendes `path_scope` wird für `\\…` als `"network"` interpretiert; lokale Pfade ohne `worker_id` gelten als unvollständig (Workflow nicht startbar, bis ein Worker gewählt ist).
+- **UI-Darstellung:** Netzwerkpfade normal; lokale Pfade mit Worker-Chip `[<aktueller Worker-Name>] D:\Ingest` (über `worker_id` live aufgelöst, robust gegen Umbenennung).
+- **Erstellen an Rechner 1:** Wählt der Nutzer einen lokalen Pfad, schlägt Marathon automatisch den per Loopback-Bridge erkannten lokalen Worker vor bzw. übernimmt ihn aus dem Datei-Dialog (`Dieser Rechner`).
+- **Wechseln zu Rechner 2 (1-Klick-Umstellung):**
+  - Öffnet ein berechtigter Nutzer (`edit`) einen Workflow mit lokalem Pfad an Rechner 2 (erkannt via Loopback-Bridge) und der Workflow steht noch auf Rechner 1:
+    - Im Workflow-Kopf und direkt am lokalen Modul erscheint ein deutlicher Hinweis samt Aktion **„Auf diesen Rechner (Rechner 2) umstellen“**.
+    - Beim Klick auf **„Starten“** eines gestoppten Workflows an Rechner 2 bietet ein kurzer Dialog direkt: *„Auf diesem Rechner (Rechner 2) starten“* vs. *„Auf Rechner 1 starten“*.
+    - Läuft der Workflow bereits aktiv auf Rechner 1, wird er nicht ungefragt umgezogen (Hinweis: erst stoppen, dann umstellen).
+  - **Live-Pfadprüfung nach Umstellung:** Über `POST /api/v1/workflows/{id}/bind-local-worker` (abgesichert durch `presence_token` für Rechner 2 oder Admin-Rolle) werden alle lokalen Module des Workflows auf `worker_id = <Rechner 2>` umgestellt; gleichzeitig prüft der Server per kurzlebigem Check über Rechner 2, ob die konfigurierten lokalen Pfade dort existieren. Fehlt ein Ordner auf Rechner 2, erscheint sofort eine klare Meldung am Modul mit direktem Button zum Datei-/Ordner-Dialog auf Rechner 2.
+
+### Watchfolder als Worker-Fähigkeit & Sticky Locality
+
+- `watchfolder` erhält `execution = "worker"` im Modulkatalog; neue Worker erhalten `watchfolder` ab Werk an oberster Stelle ihrer `skills`-Liste (auch der `server-worker`).
+- Der alte Hintergrund-Thread `marathon/server/watcher.py` entfällt; der Engine-Tick erzeugt fällige Watchfolder-Jobs:
+  - `path_scope == "network"` → Zuteilung an den `server-worker` (bzw. passenden verfügbaren Worker nach Fähigkeiten-Rang).
+  - `path_scope == "local"` → Zuteilung **ausschließlich** an `worker_id`.
+- **Sticky Locality für Folgejobs:**
+  - Jedes Asset aus einem lokalen Watchfolder wird mit `assets.locality_worker_id = watchfolder.worker_id` angelegt.
+  - Im Scheduler (`marathon/server/engine/tick.py`): Hat ein Asset `locality_worker_id IS NOT NULL`, kommt **nur** dieser eine Worker für Folgejobs infrage.
+  - Schreibt ein Modul (`copy_file`, `move_file`, künftig `transcode` etc.) die resultierende Datei auf einen **Netzwerkpfad** (`\\…`), setzt die Engine `assets.locality_worker_id = NULL`. Ab dem nächsten Modul greift wieder die normale Verteilung nach Fähigkeiten-Rang.
+
+### Kontextsensitive Modul-Hinweise & Statusspalten
+
+- **Direkte Hinweise am Watchfolder-Modul (Editor + Überwachen):**
+  1. Lokaler Pfad ohne laufenden Worker-Client auf dem aktuellen Rechner (und keine gültige `worker_id` gesetzt) → Meldung am Modul mit Link **„Worker-Client herunterladen“**.
+  2. Konfigurierte `worker_id` ist ein anderer Rechner als der lokal erkannte → Hinweis + Aktion **„Auf diesen Rechner umstellen“** (für Nutzer mit `edit`-Recht).
+  3. Konfigurierter `worker_id` ist offline, `stopped`, `draining`/`stopping`, nicht zugelassen (`approved = false`) oder `client_available = false` → Meldung am Modul mit genauem Grund und Link zu den Worker-Einstellungen (beim lokal erkannten Rechner direkt über `/worker-control` bzw. Hinweis auf Tray-Icon, für Admins `/workers/<worker_id>`).
+  4. Ist beim fälligen Scan kein passender Worker verfügbar, wartet der Scan und schreibt *„Kein Worker für den Watchfolder verfügbar“* (bzw. den konkreten Grund) ins Modul-Log.
+- **Spalten & Status:**
+  - Watchfolder: Spalten **neu** (links: Funde des laufenden Scans; gehen nach Scan-Abschluss in `erfasst` über) und **erfasst** (rechts); Spalte `wartet` entfällt; gefundene Assets gehen sofort weiter.
+  - Warten-Modul: Assets stehen während der Wartezeit in Spalte **wartet**, danach `erledigt` über Ausgang `Erfolg`.
+
+## 3.6 Datei- und Ordner-Dialog (`FileBrowserDialog`)
+
+### Funktionsumfang & Bedienung (React 19 / TypeScript, `lucide-react`)
+
+Ausbau des bestehenden `ui/src/components/FolderDialog.tsx` zu einer wiederverwendbaren Komponente `FileBrowserDialog` (ohne externe File-Manager-Library, ohne Favoritenspalte links):
+
+- **Props / Modi:** `mode: "folder" | "file"`, `accept_extensions?: string[]`, `allow_local_worker?: boolean` (Standard `true`); Rückgabe strukturiert: `{ scope: "network" | "local", worker_id: string | null, path: string }`.
+- **Quellen-Leiste oben:** Umschalter **`Server`** (Freigaben von `\\<server_address>` bzw. Server-Pfade) vs. **`Dieser Rechner`** (lokal erkannter Worker via Loopback-Bridge; ohne Client klare Meldung + Download-Link). Admins erhalten optional zusätzlich ein Dropdown für beliebige Online-Worker.
+- **Navigations- und Pfadzeile:**
+  - Buttons: `Zurück` (`←`), `Vor` (`→`) mit clientseitigem Verlauf-Stack, `Nach oben` (`↑`), `Aktualisieren` (`↻`).
+  - **Pfadleiste:** standardmäßig klickbare Breadcrumb-Knoten; Klick auf freie Fläche (oder `Strg+L` / `Alt+D`) wechselt in Editiermodus; Vorschlagmenü nach 150 ms Debounce (clientseitiger Cache je Elternpfad): `↓`/`↑` markiert, `Tab` übernimmt zum Weitertippen, `Enter` betritt, `Esc` schließt.
+  - **Filterfeld rechts:** clientseitige Filterung verzögerungsfrei (case-insensitive Teilstring, Endung wie `.mp4`, Wildcards `*` und `?`).
+- **Ansichten (Auswahl in `localStorage`):**
+  - **Liste:** mehrspaltig vertikal fließend (wie Windows „Liste“), Icon + Name, horizontales Scrollen.
+  - **Details:** sortierbare Tabelle (`Name`, `Änderungsdatum`, `Typ`, `Größe`; Ordner immer vor Dateien).
+  - **Icons:** über `lucide-react` nach Dateigruppe (Ordner, Video, Audio, Bild, Dokument/Text/CSV/JSON, Archiv, generische Datei).
+  - **Ordner- vs. Datei-Modus:** Im Ordner-Modus sind Dateien sichtbar, aber gedimmt und nicht wählbar („Diesen Ordner wählen“); im Datei-Modus wählt Doppelklick oder „Öffnen“ die Datei.
+- **Performance (5.000+ Einträge):** Virtualisiertes Rendering im Frontend für `Details` und `Liste`; Statuszeile unten zeigt Elementzahl (gesamt / gefiltert) und ggf. Kappungshinweis.
+
+### Backend-API (`GET /api/v1/fs/entries`) & Remote-Listing (Long-Poll-RPC)
+
+- Erweitert bzw. ersetzt `GET /api/v1/fs/dirs` (alter Pfad kann als kompatibler Alias bleiben).
+- Query-Parameter: `source=server|worker`, `worker_id` (Pflicht bei `source=worker`), `path` (optional; leer = Laufwerke/Wurzeln bzw. `\\<server_address>`), `include_files=true|false` (Standard `true`).
+- Antwort: `source`, `worker_id`, `path`, `parent`, `breadcrumbs`, `entries` (`name`, `path`, `is_dir`, `size`, `modified_at`, `ext`), `total_count`, `truncated`.
+- `max_entries = 10_000`; Metadaten über `os.scandir` + `entry.stat(follow_symlinks=False)`.
+- **Rechteprüfung:** `source=worker` nur erlaubt mit gültigem `X-Marathon-Worker-Presence`-Ticket (bzw. `marathon_local_worker`-Cookie) für genau diese `worker_id` **oder** `current_user.role == 'admin'`.
+- **Long-Poll-RPC:** Bei `source=worker` prüft der Server Berechtigung und Online-Status (sonst `503`), legt kurzlebige Anfrage `{ request_id, path, include_files }` (Timeout 10 s) an, weckt den offenen Long-Poll des Workers, erhält das `scandir`-Ergebnis via `POST /api/v1/worker/fs-result` und liefert es an den Browser zurück (ausschließlich ausgehende Verbindungen vom Worker zum Server).
+
+## 3.7 Abnahmekriterien (Release Infrastruktur)
+
+- Login per Magic-Link (inkl. SafeLinks-Schutz per Bestätigungs-POST) und 6-stelligem Code funktioniert; Session überlebt Browser-Neustart und verlängert sich bei Aktivität.
+- Selbstregistrierung akzeptiert nur konfigurierte Domains; Break-Glass-Admin aus `marathon.toml` und CLI-Notfall-Link funktionieren auch ohne SMTP.
+- Workflow-Freigaben (`none`, `view`, `edit`) und Modulsperren greifen in UI, API und SSE-Live-Kanal; alle drei Konsistenzregeln (Sperre bei Freigabe, automatischer Rückfall auf `view`, Save-Guard `403` bei laufender Bearbeitung) sind durch Tests abgedeckt.
+- Nutzerkonten und Worker sind vollständig entkoppelt: Eine Person vor einem Worker kann diesen über das Tray-Icon im Browser steuern (Starten, Stoppen/Drain, Sofort stoppen, Positiv-Verfügbarkeit) – ganz ohne Marathon-Nutzerkonto und ohne Zugriff auf fremde Worker.
+- Ein eingeloggter Nutzer kann einen Workflow mit lokalen Pfaden an Rechner 1 anlegen, zu Rechner 2 wechseln, per 1-Klick-Umschaltung dort aktivieren (inkl. Pfadprüfung) und laufen lassen; fremde Workstations lassen sich ohne lokalen Presence-Nachweis nicht browsen oder kapern.
+- Lokale Watchfolder binden Folgejobs per Sticky Locality bis zum ersten Netzwerkpfad und zeigen fehlende/abweichende/inaktive Worker mit direktem Link am Modul an.
+- `FileBrowserDialog` beherrscht `Server` und `Dieser Rechner`, `Liste` und `Details`, Breadcrumb + Autocomplete, Verlauf (`←`/`→`/`↑`/`↻`), Filterfeld und scrollt 5.000+ Einträge flüssig.
