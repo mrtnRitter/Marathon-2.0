@@ -6,7 +6,7 @@ Bezeichner im Code englisch (`snake_case`), Texte für Nutzer deutsch und wörtl
 
 - **Teil 1** hält die entschiedenen Architektur-Grundsätze fest.
 - **Teil 2** beschreibt den **bereits umgesetzten** Systemvertrag für Kern, Engine und Worker-Steuerung (Stand Migration `0009`, Worker-Protokoll 2; Abnahme offen).
-- **Teil 3** beschreibt den **geplanten** Vertrag für den nächsten Release *Infrastruktur* (Migration `0010`, Worker-Protokoll 3; noch nicht umgesetzt). Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
+- **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Migration `0010`, Worker-Protokoll 3; noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* ist hier noch nicht beschrieben. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
 
 ---
 
@@ -400,9 +400,9 @@ class WorkerSupervisor:
 
 ---
 
-# Teil 3: Nächster Release – Infrastruktur (geplant, Migration `0010`, Protokoll 3)
+# Teil 3: Geplante Releases – Infrastruktur (geplant, Migration `0010`, Protokoll 3)
 
-Verbindlicher Architektur- und Umsetzungsvertrag (v2: User und Worker strikt getrennt) für den nächsten Release *Infrastruktur – Nutzer, Worker-Client, lokale Watchfolder & Datei-Dialog*. Wo dieser Teil Regeln aus Teil 2 erweitert oder ersetzt, gilt bei Umsetzung dieses Releases Teil 3.
+Verbindlicher Architektur- und Umsetzungsvertrag (v2: User und Worker strikt getrennt) für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel*. Wo dieser Teil Regeln aus Teil 2 erweitert oder ersetzt, gilt mit Umsetzung des jeweiligen Releases Teil 3. Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* ist hier noch nicht beschrieben. Migration und Protokollnummer je Release werden bei der Klärung festgelegt.
 
 ## 3.1 Konfiguration `config/marathon.toml` und Geheimnisse
 
@@ -698,7 +698,7 @@ Ausbau des bestehenden `ui/src/components/FolderDialog.tsx` zu einer wiederverwe
 - **Rechteprüfung:** `source=worker` nur erlaubt mit gültigem `X-Marathon-Worker-Presence`-Ticket (bzw. `marathon_local_worker`-Cookie) für genau diese `worker_id` **oder** `current_user.role == 'admin'`.
 - **Long-Poll-RPC:** Bei `source=worker` prüft der Server Berechtigung und Online-Status (sonst `503`), legt kurzlebige Anfrage `{ request_id, path, include_files }` (Timeout 10 s) an, weckt den offenen Long-Poll des Workers, erhält das `scandir`-Ergebnis via `POST /api/v1/worker/fs-result` und liefert es an den Browser zurück (ausschließlich ausgehende Verbindungen vom Worker zum Server).
 
-## 3.7 Abnahmekriterien (Release Infrastruktur)
+## 3.7 Abnahmekriterien (Releases Zugang & Nutzer bis Lokale Watchfolder & Rechnerwechsel)
 
 - Login per Magic-Link (inkl. SafeLinks-Schutz per Bestätigungs-POST) und 6-stelligem Code funktioniert; Session überlebt Browser-Neustart und verlängert sich bei Aktivität.
 - Selbstregistrierung akzeptiert nur konfigurierte Domains; Break-Glass-Admin aus `marathon.toml` und CLI-Notfall-Link funktionieren auch ohne SMTP.
