@@ -295,7 +295,7 @@ def test_help_lists_dev_option(capsys):
     assert error.value.code == 0
     output = capsys.readouterr().out
     assert "--dev" in output
-    assert set(re.findall(r"--[a-z][a-z-]*", output)) == {"--help", "--dev"}
+    assert set(re.findall(r"--[a-z][a-z-]*", output)) == {"--help", "--dev", "--trust"}
 
 
 def test_postgres_start_stop_integration(tmp_path, monkeypatch):
@@ -598,3 +598,67 @@ def test_dev_keyboard_interrupt_stops_both_children(ready_runner, monkeypatch):
     assert run.start_dev(ready_runner, Path("python")) == 0
     assert server.signals == [signal.SIGINT]
     assert vite.returncode == -15
+
+
+def test_trust_missing_certificate(tmp_path, monkeypatch, capsys):
+    cert = tmp_path / "fehlt.crt"
+    monkeypatch.setattr(run, "caddy_root_cert", cert)
+
+    assert run.trust_certificate() == 1
+    assert "Stammzertifikat fehlt" in capsys.readouterr().err
+
+
+def test_trust_windows_calls_certutil(tmp_path, monkeypatch):
+    cert = tmp_path / "root.crt"
+    cert.write_text("certificate", encoding="utf-8")
+    monkeypatch.setattr(run, "caddy_root_cert", cert)
+    monkeypatch.setattr(run, "is_windows", True)
+    calls = []
+
+    def fake_run(command, timeout):
+        calls.append((command, timeout))
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(run, "_run_command", fake_run)
+
+    assert run.trust_certificate() == 0
+    assert calls == [(["certutil", "-user", "-addstore", "Root", str(cert)], 120)]
+
+
+def test_trust_windows_failure(tmp_path, monkeypatch, capsys):
+    cert = tmp_path / "root.crt"
+    cert.write_text("certificate", encoding="utf-8")
+    monkeypatch.setattr(run, "caddy_root_cert", cert)
+    monkeypatch.setattr(run, "is_windows", True)
+    monkeypatch.setattr(run, "_run_command", lambda command, timeout: subprocess.CompletedProcess(command, 5))
+
+    assert run.trust_certificate() == 1
+    assert "Exit-Code 5" in capsys.readouterr().err
+
+
+def test_trust_linux_prints_path(tmp_path, monkeypatch, capsys):
+    cert = tmp_path / "root.crt"
+    cert.write_text("certificate", encoding="utf-8")
+    monkeypatch.setattr(run, "caddy_root_cert", cert)
+    monkeypatch.setattr(run, "is_windows", False)
+
+    assert run.trust_certificate() == 0
+    output = capsys.readouterr().out
+    assert str(cert) in output
+    assert "update-ca-certificates" in output
+
+
+def test_main_trust_skips_database(monkeypatch):
+    monkeypatch.setattr(run, "start_database", lambda *args: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(run, "_validate_prerequisites", lambda *args: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(run, "trust_certificate", lambda: 0)
+
+    assert run.main(["--trust"]) == 0
+
+
+def test_help_lists_trust_option(monkeypatch, capsys):
+    with pytest.raises(SystemExit) as error:
+        run.main(["--help"])
+
+    assert error.value.code == 0
+    assert "--trust" in capsys.readouterr().out

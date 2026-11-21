@@ -12,16 +12,20 @@ from marathon.server.config import ServerConfig
 # FUNC
 def seed_defaults(connection: Connection, config: ServerConfig) -> None:
     """Insert database defaults without replacing existing values."""
-    connection.execute(
-        text(
-            "INSERT INTO settings (key, value) VALUES (:key, CAST(:value AS jsonb)) "
-            "ON CONFLICT (key) DO NOTHING"
-        ),
-        {
-            "key": "folder_dialog.server_address",
-            "value": json.dumps(config.folder_dialog.server_address),
-        },
-    )
+    defaults = {
+        "folder_dialog.server_address": config.folder_dialog.server_address,
+        "proxy.public_url": config.proxy.public_url,
+        "proxy.builtin": config.proxy.builtin,
+        "proxy.trusted_proxies": list(config.proxy.trusted_proxies),
+    }
+    for key, value in defaults.items():
+        connection.execute(
+            text(
+                "INSERT INTO settings (key, value) VALUES (:key, CAST(:value AS jsonb)) "
+                "ON CONFLICT (key) DO NOTHING"
+            ),
+            {"key": key, "value": json.dumps(value)},
+        )
     connection.execute(
         text(
             "INSERT INTO workers (id, name, status, online, skills, capabilities, client_version) "

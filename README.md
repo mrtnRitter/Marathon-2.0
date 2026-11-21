@@ -12,7 +12,7 @@ Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Ve
 - Windows oder Linux, jeweils 64 Bit (x64).
 - Internetzugang **nur beim Einrichten**. Zur Laufzeit wird nichts nachgeladen.
 
-Alles Weitere (Python-Pakete, Node.js, PostgreSQL, UI-Bibliotheken, Schrift) installiert `build.py` lokal in den Projektordner. Es wird nichts global installiert.
+Alles Weitere (Python-Pakete, Node.js, PostgreSQL, Caddy, UI-Bibliotheken, Schrift) installiert `build.py` lokal in den Projektordner. Es wird nichts global installiert.
 
 ## Einrichten
 
@@ -28,9 +28,10 @@ python3 build.py     # Linux
 1. Lokale Python-Umgebung `.venv` anlegen und `requirements/server.txt` installieren.
 2. Node.js (feste Version, Prüfsumme wird kontrolliert) nach `.tools/node` laden.
 3. PostgreSQL 18.6 (feste Version, Prüfsumme wird kontrolliert) nach `.tools/postgres` laden.
-4. Datenbank-Ordner `.data/postgres` anlegen. Das Passwort wird zufällig erzeugt und liegt in `.data/postgres.pass`.
-5. UI-Bibliotheken aus `ui/package-lock.json` nach `ui/node_modules` installieren.
-6. Die Oberfläche bauen; das Ergebnis liegt in `marathon/server/static`.
+4. Caddy 2.11.9 (feste Version, Prüfsumme wird kontrolliert) nach `.tools/caddy` laden – der mitgelieferte HTTPS-Proxy.
+5. Datenbank-Ordner `.data/postgres` anlegen. Das Passwort wird zufällig erzeugt und liegt in `.data/postgres.pass`.
+6. UI-Bibliotheken aus `ui/package-lock.json` nach `ui/node_modules` installieren.
+7. Die Oberfläche bauen; das Ergebnis liegt in `marathon/server/static`.
 
 Bereits erledigte Schritte werden übersprungen. `build.py` erneut ausführen nach jedem `git pull` und nach Änderungen am UI-Code.
 
@@ -40,9 +41,19 @@ Bereits erledigte Schritte werden übersprungen. `build.py` erneut ausführen na
 python run.py
 ```
 
-`run.py` startet die Datenbank, bringt sie auf den neuesten Stand und startet den Server. Beenden mit `stop` und Enter (Strg+C geht als Notfall-Abbruch); danach wird auch die Datenbank gestoppt.
+`run.py` startet die Datenbank, bringt sie auf den neuesten Stand und startet den Server mit dem mitgelieferten HTTPS-Proxy. Beenden mit `stop` und Enter (Strg+C geht als Notfall-Abbruch); danach werden auch Proxy und Datenbank gestoppt.
 
-Oberfläche im Browser öffnen: http://127.0.0.1:8080 (Adresse und Port siehe Konfiguration).
+Oberfläche im Browser öffnen: die öffentliche Adresse, z. B. https://laptop-martin-r (siehe [HTTPS und Zertifikate](#https-und-zertifikate)). Nur über HTTPS erreichbar; Port 80 ist zu, daher immer mit `https://` aufrufen.
+
+Beim ersten Start einmal das Stammzertifikat importieren (Server läuft dabei weiter, in einem zweiten Fenster):
+
+```bash
+python run.py --trust
+```
+
+Danach den Browser neu starten.
+
+**Rettungszugang:** Auf dem Server-Rechner selbst bleibt http://127.0.0.1:8080 direkt erreichbar, z. B. wenn eine falsche öffentliche Adresse eingetragen wurde.
 
 ### Entwicklungsmodus (Live-Vorschau)
 
@@ -61,6 +72,7 @@ Oberfläche öffnen: http://127.0.0.1:5173
 | `python build.py` | Alles installieren, Datenbank-Ordner anlegen und die Oberfläche bauen |
 | `python run.py` | Datenbank und Server starten |
 | `python run.py --dev` | Datenbank, Server und Live-Vorschau starten |
+| `python run.py --trust` | Stammzertifikat des mitgelieferten Proxys für den angemeldeten Benutzer importieren (Windows); unter Linux Pfad und Vorgehen anzeigen |
 | `python build.py --help` / `python run.py --help` | Hilfe anzeigen |
 
 ### Datenbank zurücksetzen
@@ -87,10 +99,26 @@ Datei `config/marathon.toml`:
 | `[server_worker] enabled` | Server-Worker mit dem Server starten | `true` |
 | `[server_worker] skills` | Fähigkeiten des Server-Workers ab Werk, oben = höchste Prio (Modultyp-IDs, ohne Doppelte) | `["copy_file", "move_file", "rename_file"]` |
 | `[folder_dialog] server_address` | Server-Adresse für den Ordner-Dialog ab Werk (Rechnername oder IP, leer = keine) | `""` |
+| `[proxy] public_url` | Adresse, unter der Marathon erreichbar ist (nur `https://`, ohne Pfad); bestimmt Zertifikat und Port des mitgelieferten Proxys | `"https://localhost"` |
+| `[proxy] builtin` | Mitgelieferten Proxy (Caddy) starten; `false` = externer Reverse-Proxy | `true` |
+| `[proxy] trusted_proxies` | IP-Adressen externer Reverse-Proxys; bei `builtin = true` gilt `127.0.0.1` automatisch | `[]` |
 
-`[server_worker] skills` und `[folder_dialog] server_address` sind Standardwerte: Sie gehen beim Start mit `python run.py` in die Datenbank, solange dort noch kein Wert steht. Danach gilt die Datenbank, geändert wird in der Oberfläche (Worker-Seite bzw. Einstellungen).
+`[server_worker] skills`, `[folder_dialog] server_address` und die `[proxy]`-Einträge sind Standardwerte: Sie gehen beim Start mit `python run.py` in die Datenbank, solange dort noch kein Wert steht. Danach gilt die Datenbank, geändert wird in der Oberfläche (Worker-Seite bzw. Einstellungen). `host` und `port` gelten immer aus der Datei.
 
 `name` und `user` erlauben nur Kleinbuchstaben, Ziffern und `_`. Den Benutzer nach dem Einrichten nicht mehr ändern, sonst die Datenbank zurücksetzen.
+
+## HTTPS und Zertifikate
+
+Marathon selbst spricht nur HTTP auf `host`/`port` und liegt immer hinter einem Proxy, der HTTPS übernimmt.
+
+- **Mitgelieferter Proxy (Standard):** Der Server startet Caddy aus `.tools/caddy` und beendet ihn mit dem Server. Caddy lauscht nur auf dem Port der öffentlichen Adresse (ab Werk 443) und stellt das Zertifikat für deren Rechnernamen aus seiner eigenen Zertifizierungsstelle aus; die Zertifikate erneuert Caddy selbst. Andere Namen oder IP-Adressen erhalten keine Verbindung. Daten in `.cert/`, Ausgaben in `.data/caddy.log`.
+- **Stammzertifikat:** `.cert/caddy/pki/authorities/local/root.crt` (entsteht beim ersten Start, gilt 10 Jahre). Jeder Rechner, der Marathon im Browser öffnet oder als Worker arbeitet, muss es einmal importieren:
+  - Server-Rechner: `python run.py --trust`.
+  - Andere Windows-Rechner: Datei kopieren, Doppelklick → „Zertifikat installieren“ → „Aktueller Benutzer“ → „Alle Zertifikate in folgendem Speicher speichern“ → „Vertrauenswürdige Stammzertifizierungsstellen“. Danach den Browser neu starten.
+  - Linux: nach `/usr/local/share/ca-certificates/marathon.crt` kopieren und `update-ca-certificates` ausführen.
+- **Externer Reverse-Proxy:** In den Einstellungen „Mitgelieferten Proxy verwenden“ ausschalten, die IP-Adresse des Proxys unter „Adressen externer Proxys“ eintragen und ggf. die öffentliche Adresse anpassen; dann den Server neu starten. Läuft der Proxy auf einem anderen Rechner, in `config/marathon.toml` `host = "0.0.0.0"` setzen. Der Proxy muss `X-Forwarded-Proto` setzen, Anfragen länger als `poll_timeout_s` offen halten und den Live-Kanal ungepuffert durchreichen.
+- **Umleitung:** Anfragen, die Marathon über HTTP oder einen anderen Rechnernamen erreichen, werden auf die öffentliche Adresse umgeleitet.
+- **Worker** verbinden sich nur über `https://` und prüfen das Zertifikat gegen den Zertifikatsspeicher des Systems; mit `--ca-file <datei>` stattdessen nur gegen diese Datei. Die Prüfung lässt sich nicht abschalten. Der Server-Worker nutzt die öffentliche Adresse und das Stammzertifikat des mitgelieferten Proxys.
 
 ## Engine und Worker
 
@@ -114,6 +142,11 @@ Die Seite „Einstellungen“ speichert in die Datenbank („Speichern“).
 | Einstellung | Bedeutung | Standard |
 |---|---|---|
 | Ordner-Dialog: Server-Adresse | Rechnername oder IP-Adresse, z. B. `10.0.77.11`. „Server“ im Fenster „Ordner wählen“ zeigt die Freigaben von `\\<Adresse>`. | aus `[folder_dialog] server_address` |
+| Proxy & HTTPS: Öffentliche Adresse | Adresse, unter der Marathon erreichbar ist (nur `https://`, ohne Pfad) | aus `[proxy] public_url` |
+| Proxy & HTTPS: Mitgelieferten Proxy verwenden | Aus: Ein externer Reverse-Proxy übernimmt HTTPS | aus `[proxy] builtin` |
+| Proxy & HTTPS: Adressen externer Proxys | IP-Adressen, durch Komma getrennt; der mitgelieferte Proxy gilt automatisch | aus `[proxy] trusted_proxies` |
+
+Änderungen unter „Proxy & HTTPS“ gelten nach einem Neustart des Servers.
 
 ## Workflows mit fehlerhaften Einstellungen
 
@@ -227,7 +260,7 @@ Die Datenbank-Tests starten eine eigene, temporäre PostgreSQL-Instanz mit den P
 ```
 build.py               Einrichten und Bauen
 run.py                 Starten
-config/marathon.toml   Server-, Datenbank-, Engine-, Server-Worker- und Ordner-Dialog-Einstellungen
+config/marathon.toml   Server-, Datenbank-, Engine-, Server-Worker-, Ordner-Dialog- und Proxy-Einstellungen
 requirements/          Python-Abhängigkeiten (server.txt)
 marathon/common/       Gemeinsame Grundlage (Version)
 marathon/worker/       Worker-Laufzeit (python -m marathon.worker)
@@ -247,4 +280,4 @@ tests/                 Automatische Tests
 docs/mission_log.md    Planung und Fortschritt der Releases
 ```
 
-Lokal erzeugte Ordner (nicht im Repo): `.venv`, `.tools`, `.build`, `.data`, `ui/node_modules`, `marathon/server/static`.
+Lokal erzeugte Ordner (nicht im Repo): `.venv`, `.tools`, `.build`, `.data`, `.cert`, `ui/node_modules`, `marathon/server/static`.

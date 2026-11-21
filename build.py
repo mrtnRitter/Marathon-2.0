@@ -17,6 +17,8 @@ from pathlib import Path
 
 from marathon.server.config import (
     ConfigError,
+    caddy_dir,
+    caddy_exe,
     data_dir,
     load_server_config,
     pg_bin_dir,
@@ -33,6 +35,12 @@ min_python = (3, 11, 4)
 node_version = "24.22.2"
 node_dist_url = f"https://nodejs.org/dist/v{node_version}"
 pg_version = "18.6.0"
+caddy_version = "2.11.9"
+caddy_release_url = f"https://github.com/caddyserver/caddy/releases/download/v{caddy_version}"
+caddy_packages = {
+    ("linux", "x64"): ("linux_amd64.tar.gz", "5b8cb7faf8726a2028ad96a66e54e6e81e8f361bc6175e5d22bbd997cc5177fb"),
+    ("win", "x64"): ("windows_amd64.zip", "ad93112d335ee687100c4c9f11bced16ca590377976b7fe7883882b9e797e472"),
+}
 command_timeout = 1800
 pg_maven_url = "https://repo1.maven.org/maven2/io/zonky/test/postgres"
 pg_packages = {
@@ -306,6 +314,65 @@ def install_postgres() -> None:
         ) from error
 
 
+def install_caddy() -> None:
+    if caddy_exe.is_file() and stamp_matches("caddy", caddy_version):
+        print(f"  Caddy {caddy_version} vorhanden, übersprungen")
+        return
+    write_stamp("caddy", "")
+    try:
+        key = platform_key()
+    except BuildError as error:
+        raise BuildError(
+            f"Keine Caddy-Version für dieses System hinterlegt: {sys.platform}/{platform.machine().lower()}"
+        ) from error
+    package = caddy_packages.get(key)
+    if package is None:
+        raise BuildError(
+            f"Keine Caddy-Version für dieses System hinterlegt: {sys.platform}/{platform.machine().lower()}"
+        )
+    suffix, expected_hash = package
+    archive_name = f"caddy_{caddy_version}_{suffix}"
+    archive = download_dir / archive_name
+    try:
+        if not archive.is_file() or file_hash(archive) != expected_hash:
+            print(f"  lade {archive_name}")
+            download(f"{caddy_release_url}/{archive_name}", archive)
+        if file_hash(archive) != expected_hash:
+            archive.unlink()
+            raise BuildError(f"Prüfsumme von {archive_name} stimmt nicht, Download verworfen")
+
+        caddy_dir.mkdir(parents=True, exist_ok=True)
+        if suffix.endswith(".zip"):
+            with zipfile.ZipFile(archive) as package_file:
+                member = next(
+                    (item for item in package_file.infolist() if item.filename == caddy_exe.name and not item.is_dir()),
+                    None,
+                )
+                if member is None:
+                    raise BuildError(f"Caddy-Archiv ist unvollständig: {caddy_exe.name} fehlt.")
+                with package_file.open(member) as source, caddy_exe.open("wb") as binary:
+                    shutil.copyfileobj(source, binary)
+        else:
+            with tarfile.open(archive, "r:gz") as package_file:
+                member = next(
+                    (item for item in package_file.getmembers() if item.name == caddy_exe.name and item.isfile()),
+                    None,
+                )
+                source = package_file.extractfile(member) if member is not None else None
+                if source is None:
+                    raise BuildError(f"Caddy-Archiv ist unvollständig: {caddy_exe.name} fehlt.")
+                with source, caddy_exe.open("wb") as binary:
+                    shutil.copyfileobj(source, binary)
+        if not is_windows:
+            caddy_exe.chmod(0o755)
+        write_stamp("caddy", caddy_version)
+    except (OSError, tarfile.TarError, zipfile.BadZipFile) as error:
+        raise BuildError(
+            "Caddy konnte nicht eingerichtet werden. Beende laufende Marathon-Prozesse und starte "
+            f"python build.py erneut. Ursprünglicher Fehler: {error}"
+        ) from error
+
+
 def init_database() -> None:
     try:
         config = load_server_config()
@@ -372,6 +439,7 @@ steps = (
     ("Python-Umgebung (.venv)", setup_venv),
     (f"Node.js {node_version} (.tools/node)", install_node),
     (f"PostgreSQL {pg_version} (.tools/postgres)", install_postgres),
+    (f"Caddy {caddy_version} (.tools/caddy)", install_caddy),
     ("Datenordner (.data/postgres)", init_database),
     ("UI-Bibliotheken (ui/node_modules)", install_ui_dependencies),
     ("Oberfläche bauen (marathon/server/static)", build_ui),
@@ -381,7 +449,7 @@ steps = (
 def main() -> int:
     sys.stdout.reconfigure(line_buffering=True)
     argparse.ArgumentParser(
-        description="Installiert alles lokal im Projektordner (.venv, .tools/node, .tools/postgres, .data, ui/node_modules) und baut die Oberfläche.",
+        description="Installiert alles lokal im Projektordner (.venv, .tools/node, .tools/postgres, .tools/caddy, .data, ui/node_modules) und baut die Oberfläche.",
     ).parse_args()
     try:
         check_python()

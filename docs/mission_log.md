@@ -42,20 +42,15 @@ Reihenfolge = Umsetzungsreihenfolge. `Offen:` klären wir je Release Punkt für 
 
 ### Nächster Release: HTTPS
 
-Vertrag: noch nicht in `docs/spec.md`; wird nach Klärung der offenen Punkte ergänzt
+Vertrag: `docs/spec.md` (Teil 2a)
 
-- [ ] Server spricht HTTPS; `public_url` ist eine `https://`-Adresse; Grundlage für Session-Cookies (`Secure`), Magic-Links, Worker-Tokens und die Rechner-Erkennung im Browser (Browser erlauben den Zugriff auf `127.0.0.1` nur von HTTPS-Seiten)
-  - Offen: Woher kommt das Zertifikat – interne Firmen-CA, eigene Marathon-CA aus `build.py`, gekauftes Zertifikat oder Reverse-Proxy vor Marathon? -> wir haben einen Reverse-Proxy und können darüber später ausrollen -- für die Entwicklung jetzt geht vielleicht Let's Encrypt?
-  - Offen: Unter welchem Rechnernamen ist der Server erreichbar? Das Zertifikat gilt für einen Namen, nicht für wechselnde IP-Adressen -> aktuell ist das laptop-martin-r
-  - Offen: Wie kommt das Vertrauen in das Zertifikat auf die Arbeitsplätze (Gruppenrichtlinie, manueller Import, öffentliche CA)? -> verstehe ich nicht
-  - Offen: Laufzeit und Erneuerung des Zertifikats – wer erneuert, und wie wird vor Ablauf gewarnt? -> das muss auf jeden Fall automatisch passieren
-  - Offen: Pfad zu Zertifikat und Schlüssel in `config/marathon.toml`; Schlüsseldatei unter `.data/` oder anderswo? -> .cert, wenn das mit Let's Encrypt sinnvoll ist
-- [ ] Anfragen über HTTP und über abweichende Rechnernamen werden auf `public_url` umgeleitet (gleicher Name für Cookies, Links und `Origin`-Prüfung)
-  - Offen: HTTP-Port weiter offen lassen (nur Umleitung) oder ganz schließen? -> wir machen skript :443 und akzeptieren :80 gar nicht mehr, es sei denn, es ist technisch irgendwo nötig
-- [ ] `cookie_secure` folgt aus `public_url` (`https://` → `true`)
-  - Offen: Schlüssel `[auth] cookie_secure` dann streichen oder als Übersteuerung behalten? -> verstehe ich nicht
-- [ ] Worker-Laufzeit prüft das Server-Zertifikat (CA-Datei einstellbar, Prüfung nie abschaltbar)
-  - Offen: Server-Worker weiter über `127.0.0.1` – eigener lokaler Zugang nur für ihn oder ebenfalls über den Rechnernamen mit Zertifikat? -> keine sonderbehandlung für server-worker
+- [ ] Marathon ist nur über `https://` erreichbar und liegt immer hinter einem Proxy: ab Werk der mitgelieferte Caddy (eigene interne CA, Zertifikate erneuern sich automatisch), wahlweise ein externer Reverse-Proxy; Grundlage für Session-Cookies (`Secure`), Magic-Links, Worker-Tokens und die Rechner-Erkennung im Browser
+  - Entschieden: Rechnername `laptop-martin-r` (`public_url = "https://laptop-martin-r"`); Zertifikats- und Proxy-Daten unter `.cert/` (nicht im Repo)
+  - Entschieden: Vertrauen – auf dem Server-Rechner `python run.py --trust`, auf weiteren Rechnern das Stammzertifikat einmal von Hand importieren; ab Release Worker-Client & Steuerung übernimmt das der Installer
+- [ ] Nur der Port aus `public_url` (ab Werk 443); Port 80 bleibt zu. Anfragen über HTTP oder abweichende Rechnernamen, die Marathon erreichen, werden auf `public_url` umgeleitet
+- [ ] Proxy-Einstellungen in den Serversettings (Öffentliche Adresse, mitgelieferter Proxy an/aus, Adressen externer Proxys); Startwerte aus `[proxy]` in `config/marathon.toml`, danach gilt die Datenbank; Änderungen gelten nach einem Neustart des Servers
+- [ ] `[auth] cookie_secure` entfällt; Session-Cookies sind immer `Secure`
+- [ ] Worker-Laufzeit prüft das Server-Zertifikat (Zertifikatsspeicher des Systems oder einstellbare CA-Datei, Prüfung nie abschaltbar); Server-Worker ohne Sonderbehandlung über `public_url`
 
 ### Release Zugang & Nutzer
 
@@ -99,6 +94,8 @@ Vertrag: `docs/spec.md` §3.1 (`[worker_client]`), §3.2, §3.4 (ohne Rechner-Er
   - Offen: Braucht der Download (`/api/v1/client/download`) eine Anmeldung?
   - Offen: Client-Updates bis zum Auto-Update (Backlog): manuell neu installieren?
   - Offen: Einmal-Link per `GET` oder per Bestätigungs-`POST` einlösen. Vorschlag: `POST`, damit Vorabrufe ihn nicht verbrauchen
+  - Installer importiert das Stammzertifikat des mitgelieferten Proxys in den Zertifikatsspeicher des Benutzers; Browser und Worker vertrauen dem Server dann ohne weiteren Schritt
+  - Offen: Wie kommt das Stammzertifikat sicher in den Installer (z. B. im Download enthalten und per Fingerabdruck geprüft)?
 - [ ] Drei Steuerbefehle am Worker (vor Ort über Tray-Link & für Admins): „Starten“, „Stoppen“ (sanftes Auslaufen / Drain: keine neuen Jobs, laufende Jobs sauber beenden), „Sofort stoppen“ (harter Abbruch, Assets zurück ans letzte Modul, zählt nicht als Versuch)
   - Offen: Anzeigetext für den neuen Status `draining`. Vorschlag: „Läuft aus“
   - Offen: „Starten“ während `draining`. Vorschlag: sofort zurück auf `ready`, laufende Jobs bleiben

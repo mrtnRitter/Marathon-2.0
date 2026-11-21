@@ -21,3 +21,8 @@ server_address = ""     # Standard für die Server-Adresse im Ordner-Dialog (Rec
 [server_worker]
 enabled = true                                      # Server-Worker mit dem Server starten
 skills = ["copy_file", "move_file", "rename_file"]  # Fähigkeiten ab Werk, oben = höchste Prio; danach gilt die Worker-Seite
+
+[proxy]
+public_url = "https://laptop-martin-r"  # Adresse, unter der Marathon erreichbar ist (nur https://, ohne Pfad); Startwert, danach gilt der Wert aus der Oberfläche
+builtin = true                          # Mitgelieferten Proxy (Caddy) starten; false = externer Reverse-Proxy
+trusted_proxies = []                    # IP-Adressen externer Reverse-Proxys; bei builtin = true gilt 127.0.0.1 automatisch

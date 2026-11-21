@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import http.client
 import json
 import logging
+import ssl
 import threading
 import time
 from typing import Any
@@ -50,6 +51,7 @@ class WorkerRuntime:
         result_retry_s: float = 2.0,
         result_deadline_s: float = 120.0,
         shutdown_timeout_s: float = 10.0,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         if request_timeout_s <= 0 or result_retry_s < 0 or result_deadline_s < 0 or shutdown_timeout_s < 0:
             raise ValueError("Zeitlimits müssen gültig und nicht negativ sein")
@@ -66,6 +68,7 @@ class WorkerRuntime:
         self.result_retry_s = result_retry_s
         self.result_deadline_s = result_deadline_s
         self.shutdown_timeout_s = shutdown_timeout_s
+        self.ssl_context = ssl_context
         self._jobs: dict[str, _RunningJob] = {}
         self._jobs_lock = threading.Lock()
         self._stop = threading.Event()
@@ -78,7 +81,7 @@ class WorkerRuntime:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=timeout_s) as response:
+            with urlopen(request, timeout=timeout_s, context=self.ssl_context) as response:
                 status = response.status
                 body = response.read()
         except HTTPError as error:

@@ -1,7 +1,7 @@
 """Application settings endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictBool
 from sqlalchemy.engine import Connection, Engine
 
 from marathon.server.api.deps import get_engine
@@ -18,10 +18,19 @@ class FolderDialogInput(BaseModel):
     server_address: str
 
 
+class ProxyInput(BaseModel):
+    """Proxy settings supplied by the client."""
+
+    public_url: str
+    builtin: StrictBool
+    trusted_proxies: list[str]
+
+
 class SettingsInput(BaseModel):
     """Settings supplied by the client."""
 
     folder_dialog: FolderDialogInput
+    proxy: ProxyInput
 
 
 router = APIRouter(tags=["settings"])
@@ -39,6 +48,12 @@ def put_settings(payload: SettingsInput, engine: Engine = Depends(get_engine)) -
     """Validate and save application settings."""
     try:
         with engine.begin() as connection:
-            return save_settings(connection, payload.folder_dialog.server_address)
+            return save_settings(
+                connection,
+                payload.folder_dialog.server_address,
+                public_url=payload.proxy.public_url,
+                builtin=payload.proxy.builtin,
+                trusted_proxies=payload.proxy.trusted_proxies,
+            )
     except SettingsValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

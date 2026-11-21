@@ -14,6 +14,7 @@ from typing import TextIO
 
 from build import (
     BuildError,
+    is_windows,
     node_env,
     node_exe,
     pg_tool,
@@ -27,6 +28,7 @@ from build import (
 from marathon.server.config import (
     ConfigError,
     ServerConfig,
+    caddy_root_cert,
     load_server_config,
     pg_data_dir,
     pg_log_file,
@@ -52,6 +54,34 @@ def _run_command(command: list[str], timeout: int) -> CompletedProcess:
     except OSError as error:
         command_name = Path(command[0]).name
         raise BuildError(f"Befehl konnte nicht gestartet werden: {command_name} ({error})") from error
+
+
+def trust_certificate() -> int:
+    if not caddy_root_cert.is_file():
+        print(
+            f"Fehler: Stammzertifikat fehlt ({caddy_root_cert}). Zuerst python run.py einmal starten.",
+            file=sys.stderr,
+        )
+        return 1
+    if not is_windows:
+        print(f"Stammzertifikat: {caddy_root_cert}")
+        print(
+            "Unter Linux in den Zertifikatsspeicher des Systems übernehmen, z. B. nach "
+            "/usr/local/share/ca-certificates/marathon.crt kopieren und update-ca-certificates ausführen."
+        )
+        return 0
+    try:
+        result = _run_command(
+            ["certutil", "-user", "-addstore", "Root", str(caddy_root_cert)], timeout=120
+        )
+    except BuildError as error:
+        print(f"Fehler: {error}", file=sys.stderr)
+        return 1
+    if result.returncode != 0:
+        print(f"Fehler: Import des Stammzertifikats fehlgeschlagen (Exit-Code {result.returncode})", file=sys.stderr)
+        return 1
+    print("Stammzertifikat importiert. Browser neu starten.")
+    return 0
 
 
 def _validate_prerequisites(dev: bool) -> None:
@@ -378,7 +408,10 @@ def main(argv: list[str] | None = None) -> int:
         description="Startet die Marathon-Datenbank und den Server oder die Live-Vorschau."
     )
     parser.add_argument("--dev", action="store_true", help="Live-Vorschau der Oberfläche starten")
+    parser.add_argument("--trust", action="store_true", help="Stammzertifikat des mitgelieferten Proxys für diesen Benutzer importieren")
     args = parser.parse_args(argv)
+    if args.trust:
+        return trust_certificate()
 
     exit_code = 0
     database_started = False

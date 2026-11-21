@@ -6,7 +6,8 @@ Bezeichner im Code englisch (`snake_case`), Texte für Nutzer deutsch und wörtl
 
 - **Teil 1** hält die entschiedenen Architektur-Grundsätze fest.
 - **Teil 2** beschreibt den **bereits umgesetzten** Systemvertrag für Kern, Engine und Worker-Steuerung (Stand Migration `0009`, Worker-Protokoll 2; Abnahme offen).
-- **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Migration `0010`, Worker-Protokoll 3; noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* ist hier noch nicht beschrieben. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
+- **Teil 2a** beschreibt den Vertrag für den Release *HTTPS* (keine Migration, Worker-Protokoll unverändert).
+- **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Migration `0010`, Worker-Protokoll 3; noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
 
 ---
 
@@ -400,20 +401,111 @@ class WorkerSupervisor:
 
 ---
 
+# Teil 2a: Release HTTPS (keine Migration, Protokoll unverändert)
+
+Marathon ist nur über `https://` erreichbar. Marathon selbst spricht nur HTTP und liegt immer hinter einem Proxy: ab Werk der mitgelieferte Caddy, wahlweise ein externer Reverse-Proxy. Marathon enthält keinen eigenen TLS-Code.
+
+## 2a.1 Aufbau
+
+- **Marathon** lauscht auf `host`/`port` aus `config/marathon.toml` (ab Werk `127.0.0.1:8080`), nur HTTP. Für einen externen Proxy auf einem anderen Rechner wird `host` auf eine Netzwerkadresse gesetzt.
+- **Mitgelieferter Proxy:** Caddy `2.11.9` in `.tools/caddy` (`caddy.exe` unter Windows, sonst `caddy`), eingerichtet von `build.py` mit fester Prüfsumme. Der Server startet ihn beim Start als Kindprozess und überwacht ihn wie den Server-Worker (Neustart mit Wartezeit 1, 2, 5, 10, 30 s; Ausgaben `.data/caddy.log`); beim Beenden des Servers wird er beendet.
+  - Konfiguration `.cert/Caddyfile`, bei jedem Serverstart aus den Einstellungen neu geschrieben; Daten (CA, Zertifikate) in `.cert/caddy`.
+  - Lauscht nur auf dem TCP-Port aus `public_url` (ab Werk 443) mit HTTP/1.1 und HTTP/2; kein Port 80, kein HTTP/3, keine Admin-Schnittstelle, keine automatische Installation des Stammzertifikats.
+  - Zertifikat für den Rechnernamen aus `public_url` aus Caddys interner CA (`tls internal`); Caddy erneuert es selbstständig. Andere Rechnernamen erhalten kein Zertifikat (Verbindungsfehler statt Umleitung).
+  - Leitet an `127.0.0.1:<port>` weiter (bei `host` `0.0.0.0`/`::`/leer) bzw. an `host:port`, ohne Pufferung (Live-Kanal, Long-Poll).
+- **Externer Reverse-Proxy:** mitgelieferter Proxy aus; der externe Proxy terminiert TLS, setzt `X-Forwarded-Proto` (und optional `X-Forwarded-Host`, `X-Forwarded-For`) und leitet an Marathon weiter. Er muss Anfragen länger als `poll_timeout_s` offen halten und den Live-Kanal ungepuffert durchreichen.
+
+Caddyfile (Werte in spitzen Klammern; Port-Zeile mit dem Port aus `public_url`):
+
+```text
+{
+	admin off
+	skip_install_trust
+	auto_https disable_redirects
+	storage file_system {
+		root "<.cert/caddy als absoluter Pfad mit />"
+	}
+	https_port <port>
+	servers {
+		protocols h1 h2
+	}
+}
+
+<public_url> {
+	tls internal
+	reverse_proxy <upstream> {
+		flush_interval -1
+	}
+}
+```
+
+## 2a.2 Konfiguration und Einstellungen
+
+```toml
+[proxy]
+public_url = "https://laptop-martin-r"  # Adresse, unter der Marathon erreichbar ist (nur https://, ohne Pfad)
+builtin = true                          # Mitgelieferten Proxy (Caddy) starten; false = externer Reverse-Proxy
+trusted_proxies = []                    # IP-Adressen externer Reverse-Proxys; bei builtin = true gilt 127.0.0.1 automatisch
+```
+
+- Standardwerte ohne Abschnitt: `public_url = "https://localhost"`, `builtin = true`, `trusted_proxies = []`.
+- **Startwerte:** Beim Start (`python -m marathon.server.db upgrade`) werden die Schlüssel `proxy.public_url`, `proxy.builtin` und `proxy.trusted_proxies` in `settings` angelegt, sofern noch kein Eintrag existiert; danach gilt die Datenbank.
+- **Wirksamkeit:** Der Server liest die drei Werte beim Start; Änderungen gelten nach einem Neustart des Servers.
+- **Prüfregeln** (gleich für toml und Einstellungen):
+  - `public_url`: Schema `https`, Rechnername aus `A–Z a–z 0–9 . -` (1–253 Zeichen), optional Port 1–65535, ohne Benutzer, Pfad (außer einem abschließenden `/`), Query oder Fragment. Gespeichert wird `https://<rechnername in Kleinbuchstaben>[:<port>]`, Port 443 entfällt. Fehler: „Öffentliche Adresse: nur https://-Adresse ohne Pfad, z. B. https://laptop-martin-r“
+  - `trusted_proxies`: Liste von IPv4-/IPv6-Adressen (ohne Netzmasken), Leerraum entfernt, Duplikate entfernt (Reihenfolge bleibt). Fehler: „Proxy-Adressen: nur IP-Adressen, z. B. 10.0.77.20“
+  - `builtin = false` mit leerer `trusted_proxies`: „Proxy-Adressen: mindestens eine Adresse eintragen, wenn der mitgelieferte Proxy aus ist“
+  - toml-Fehler als `ConfigError` mit Präfix `[proxy] <schlüssel> in <datei>: `; `builtin` kein Wahrheitswert: „[proxy] builtin in <datei> muss true oder false sein“; Abschnitt keine Tabelle: „[proxy] in <datei> muss eine Tabelle sein“.
+- **API** `GET/PUT /api/v1/settings`: `{ "folder_dialog": { "server_address": "" }, "proxy": { "public_url": "https://laptop-martin-r", "builtin": true, "trusted_proxies": [] } }`. `PUT` verlangt beide Abschnitte, prüft alle Werte vor dem Speichern und antwortet mit den gespeicherten (normalisierten) Werten; Prüffehler `422` mit `detail` = Fehlertext, nichts wird gespeichert. Ohne Eintrag liefert `GET` die Standardwerte.
+- **Oberfläche** (Einstellungen, Abschnitt „Proxy & HTTPS“ nach „Ordner-Dialog“):
+  - „Öffentliche Adresse“ (Platzhalter `https://laptop-martin-r`; Hilfe „Adresse, unter der Marathon erreichbar ist (nur https://, ohne Pfad)“)
+  - Schalter „Mitgelieferten Proxy verwenden“ (Hilfe „Aus: Ein externer Reverse-Proxy übernimmt HTTPS“)
+  - „Adressen externer Proxys“ (Platzhalter `z. B. 10.0.77.20`; Hilfe „IP-Adressen, durch Komma getrennt; der mitgelieferte Proxy gilt automatisch“)
+  - Hinweis „Änderungen in diesem Abschnitt gelten nach einem Neustart des Servers.“
+
+## 2a.3 Weiterleitungsangaben und Umleitung
+
+Gilt für jede HTTP-Anfrage an Marathon, sobald der Server seine Proxy-Einstellungen geladen hat:
+
+1. **Vertrauenswürdige Absender:** `trusted_proxies`, bei `builtin = true` zusätzlich `127.0.0.1` und `::1`.
+2. **Absender vertrauenswürdig und `X-Forwarded-Proto` vorhanden:** Schema = erster Wert von `X-Forwarded-Proto`; Rechnername = erster Wert von `X-Forwarded-Host`, sonst `Host`; Client-Adresse = erster gültiger Wert von `X-Forwarded-For`. Marathon übernimmt diese Werte für die Anfrage.
+3. **Absender ist Loopback (`127.0.0.1`, `::1`) ohne `X-Forwarded-Proto`:** unverändert durchlassen (lokaler Direktzugriff auf dem Server-Rechner, z. B. Live-Vorschau und Rettungszugang `http://127.0.0.1:8080`).
+4. **Sonst:** Schema und `Host` der Anfrage selbst; Weiterleitungsangaben werden ignoriert.
+5. Weichen Schema oder Rechnername (Kleinbuchstaben, `:443` entfällt) von `public_url` ab: `308` mit `Location: <public_url><pfad>[?<query>]`.
+
+## 2a.4 Worker
+
+- `python -m marathon.worker --server <url>` akzeptiert nur `https://`-Adressen; sonst Exit-Code 2 mit „Server-Adresse muss mit https:// beginnen“.
+- `--ca-file <pfad>` (optional): Das Server-Zertifikat wird ausschließlich gegen diese Datei geprüft. Ohne `--ca-file` gilt der Zertifikatsspeicher des Systems (Paket `truststore`). Fehlt oder ist die Datei ungültig: Exit-Code 2 mit „Ungültige Worker-Konfiguration: CA-Datei nicht lesbar: <pfad>“. Zertifikats- und Namensprüfung sind nie abschaltbar.
+- **Server-Worker:** `--server <public_url>`, bei `builtin = true` zusätzlich `--ca-file .cert/caddy/pki/authorities/local/root.crt`. Bis Caddy das Stammzertifikat angelegt hat, endet der Server-Worker mit Exit-Code 2 und wird von der Aufsicht neu gestartet.
+
+## 2a.5 Vertrauen und Einrichtung
+
+- Stammzertifikat des mitgelieferten Proxys: `.cert/caddy/pki/authorities/local/root.crt` (entsteht beim ersten Start).
+- `python run.py --trust` importiert es auf dem Server-Rechner: unter Windows mit `certutil -user -addstore Root <datei>` in den Zertifikatsspeicher des angemeldeten Benutzers (ohne Adminrechte, Windows fragt einmal nach); unter Linux nennt der Befehl Pfad und Vorgehen. Fehlt die Datei: „Stammzertifikat fehlt (<pfad>). Zuerst python run.py einmal starten.“
+- Weitere Rechner (Browser und Worker) importieren die Datei einmal von Hand in „Vertrauenswürdige Stammzertifizierungsstellen“ des Benutzers. Ab Release *Worker-Client & Steuerung* übernimmt der Installer den Import.
+- `build.py`, Schritt „Caddy 2.11.9 (.tools/caddy)“ nach PostgreSQL: `https://github.com/caddyserver/caddy/releases/download/v2.11.9/caddy_2.11.9_<paket>`; SHA-256 `windows_amd64.zip` = `ad93112d335ee687100c4c9f11bced16ca590377976b7fe7883882b9e797e472`, `linux_amd64.tar.gz` = `5b8cb7faf8726a2028ad96a66e54e6e81e8f361bc6175e5d22bbd997cc5177fb`.
+- `.cert/` ist in `.gitignore`.
+
+## 2a.6 Folgen für Teil 3
+
+- `public_url` steht in `[proxy]` (nicht in `[auth]`) und kommt aus den Einstellungen.
+- `[auth] cookie_secure` entfällt; Session-Cookies sind immer `Secure`.
+
+---
+
 # Teil 3: Geplante Releases – Infrastruktur (geplant, Migration `0010`, Protokoll 3)
 
-Verbindlicher Architektur- und Umsetzungsvertrag (v2: User und Worker strikt getrennt) für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel*. Wo dieser Teil Regeln aus Teil 2 erweitert oder ersetzt, gilt mit Umsetzung des jeweiligen Releases Teil 3. Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* ist hier noch nicht beschrieben. Migration und Protokollnummer je Release werden bei der Klärung festgelegt.
+Verbindlicher Architektur- und Umsetzungsvertrag (v2: User und Worker strikt getrennt) für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel*. Wo dieser Teil Regeln aus Teil 2 erweitert oder ersetzt, gilt mit Umsetzung des jeweiligen Releases Teil 3. Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt.
 
 ## 3.1 Konfiguration `config/marathon.toml` und Geheimnisse
 
 ```toml
 [auth]
-public_url = "http://127.0.0.1:8080"   # Basis-URL für Magic-Links und Worker-Links (ohne abschließenden Slash)
 admin_emails = []                      # Break-Glass-Admins (immer Admin, in UI nicht herabstufbar/löschbar)
 allowed_domains = []                   # Startwert für erlaubte Mail-Domains (danach gilt DB-Einstellung)
 session_days = 180                     # Sliding-Expiration-Dauer einer Nutzer-Session in Tagen (1–365)
 magic_link_ttl_minutes = 15            # Gültigkeit von Login-Link und Einmalcode in Minuten (1–60)
-cookie_secure = false                  # true bei HTTPS / Reverse-Proxy; false für reines LAN-HTTP
 
 [smtp]
 host = ""                              # SMTP-Server (leer = Mailversand nicht konfiguriert)
@@ -485,7 +577,7 @@ Ausschließlich ergänzende Migration auf Basis von `0009_worker_cleanup.py`, mi
 3. **`POST /api/v1/auth/confirm`** mit `{ "token": "…" }` **oder** `{ "email": "…", "code": "123456" }`:
    - Konsumiert den Eintrag atomar (`UPDATE auth_tokens SET consumed_at = now() WHERE … AND consumed_at IS NULL AND expires_at > now()`).
    - Existiert kein `users`-Eintrag, wird er jetzt angelegt (`role = 'admin'` wenn in `admin_emails`, sonst `'user'`).
-   - Erstellt Session in `sessions`, setzt Cookie `marathon_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure` gemäß `cookie_secure`, `Max-Age = session_days * 86400`).
+   - Erstellt Session in `sessions`, setzt Cookie `marathon_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure`, `Max-Age = session_days * 86400`).
 4. **Sliding Expiration:** Bei authentifizierten Anfragen wird `sessions.expires_at` automatisch verlängert, sobald weniger als 80 % der Laufzeit übrig sind (und das Cookie im Response aufgefrischt).
 5. **`POST /api/v1/auth/logout`**, **`GET /api/v1/auth/me`**: Session serverseitig löschen bzw. aktuellen Nutzer inkl. Rolle und erlaubter Modultypen liefern.
 

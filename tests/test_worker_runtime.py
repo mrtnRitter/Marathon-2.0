@@ -508,7 +508,7 @@ def test_shutdown_reports_cancel_and_returns(server: WorkerTestServer) -> None:
 
 def test_main_requires_token(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     monkeypatch.delenv("MARATHON_WORKER_TOKEN", raising=False)
-    assert main(["--server", "http://127.0.0.1:9", "--worker-id", "w", "--name", "W"]) == 2
+    assert main(["--server", "https://127.0.0.1:9", "--worker-id", "w", "--name", "W"]) == 2
     assert "MARATHON_WORKER_TOKEN fehlt" in caplog.text
 
 
@@ -517,7 +517,7 @@ def test_cli_exits_on_stdin_eof() -> None:
     environment["MARATHON_WORKER_TOKEN"] = "token"
     process = subprocess.Popen(
         [
-            sys.executable, "-m", "marathon.worker", "--server", "http://127.0.0.1:9",
+            sys.executable, "-m", "marathon.worker", "--server", "https://127.0.0.1:9",
             "--worker-id", "w", "--name", "W", "--exit-on-stdin-eof",
         ],
         cwd=Path(__file__).parents[1],

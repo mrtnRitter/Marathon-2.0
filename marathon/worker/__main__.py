@@ -2,12 +2,14 @@
 import argparse
 import logging
 import os
+from pathlib import Path
 import signal
 import sys
 import threading
 
 from marathon.common.version import app_version as package_version
 from marathon.worker.runtime import WorkerRuntime, worker_capabilities
+from marathon.worker.tls import create_ssl_context
 
 
 # CONFIG
@@ -19,11 +21,15 @@ app_version = package_version
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog=app_name)
     parser.add_argument("--server", required=True)
+    parser.add_argument("--ca-file", type=Path)
     parser.add_argument("--worker-id", required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument("--exit-on-stdin-eof", action="store_true")
     args = parser.parse_args(argv)
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    if not args.server.casefold().startswith("https://"):
+        logging.getLogger("marathon.worker").error("Server-Adresse muss mit https:// beginnen")
+        return 2
     token = os.environ.get("MARATHON_WORKER_TOKEN")
     if not token:
         logging.getLogger("marathon.worker").error("MARATHON_WORKER_TOKEN fehlt")
@@ -54,12 +60,14 @@ def main(argv: list[str] | None = None) -> int:
         threading.Thread(target=watch_stdin, name="marathon-worker-stdin", daemon=True).start()
 
     try:
+        ssl_context = create_ssl_context(args.ca_file)
         runtime = WorkerRuntime(
             args.server,
             token,
             args.worker_id,
             args.name,
             worker_capabilities(),
+            ssl_context=ssl_context,
         )
         return runtime.run(stop)
     except ValueError as error:

@@ -4,12 +4,16 @@ import { PageHeader } from '../components/PageHeader'
 import { notify } from '../components/Toast'
 import { get_settings, save_settings } from '../data/api'
 import type { Settings } from '../data/types'
+import { format_proxy_addresses, parse_proxy_addresses } from '../lib/proxy_settings'
 import './SettingsPage.css'
 
 const server_address_help = String.raw`Rechnername oder IP-Adresse; „Server“ im Ordner-Dialog zeigt die Freigaben von \\<Adresse>`
 
 export function SettingsPage() {
   const [server_address, set_server_address] = useState('')
+  const [public_url, set_public_url] = useState('')
+  const [builtin, set_builtin] = useState(true)
+  const [trusted_text, set_trusted_text] = useState('')
   const [loading, set_loading] = useState(true)
   const [saving, set_saving] = useState(false)
   const disabled = loading || saving
@@ -19,7 +23,12 @@ export function SettingsPage() {
     const load_settings = async () => {
       try {
         const settings = await get_settings()
-        if (active) set_server_address(settings.folder_dialog.server_address)
+        if (active) {
+          set_server_address(settings.folder_dialog.server_address)
+          set_public_url(settings.proxy.public_url)
+          set_builtin(settings.proxy.builtin)
+          set_trusted_text(format_proxy_addresses(settings.proxy.trusted_proxies))
+        }
       } catch {
         // The request already reports errors.
       } finally {
@@ -33,8 +42,14 @@ export function SettingsPage() {
   const save = async () => {
     set_saving(true)
     try {
-      const settings: Settings = await save_settings({ folder_dialog: { server_address } })
+      const settings: Settings = await save_settings({
+        folder_dialog: { server_address },
+        proxy: { public_url, builtin, trusted_proxies: parse_proxy_addresses(trusted_text) },
+      })
       set_server_address(settings.folder_dialog.server_address)
+      set_public_url(settings.proxy.public_url)
+      set_builtin(settings.proxy.builtin)
+      set_trusted_text(format_proxy_addresses(settings.proxy.trusted_proxies))
       notify('Gespeichert')
     } catch {
       // The request already reports errors.
@@ -65,6 +80,55 @@ export function SettingsPage() {
                   <div className="form-field-help">{server_address_help}</div>
                 </div>
               </div>
+            </FormSection>
+            <FormSection title="Proxy & HTTPS">
+              <div className="form-field">
+                <label htmlFor="settings-public-url" className="form-field-label">Öffentliche Adresse</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-public-url"
+                    className="input"
+                    type="text"
+                    value={public_url}
+                    placeholder="https://laptop-martin-r"
+                    disabled={disabled}
+                    onChange={event => set_public_url(event.target.value)}
+                  />
+                  <div className="form-field-help">Adresse, unter der Marathon erreichbar ist (nur https://, ohne Pfad)</div>
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="settings-proxy-builtin" className="form-field-label">Mitgelieferten Proxy verwenden</label>
+                <div className="form-field-control">
+                  <label className="form-switch">
+                    <input
+                      id="settings-proxy-builtin"
+                      type="checkbox"
+                      checked={builtin}
+                      disabled={disabled}
+                      onChange={event => set_builtin(event.target.checked)}
+                    />
+                    <span className="form-switch-track" />
+                  </label>
+                  <div className="form-field-help">Aus: Ein externer Reverse-Proxy übernimmt HTTPS</div>
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="settings-trusted-proxies" className="form-field-label">Adressen externer Proxys</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-trusted-proxies"
+                    className="input"
+                    type="text"
+                    value={trusted_text}
+                    placeholder="z. B. 10.0.77.20"
+                    disabled={disabled}
+                    onChange={event => set_trusted_text(event.target.value)}
+                  />
+                  <div className="form-field-help">IP-Adressen, durch Komma getrennt; der mitgelieferte Proxy gilt automatisch</div>
+                </div>
+              </div>
+              <div className="form-field-help">Änderungen in diesem Abschnitt gelten nach einem Neustart des Servers.</div>
             </FormSection>
           </div>
         </div>
