@@ -7,13 +7,11 @@ from typing import Any, Callable
 from fastapi import FastAPI
 import uvicorn
 
-from marathon.common.version import app_name, app_version
 from marathon.server import watcher
 from marathon.server.app import create_app
 from marathon.server.config import ConfigError, load_server_config
 from marathon.server.scheduler import tick_interval_s
 from marathon.server.ui import default_static_dir
-from marathon.server.worker_supervisor import server_url
 
 
 # FUNC
@@ -62,7 +60,6 @@ def main() -> int:
     if not (default_static_dir / "index.html").is_file():
         print("Fehler: Oberfläche ist nicht gebaut. Zuerst python build.py ausführen.", file=sys.stderr)
         return 1
-    print(f"{app_name} {app_version} läuft auf http://{config.host}:{config.port}  (Beenden mit „stop“)")
     app = create_app(
         scheduler_interval_s=tick_interval_s,
         sync_catalog=True,
@@ -71,7 +68,8 @@ def main() -> int:
         run_engine=True,
         run_live=True,
         server_worker=config.server_worker,
-        server_url=server_url(config.host, config.port),
+        load_proxy=True,
+        listen=(config.host, config.port),
     )
     serve(app, config.host, config.port)
     return 0

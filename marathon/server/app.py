@@ -15,7 +15,21 @@ from sqlalchemy.exc import OperationalError, TimeoutError as SQLAlchemyTimeoutEr
 from marathon.common.version import app_name, app_version
 from marathon.server.api import api_prefix, api_routers
 from marathon.server.api.deps import app_engine
-from marathon.server.config import ConfigError, EngineConfig, ServerWorkerConfig, data_dir, root_dir
+from marathon.server.config import (
+    ConfigError,
+    EngineConfig,
+    ServerWorkerConfig,
+    caddy_exe,
+    caddy_log_file,
+    caddy_root_cert,
+    caddy_storage_dir,
+    caddyfile_path,
+    cert_dir,
+    data_dir,
+    root_dir,
+)
+from marathon.server.db.settings_writes import get_proxy_config
+from marathon.server.proxy import ProxyMiddleware, caddyfile, proxy_settings, upstream_address
 from marathon.server.db.catalog_writes import sync_module_types
 from marathon.modules import load_catalog
 from marathon.server.engine.tick import EngineRunner
@@ -37,8 +51,52 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     watcher = None
     engine_runner = None
     supervisor = None
+    proxy_supervisor = None
     listener = None
     try:
+        if app.state.load_proxy:
+            try:
+                with app_engine(app).connect() as connection:
+                    stored_proxy = get_proxy_config(connection)
+            except ValueError as error:
+                _logger.error("Proxy-Einstellungen ungültig: %s", error)
+                raise RuntimeError("Proxy-Einstellungen ungültig") from error
+            app.state.proxy_settings = proxy_settings(
+                stored_proxy.public_url, stored_proxy.builtin, stored_proxy.trusted_proxies
+            )
+            app.state.proxy_builtin = stored_proxy.builtin
+            if stored_proxy.builtin:
+                if not caddy_exe.is_file():
+                    message = "Mitgelieferter Proxy fehlt (.tools/caddy). Zuerst python build.py ausführen."
+                    _logger.error(message)
+                    raise RuntimeError(message)
+                if app.state.listen is None:
+                    raise RuntimeError("Listen-Adresse für den mitgelieferten Proxy fehlt")
+                try:
+                    cert_dir.mkdir(parents=True, exist_ok=True)
+                    rendered_caddyfile = caddyfile(
+                        stored_proxy.public_url,
+                        upstream_address(*app.state.listen),
+                        caddy_storage_dir,
+                    )
+                    with caddyfile_path.open("w", encoding="utf-8", newline="\n") as file:
+                        file.write(rendered_caddyfile)
+                except OSError as error:
+                    _logger.error("Caddy-Konfiguration konnte nicht geschrieben werden: %s", error)
+                    raise RuntimeError("Caddy-Konfiguration konnte nicht geschrieben werden") from error
+                proxy_supervisor = WorkerSupervisor(
+                    [str(caddy_exe), "run", "--config", str(caddyfile_path), "--adapter", "caddyfile"],
+                    env=dict(os.environ),
+                    cwd=root_dir,
+                    log_file=caddy_log_file,
+                    graceful_timeout_s=0.0,
+                    name="Proxy",
+                )
+                proxy_supervisor.start()
+            print(
+                f"{app_name} {app_version} läuft auf {stored_proxy.public_url}  (Beenden mit „stop“)",
+                flush=True,
+            )
         if app.state.sync_catalog:
             with app_engine(app).begin() as connection:
                 sync_module_types(connection, load_catalog())
@@ -64,12 +122,21 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             engine_runner = EngineRunner(lambda: app_engine(app), app.state.engine_config)
             engine_runner.start()
         server_worker = app.state.server_worker
-        if server_worker is not None and server_worker.enabled and app.state.server_url:
+        worker_url = (
+            app.state.proxy_settings.public_url if app.state.load_proxy else app.state.server_url
+        )
+        if server_worker is not None and server_worker.enabled and worker_url:
             try:
                 token = app.state.worker_token or load_or_create_token()
                 app.state.worker_token = token
                 supervisor = WorkerSupervisor(
-                    server_worker_command(app.state.server_url, server_worker),
+                    server_worker_command(
+                        worker_url,
+                        server_worker,
+                        ca_file=caddy_root_cert
+                        if app.state.load_proxy and app.state.proxy_builtin
+                        else None,
+                    ),
                     env={**os.environ, "MARATHON_WORKER_TOKEN": token},
                     cwd=root_dir,
                     log_file=data_dir / "server-worker.log",
@@ -87,6 +154,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         for name, task in (
             ("Live-Kanal", listener),
             ("Server-Worker", supervisor),
+            ("Proxy", proxy_supervisor),
             ("Engine", engine_runner),
             ("Watcher", watcher),
             ("Scheduler", runner),
@@ -118,6 +186,8 @@ def create_app(
     run_live: bool = False,
     server_worker: ServerWorkerConfig | None = None,
     server_url: str | None = None,
+    load_proxy: bool = False,
+    listen: tuple[str, int] | None = None,
 ) -> FastAPI:
     """Build the versioned API and UI without opening a database connection."""
     app = FastAPI(
@@ -141,6 +211,10 @@ def create_app(
     app.state.run_live = run_live
     app.state.server_worker = server_worker
     app.state.server_url = server_url
+    app.state.load_proxy = load_proxy
+    app.state.listen = listen
+    app.state.proxy_settings = None
+    app.state.proxy_builtin = False
 
     @app.exception_handler(OperationalError)
     @app.exception_handler(SQLAlchemyTimeoutError)
@@ -148,6 +222,7 @@ def create_app(
     async def database_unavailable(request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse(status_code=503, content={"detail": "Datenbank nicht erreichbar"})
 
+    app.add_middleware(ProxyMiddleware, settings=lambda: app.state.proxy_settings)
     for router in api_routers:
         app.include_router(router, prefix=api_prefix)
     app.include_router(_create_api_fallback())

@@ -27,7 +27,9 @@ def server_url(host: str, port: int) -> str:
     return f"http://{host}:{port}"
 
 
-def server_worker_command(url: str, config: ServerWorkerConfig) -> list[str]:
+def server_worker_command(
+    url: str, config: ServerWorkerConfig, ca_file: Path | None = None
+) -> list[str]:
     """Build the command that starts the configured server worker."""
     command = [
         sys.executable,
@@ -41,6 +43,8 @@ def server_worker_command(url: str, config: ServerWorkerConfig) -> list[str]:
         "Server-Worker",
         "--exit-on-stdin-eof",
     ]
+    if ca_file is not None:
+        command.extend(("--ca-file", str(ca_file)))
     return command
 
 
@@ -57,6 +61,7 @@ class WorkerSupervisor:
         stable_s: float = 60.0,
         graceful_timeout_s: float = 10.0,
         kill_timeout_s: float = 5.0,
+        name: str = "Server worker",
     ) -> None:
         self.command = list(command)
         self.env = dict(env)
@@ -66,6 +71,7 @@ class WorkerSupervisor:
         self.stable_s = stable_s
         self.graceful_timeout_s = graceful_timeout_s
         self.kill_timeout_s = kill_timeout_s
+        self.name = name
         self._stop_event = Event()
         self._lock = Lock()
         self._thread: Thread | None = None
@@ -180,13 +186,13 @@ class WorkerSupervisor:
                 return_code, started_at = self._run_process()
             except OSError as error:
                 return_code = None
-                _logger.warning("Server worker failed to start: %s", error)
+                _logger.warning("%s failed to start: %s", self.name, error)
             if self._stop_event.is_set():
                 return
             if return_code is not None:
                 if time.monotonic() - started_at >= self.stable_s:
                     backoff_index = 0
-                _logger.warning("Server worker exited with code %s; restarting", return_code)
+                _logger.warning("%s exited with code %s; restarting", self.name, return_code)
             delay = self.backoff_s[min(backoff_index, len(self.backoff_s) - 1)] if self.backoff_s else 0.0
             backoff_index += 1
             if self._wait_or_stop(delay):

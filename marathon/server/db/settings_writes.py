@@ -44,7 +44,7 @@ def get_proxy_config(connection: Connection) -> ProxyConfig:
     )
     builtin = values[_proxy_setting_keys[1]] if _proxy_setting_keys[1] in values else defaults.builtin
     if type(builtin) is not bool:
-        raise ValueError(trusted_proxies_error)
+        raise ValueError("Einstellung proxy.builtin muss true oder false sein")
     trusted_proxies = normalize_trusted_proxies(
         values[_proxy_setting_keys[2]]
         if _proxy_setting_keys[2] in values

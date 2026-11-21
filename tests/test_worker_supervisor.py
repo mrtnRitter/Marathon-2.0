@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import subprocess
+import socket
 from pathlib import Path
 import sys
 import time
@@ -52,8 +53,53 @@ def test_restarts_after_crash(tmp_path):
     code = f"from pathlib import Path; p=Path({str(starts)!r}); p.open('a').write('start\\n'); raise SystemExit(1)"
     supervisor, _ = make_supervisor(tmp_path, code, backoff_s=(0.05,))
     supervisor.start()
-    assert wait_for(lambda: starts.exists() and len(starts.read_text().splitlines()) >= 3, 1.5)
-    assert supervisor.stop()
+    try:
+        assert wait_for(lambda: starts.exists() and len(starts.read_text().splitlines()) >= 3, 1.5)
+    finally:
+        supervisor.stop()
+
+
+def test_restarts_after_port_is_occupied(tmp_path):
+    starts = tmp_path / "timestamps.txt"
+    with socket.socket() as occupied_socket:
+        occupied_socket.bind(("127.0.0.1", 0))
+        occupied_socket.listen()
+        port = occupied_socket.getsockname()[1]
+        code = (
+            "import socket, time; "
+            f"open({str(starts)!r}, 'a').write(str(time.monotonic()) + '\\n'); "
+            f"sock=socket.socket(); sock.bind(('127.0.0.1', {port}))"
+        )
+        supervisor, _ = make_supervisor(tmp_path, code, backoff_s=(0.15,))
+        supervisor.start()
+        try:
+            assert wait_for(lambda: starts.exists() and len(starts.read_text().splitlines()) >= 3, 2.0)
+            times = [float(line) for line in starts.read_text().splitlines()]
+        finally:
+            supervisor.stop()
+    assert all(later - earlier >= 0.1 for earlier, later in zip(times, times[1:]))
+
+
+def test_zero_graceful_timeout_skips_wait_before_termination(tmp_path, monkeypatch):
+    code = "import time; exec('while True: time.sleep(1)')"
+    supervisor, _ = make_supervisor(
+        tmp_path, code, graceful_timeout_s=0.0, kill_timeout_s=0.5, backoff_s=(0.05,)
+    )
+    supervisor.start()
+    timeouts = []
+    original_wait = supervisor._wait_for_process
+
+    def record_wait(process, timeout_s):
+        timeouts.append(timeout_s)
+        return original_wait(process, timeout_s)
+
+    monkeypatch.setattr(supervisor, "_wait_for_process", record_wait)
+    try:
+        assert wait_for(lambda: supervisor._process is not None)
+        assert supervisor.stop() is True
+        assert timeouts[0] == 0.0
+    finally:
+        supervisor.stop()
 
 
 def test_start_failure_does_not_raise_or_log_environment(tmp_path, caplog):
@@ -68,10 +114,12 @@ def test_start_failure_does_not_raise_or_log_environment(tmp_path, caplog):
         backoff_s=(5,),
     )
     supervisor.start()
-    assert wait_for(lambda: "failed to start" in caplog.text)
-    assert supervisor.stop() is True
-    assert secret not in caplog.text
-    assert secret not in log_file.read_text(encoding="utf-8")
+    try:
+        assert wait_for(lambda: "failed to start" in caplog.text)
+        assert secret not in caplog.text
+        assert secret not in log_file.read_text(encoding="utf-8")
+    finally:
+        supervisor.stop()
 
 
 def test_stop_closes_stdin_gracefully(tmp_path):
@@ -85,13 +133,16 @@ def test_stop_closes_stdin_gracefully(tmp_path):
     )
     supervisor, _ = make_supervisor(tmp_path, code, graceful_timeout_s=0.5, backoff_s=(0.05,))
     supervisor.start()
-    assert wait_for(starts.exists)
-    started = time.monotonic()
-    assert supervisor.stop() is True
-    assert time.monotonic() - started < 2
-    assert marker.read_text() == "graceful"
-    time.sleep(0.1)
-    assert len(starts.read_text().splitlines()) == 1
+    try:
+        assert wait_for(starts.exists)
+        started = time.monotonic()
+        assert supervisor.stop() is True
+        assert time.monotonic() - started < 2
+        assert marker.read_text() == "graceful"
+        time.sleep(0.1)
+        assert len(starts.read_text().splitlines()) == 1
+    finally:
+        supervisor.stop()
 
 
 def test_stop_escalates_to_kill(tmp_path):
@@ -110,18 +161,23 @@ def test_stop_escalates_to_kill(tmp_path):
         backoff_s=(0.05,),
     )
     supervisor.start()
-    assert wait_for(lambda: supervisor._process is not None)
-    started = time.monotonic()
-    assert supervisor.stop() is True
-    assert time.monotonic() - started < graceful_timeout_s + kill_timeout_s + 2
+    try:
+        assert wait_for(lambda: supervisor._process is not None)
+        started = time.monotonic()
+        assert supervisor.stop() is True
+        assert time.monotonic() - started < graceful_timeout_s + kill_timeout_s + 2
+    finally:
+        supervisor.stop()
 
 
 def test_child_output_goes_to_log_file(tmp_path):
     supervisor, log_file = make_supervisor(tmp_path, "print('hello', flush=True)", backoff_s=(0.05,))
     supervisor.start()
-    assert wait_for(lambda: log_file.exists() and "hello" in log_file.read_text())
-    assert supervisor.stop()
-    assert "hello" in log_file.read_text()
+    try:
+        assert wait_for(lambda: log_file.exists() and "hello" in log_file.read_text())
+        assert "hello" in log_file.read_text()
+    finally:
+        supervisor.stop()
 
 
 def test_env_is_passed(tmp_path):
@@ -134,9 +190,11 @@ def test_env_is_passed(tmp_path):
         backoff_s=(0.05,),
     )
     supervisor.start()
-    assert wait_for(target.exists)
-    assert supervisor.stop()
-    assert target.read_text() == "test-token"
+    try:
+        assert wait_for(target.exists)
+        assert target.read_text() == "test-token"
+    finally:
+        supervisor.stop()
 
 
 def test_stable_run_resets_backoff(tmp_path):
@@ -150,31 +208,36 @@ def test_stable_run_resets_backoff(tmp_path):
         tmp_path, code, backoff_s=(0.05, 5), stable_s=0.2
     )
     supervisor.start()
-    assert wait_for(lambda: starts.exists() and len(starts.read_text().splitlines()) >= 2, 2.0)
-    times = [json.loads(line) for line in starts.read_text().splitlines()]
-    assert times[1] - times[0] < 1.0
-    assert supervisor.stop()
+    try:
+        assert wait_for(lambda: starts.exists() and len(starts.read_text().splitlines()) >= 2, 2.0)
+        times = [json.loads(line) for line in starts.read_text().splitlines()]
+        assert times[1] - times[0] < 1.0
+    finally:
+        supervisor.stop()
 
 
 def test_start_is_idempotent_and_stop_is_final(tmp_path):
     starts = tmp_path / "starts.txt"
     code = f"open({str(starts)!r}, 'a').write('started\\n'); import sys; sys.stdin.read()"
-    supervisor, _ = make_supervisor(tmp_path, code, backoff_s=(0.05,))
+    supervisor = make_supervisor(tmp_path, code, backoff_s=(0.05,))[0]
     assert supervisor.stop() is True
     supervisor.start()
     assert not starts.exists()
 
     supervisor = make_supervisor(tmp_path, code, backoff_s=(0.05,))[0]
     supervisor.start()
-    assert wait_for(starts.exists)
-    supervisor.start()
-    supervisor.start()
-    time.sleep(0.1)
-    assert len(starts.read_text().splitlines()) == 1
-    assert supervisor.stop() is True
-    supervisor.start()
-    time.sleep(0.1)
-    assert len(starts.read_text().splitlines()) == 1
+    try:
+        assert wait_for(starts.exists)
+        supervisor.start()
+        supervisor.start()
+        time.sleep(0.1)
+        assert len(starts.read_text().splitlines()) == 1
+        assert supervisor.stop() is True
+        supervisor.start()
+        time.sleep(0.1)
+        assert len(starts.read_text().splitlines()) == 1
+    finally:
+        supervisor.stop()
 
 
 def test_stop_signals_during_child_start(tmp_path, monkeypatch):
@@ -184,6 +247,8 @@ def test_stop_signals_during_child_start(tmp_path, monkeypatch):
     original_popen = subprocess.Popen
     popen_entered = Event()
     allow_popen = Event()
+    results = []
+    stop_thread = None
 
     def delayed_popen(*args, **kwargs):
         popen_entered.set()
@@ -192,18 +257,23 @@ def test_stop_signals_during_child_start(tmp_path, monkeypatch):
 
     monkeypatch.setattr(subprocess, "Popen", delayed_popen)
     supervisor.start()
-    assert popen_entered.wait(1)
-    results = []
-    stop_thread = Thread(target=lambda: results.append(supervisor.stop()))
-    stop_thread.start()
-    stop_signaled = wait_for(supervisor._stop_event.is_set, 0.5)
-    allow_popen.set()
-    stop_thread.join(3)
-
-    assert stop_signaled
-    assert not stop_thread.is_alive()
-    assert results == [True]
-    assert len(starts.read_text().splitlines()) == 1
+    try:
+        assert popen_entered.wait(1)
+        stop_thread = Thread(target=lambda: results.append(supervisor.stop()))
+        stop_thread.start()
+        stop_signaled = wait_for(supervisor._stop_event.is_set, 0.5)
+        allow_popen.set()
+        stop_thread.join(3)
+        assert stop_signaled
+        assert not stop_thread.is_alive()
+        assert results == [True]
+        assert wait_for(starts.exists)
+        assert len(starts.read_text().splitlines()) == 1
+    finally:
+        allow_popen.set()
+        if stop_thread is not None and stop_thread.is_alive():
+            stop_thread.join(3)
+        supervisor.stop()
 
 
 def test_stop_interrupts_restart_wait(tmp_path):
@@ -211,11 +281,14 @@ def test_stop_interrupts_restart_wait(tmp_path):
     code = f"open({str(starts)!r}, 'a').write('started\\n'); raise SystemExit(1)"
     supervisor, _ = make_supervisor(tmp_path, code, backoff_s=(5,))
     supervisor.start()
-    assert wait_for(starts.exists)
-    started = time.monotonic()
-    assert supervisor.stop() is True
-    assert time.monotonic() - started < 1
-    assert len(starts.read_text().splitlines()) == 1
+    try:
+        assert wait_for(starts.exists)
+        started = time.monotonic()
+        assert supervisor.stop() is True
+        assert time.monotonic() - started < 1
+        assert len(starts.read_text().splitlines()) == 1
+    finally:
+        supervisor.stop()
 
 
 def test_supervisor_closes_log_handles(tmp_path, monkeypatch):
@@ -233,6 +306,17 @@ def test_supervisor_closes_log_handles(tmp_path, monkeypatch):
     code = "print('ready', flush=True); import sys; sys.stdin.read()"
     supervisor, _ = make_supervisor(tmp_path, code, backoff_s=(0.05,))
     supervisor.start()
-    assert wait_for(lambda: log_file.exists() and "ready" in log_file.read_text())
-    assert supervisor.stop() is True
+    try:
+        assert wait_for(lambda: log_file.exists() and "ready" in log_file.read_text())
+        assert all(handle.closed for handle in handles) is False
+    finally:
+        supervisor.stop()
     assert handles and all(handle.closed for handle in handles)
+
+
+def test_server_worker_command_with_ca_file(tmp_path):
+    ca_file = tmp_path / "root.crt"
+    command = server_worker_command("https://laptop-martin-r", ServerWorkerConfig(), ca_file=ca_file)
+
+    assert command[command.index("--server") + 1] == "https://laptop-martin-r"
+    assert command[-2:] == ["--ca-file", str(ca_file)]

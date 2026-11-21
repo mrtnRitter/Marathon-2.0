@@ -10,6 +10,20 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ## Abnahme offen
 
+### Release HTTPS
+
+Vertrag: `docs/spec.md` (Teil 2a)
+
+- [ ] Marathon ist von anderen Rechnern nur über `https://` erreichbar (auf dem Server-Rechner bleibt der Rettungszugang http://127.0.0.1:8080) und liegt immer hinter einem Proxy: ab Werk der mitgelieferte Caddy (eigene interne CA, Zertifikate erneuern sich automatisch), wahlweise ein externer Reverse-Proxy; Grundlage für Session-Cookies (`Secure`), Magic-Links, Worker-Tokens und die Rechner-Erkennung im Browser
+  - Entschieden: Rechnername `laptop-martin-r` (`public_url = "https://laptop-martin-r"`); Zertifikats- und Proxy-Daten unter `.cert/` (nicht im Repo)
+  - Entschieden: Vertrauen – auf dem Server-Rechner `python run.py --trust`, auf weiteren Rechnern das Stammzertifikat einmal von Hand importieren; ab Release Worker-Client & Steuerung übernimmt das der Installer
+- [ ] Nur der Port aus `public_url` (ab Werk 443); Port 80 bleibt zu. Anfragen über HTTP oder abweichende Rechnernamen, die Marathon erreichen, werden auf `public_url` umgeleitet
+- [ ] Proxy-Einstellungen in den Serversettings (Öffentliche Adresse, mitgelieferter Proxy an/aus, Adressen externer Proxys); Startwerte aus `[proxy]` in `config/marathon.toml`, danach gilt die Datenbank; Änderungen gelten nach einem Neustart des Servers
+- [ ] `[auth] cookie_secure` entfällt; Session-Cookies sind immer `Secure`
+- [ ] Worker-Laufzeit prüft das Server-Zertifikat (Zertifikatsspeicher des Systems oder einstellbare CA-Datei, Prüfung nie abschaltbar); Server-Worker ohne Sonderbehandlung über `public_url`
+- [ ] Mitgelieferter Proxy kommt mit `python build.py` (Caddy 2.11.9, Prüfsumme geprüft); `python run.py` startet und stoppt ihn mit dem Server
+
+
 ### Release Worker-Steuerung
 
 Vertrag: `docs/spec.md` (Teil 2)
@@ -40,19 +54,7 @@ Vertrag: `docs/spec.md` (Teil 2)
 
 Reihenfolge = Umsetzungsreihenfolge. `Offen:` klären wir je Release Punkt für Punkt, bevor der Punkt umgesetzt wird; `Vorschlag:` ist eine Empfehlung, keine Entscheidung. Wo `docs/spec.md` (Teil 3) und ein offener Punkt sich widersprechen, gilt bis zur Klärung der offene Punkt.
 
-### Nächster Release: HTTPS
-
-Vertrag: `docs/spec.md` (Teil 2a)
-
-- [ ] Marathon ist nur über `https://` erreichbar und liegt immer hinter einem Proxy: ab Werk der mitgelieferte Caddy (eigene interne CA, Zertifikate erneuern sich automatisch), wahlweise ein externer Reverse-Proxy; Grundlage für Session-Cookies (`Secure`), Magic-Links, Worker-Tokens und die Rechner-Erkennung im Browser
-  - Entschieden: Rechnername `laptop-martin-r` (`public_url = "https://laptop-martin-r"`); Zertifikats- und Proxy-Daten unter `.cert/` (nicht im Repo)
-  - Entschieden: Vertrauen – auf dem Server-Rechner `python run.py --trust`, auf weiteren Rechnern das Stammzertifikat einmal von Hand importieren; ab Release Worker-Client & Steuerung übernimmt das der Installer
-- [ ] Nur der Port aus `public_url` (ab Werk 443); Port 80 bleibt zu. Anfragen über HTTP oder abweichende Rechnernamen, die Marathon erreichen, werden auf `public_url` umgeleitet
-- [ ] Proxy-Einstellungen in den Serversettings (Öffentliche Adresse, mitgelieferter Proxy an/aus, Adressen externer Proxys); Startwerte aus `[proxy]` in `config/marathon.toml`, danach gilt die Datenbank; Änderungen gelten nach einem Neustart des Servers
-- [ ] `[auth] cookie_secure` entfällt; Session-Cookies sind immer `Secure`
-- [ ] Worker-Laufzeit prüft das Server-Zertifikat (Zertifikatsspeicher des Systems oder einstellbare CA-Datei, Prüfung nie abschaltbar); Server-Worker ohne Sonderbehandlung über `public_url`
-
-### Release Zugang & Nutzer
+### Nächster Release: Zugang & Nutzer
 
 Vertrag: `docs/spec.md` §3.1–3.3 (ohne `[worker_client]`); offene Punkte unten gehen vor
 

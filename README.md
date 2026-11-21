@@ -43,7 +43,7 @@ python run.py
 
 `run.py` startet die Datenbank, bringt sie auf den neuesten Stand und startet den Server mit dem mitgelieferten HTTPS-Proxy. Beenden mit `stop` und Enter (Strg+C geht als Notfall-Abbruch); danach werden auch Proxy und Datenbank gestoppt.
 
-Oberfläche im Browser öffnen: die öffentliche Adresse, z. B. https://laptop-martin-r (siehe [HTTPS und Zertifikate](#https-und-zertifikate)). Nur über HTTPS erreichbar; Port 80 ist zu, daher immer mit `https://` aufrufen.
+Oberfläche im Browser öffnen: die öffentliche Adresse, z. B. https://laptop-martin-r (siehe [HTTPS und Zertifikate](#https-und-zertifikate)). Von anderen Rechnern nur über HTTPS erreichbar (Ausnahme auf dem Server-Rechner: Rettungszugang, siehe unten); Port 80 ist zu, daher immer mit `https://` aufrufen.
 
 Beim ersten Start einmal das Stammzertifikat importieren (Server läuft dabei weiter, in einem zweiten Fenster):
 
@@ -118,7 +118,7 @@ Marathon selbst spricht nur HTTP auf `host`/`port` und liegt immer hinter einem 
   - Linux: nach `/usr/local/share/ca-certificates/marathon.crt` kopieren und `update-ca-certificates` ausführen.
 - **Externer Reverse-Proxy:** In den Einstellungen „Mitgelieferten Proxy verwenden“ ausschalten, die IP-Adresse des Proxys unter „Adressen externer Proxys“ eintragen und ggf. die öffentliche Adresse anpassen; dann den Server neu starten. Läuft der Proxy auf einem anderen Rechner, in `config/marathon.toml` `host = "0.0.0.0"` setzen. Der Proxy muss `X-Forwarded-Proto` setzen, Anfragen länger als `poll_timeout_s` offen halten und den Live-Kanal ungepuffert durchreichen.
 - **Umleitung:** Anfragen, die Marathon über HTTP oder einen anderen Rechnernamen erreichen, werden auf die öffentliche Adresse umgeleitet.
-- **Worker** verbinden sich nur über `https://` und prüfen das Zertifikat gegen den Zertifikatsspeicher des Systems; mit `--ca-file <datei>` stattdessen nur gegen diese Datei. Die Prüfung lässt sich nicht abschalten. Der Server-Worker nutzt die öffentliche Adresse und das Stammzertifikat des mitgelieferten Proxys.
+- **Worker** verbinden sich nur über `https://` und prüfen das Zertifikat gegen den Zertifikatsspeicher des Systems; mit `--ca-file <datei>` stattdessen nur gegen diese Datei. Die Prüfung lässt sich nicht abschalten. Der Server-Worker nutzt die öffentliche Adresse; mit dem mitgelieferten Proxy prüft er gegen dessen Stammzertifikat, sonst gegen den Zertifikatsspeicher des Systems.
 
 ## Engine und Worker
 
