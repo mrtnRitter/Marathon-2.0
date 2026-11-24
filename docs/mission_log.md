@@ -49,23 +49,24 @@ Vertrag: `docs/spec.md` §3.1–3.3 (ohne `[worker_client]`); offene Punkte unte
   - Offen: Verhalten, wenn kein Mailversand eingerichtet ist. Vorschlag: klare Meldung „Mailversand ist nicht eingerichtet“, Admins nutzen den CLI-Notfallbefehl
   - Offen: Dürfen die Meldungen „Domain nicht freigegeben“ / „Konto deaktiviert“ verraten, ob ein Konto existiert (internes Werkzeug), oder immer neutrale Antwort?
 - [ ] Langlebige serverseitige Session (`HttpOnly`-Cookie mit Sliding Expiration, z. B. 180 Tage, einzeln widerrufbar); Andockstelle (`AuthProvider`, `external_subject`) für späteres Ökosystem bleibt erhalten
-  - Offen: Wer widerruft Sessions – der Nutzer selbst (Liste seiner Geräte), der Admin für alle oder beide? Schnittstelle und Ansicht dafür fehlen in der Spec
+  - Offen: Wer widerruft Sessions – der Nutzer selbst (Liste seiner Geräte), der Admin für alle oder beide? Schnittstelle und Ansicht dafür fehlen in der Spec -- nur der Admin kann Sessions widerrufen, das passiert in der User-Übersicht, die es grundsätzlich braucht. Wir müssen das UI demnach auch verschieben ausrollen - es gibt eine Admin-Ansicht mit allem (daran arbeiten wir zuerst) und eine User-Ansicht mit reduzierten Menü (zb. keine Settings). 
 - [ ] Erlaubte E-Mail-Domains für die Selbstregistrierung in den Serversettings pflegbar (Startwert aus `config/marathon.toml` analog zu `folder_dialog.server_address`)
   - Offen: Form in `GET/PUT /api/v1/settings` und Prüfregel für Domains (z. B. Subdomains erlaubt oder nur exakt)
 - [ ] Zentraler `[smtp]`-Konfigurationsblock in `config/marathon.toml` (Passwort nur per Umgebungsvariable oder `.data/smtp.pass`), nutzbar für Magic-Link und späteren Bug-Report
 - [ ] Rollen `user` und `admin`; Break-Glass über `[auth] admin_emails` in `config/marathon.toml` (immer Admin, in UI nicht herabstufbar/löschbar, Schutz letzter Admin) plus lokaler Server-CLI-Notfallbefehl (`python run.py admin-link <mail>`) ohne SMTP
-  - Offen: Nutzerverwaltung – Schnittstelle und Ansicht für Liste, Rolle, Deaktivieren, Löschen fehlen in der Spec. Löschen erlaubt oder nur Deaktivieren?
-  - Offen: Was passiert mit den Workflows eines gelöschten Nutzers? Vorschlag: ohne Eigentümer, nur für Admins sichtbar
-- [ ] Workflow-Freigaben je Nutzer in drei Stufen: nicht teilen, teilen zur Ansicht (kein Bearbeiten, kein Starten/Stoppen/erneutes Verarbeiten), teilen zur Bearbeitung und Ausführung
-  - Offen: Wer darf Workflows anlegen? Vorschlag: jeder Nutzer, Ersteller wird Eigentümer
-  - Offen: Darf der Eigentümer selbst teilen oder nur ein Admin?
-  - Offen: Bestehende Workflows haben nach dem Update keinen Eigentümer. Vorschlag: nur für Admins sichtbar, bis ein Admin sie zuordnet
+  - Offen: Nutzerverwaltung – Schnittstelle und Ansicht für Liste, Rolle, Deaktivieren, Löschen fehlen in der Spec. Löschen erlaubt oder nur Deaktivieren? -- Admin kann User löschen, User deaktivieren braucht es gar nicht. User können sich nicht selbst oder andere löschen.
+  - Offen: Was passiert mit den Workflows eines gelöschten Nutzers? Vorschlag: ohne Eigentümer, nur für Admins sichtbar -- OK!
+- [ ] Workflow-Freigaben je Nutzer in vier Stufen:  privat (nicht teilen), teilen zur Ansicht (kein Bearbeiten, kein Starten/Stoppen/erneutes Verarbeiten), teilen zur Ausführung (starten, stoppen aber nicht verändern), teilen zur Bearbeitung und Ausführung
+  - Offen: Wer darf Workflows anlegen? Vorschlag: jeder Nutzer, Ersteller wird Eigentümer -- ja, genau
+  - Offen: Darf der Eigentümer selbst teilen oder nur ein Admin? -- der Eigentümer und der Admin
+  - Offen: Bestehende Workflows haben nach dem Update keinen Eigentümer. Vorschlag: nur für Admins sichtbar, bis ein Admin sie zuordnet -- ok und guter Punkt: Admins dürfen für Workflows einen Eigentümer setzen
 - [ ] Modultypen je Nutzer einzeln freigebbar/sperrbar (Admin sieht/darf alles; neue Nutzer ab Werk mit allen Modultypen freigegeben)
-  - Offen: Neue Modultypen nach einem Update sind für alle bestehenden Nutzer sofort frei (folgt aus „gesperrt nur per Eintrag“) – so gewollt?
+  - Offen: Neue Modultypen nach einem Update sind für alle bestehenden Nutzer sofort frei (folgt aus „gesperrt nur per Eintrag“) – so gewollt? - Zu den Modulen habe ich einen Gedanken gehabt (Modul-Builder, steht unter bei "unsortiert" - demnach würde man Module bewusst erzeugen, beim Speichern stellt man die Freigabe ein - Module sind privat oder öffentlich, aber nur der Ersteller und Admin kann es verändern - ein öffentliches Modul kann von anderen Usern nie verändert werden, nur benutzt - für den Anfang gibt es ein paar Standardmodule, die dem Admin gehören und standardmäßig geteilt sind (so wie heute: watchfolder, kopieren, etc)). - Da Modul-Builder noch nicht da ist, bleiben wir erstmal dabei, dass Module immer geteilt sind.
 - [ ] Konsistenzschutz Modul-/Workflow-Freigabe: Workflow mit für den Nutzer gesperrtem Modul lässt sich nicht zur Bearbeitung freigeben (eindeutige Fehlermeldung, nur Ansicht möglich); nachträgliche Modulsperre stuft den Workflow effektiv auf Ansicht zurück; laufende Bearbeitung kann bei zwischenzeitlich entzogener Modulfreigabe nicht gespeichert werden (`403` + klare Meldung)
 - [ ] Normale Nutzer sehen keine Servereinstellungen, keine Nutzerverwaltung und keine fremden Worker; alle API-Routen und der Live-Kanal (SSE) prüfen Rechte serverseitig
   - Offen: Normale Nutzer brauchen Name und Zustand der Worker, die ihre Workflows nutzen (Worker-Chip, Hinweise am Watchfolder). Vorschlag: eingeschränkte Leseansicht nur dieser Worker (Name, online, Status, Grund), ohne Steuerung
   - Offen: Der Live-Kanal meldet heute nur geänderte Tabellen an alle. Vorschlag: Ereignisse tragen `workflow_id` und werden je Verbindung nach Rechten gefiltert
+  - anmerkung: fremde worker dürfen schon gesehen werden, aber nicht bearbeitet, vorschläge sind ok.
 
 ### Release Worker-Client & Steuerung
 
@@ -233,7 +234,7 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
 - [ ] Modul Warten: wenn man auf Assets klickt, kommt eine komplett leere Seite - getestet mit langer Liste über 5k Assets
 - [ ] Spinner scheint noch zu fehlen oder zu spät zu kommen - hab ihn trotz Ladezeiten >0.5s noch nie gesehen
 - [ ] Modullog soll so hoch sein, wie Seitenpanel und doch nur warnungen und fehler beinhalten, alles außer Info - liegt nichts dergleichen vor, dann steht dort: keine Fehler, keine Warnungen, oder allgemein Keine Vorkommnisse
-- [ ] Idee: Modulmaker: jedes Modul besteht aus Code-Block, Eingang, Ausgang, Stats, Settings im UI-Panel -- ersetzt Idee mit Subs
+- [ ] Idee: Modul-Builder: jedes Modul besteht aus Code-Block, Eingang, Ausgang, Stats, Settings im UI-Panel -- ersetzt Idee mit Subs
 - [ ] Mitgelieferten Proxy verwenden: umbenennen in "Proxy verwenden" und Tooltip unter Schalter entfernen, (ist die Option aus, gilt immer Caddy, ist die Option an, kann man IP Adresse von ext. Proxy eingeben), Adresse externer Proxy umbenennen in Proxy, Tooltip im Adressfeld 0.0.0.0, Tooltip unter Adressfeld entfernen
 - [ ] Server braucht einen "restart" Befehl - kann das aus um UI verfolgen (nur für Admins)?
 
