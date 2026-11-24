@@ -247,4 +247,4 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
 - [ ] Modul Warten: wenn man auf Assets klickt, kommt eine komplett leere Seite - getestet mit langer Liste über 5k Assets
 - [ ] Spinner scheint noch zu fehlen oder zu spät zu kommen - hab ihn trotz Ladezeiten >0.5s noch nie gesehen
 - [ ] Modullog soll so hoch sein, wie Seitenpanel und doch nur warnungen und fehler beinhalten, alles außer Info - liegt nichts dergleichen vor, dann steht dort: keine Fehler, keine Warnungen, oder allgemein Keine Vorkommnisse
-- [ ] 
+- [ ] Idee: Modulmaker: jedes Modul besteht aus Code-Block, Eingang, Ausgang, Stats, Settings im UI-Panel -- ersetzt Idee mit Subs
