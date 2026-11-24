@@ -16,9 +16,11 @@ from marathon.common.version import app_name, app_version
 from marathon.server.api import api_prefix, api_routers
 from marathon.server.api.deps import app_engine
 from marathon.server.config import (
+    AuthConfig,
     ConfigError,
     EngineConfig,
     ServerWorkerConfig,
+    SmtpConfig,
     caddy_exe,
     caddy_log_file,
     caddy_root_cert,
@@ -37,6 +39,7 @@ from marathon.server.live import LiveHub, NotifyListener, open_listen_connection
 from marathon.server.scheduler import ScheduleRunner
 from marathon.server.watcher import WatchRunner
 from marathon.server.ui import create_ui_router, default_static_dir
+from marathon.server.mail import MailSender
 from marathon.server.worker_auth import load_or_create_token
 from marathon.server.worker_supervisor import WorkerSupervisor, server_worker_command
 
@@ -146,6 +149,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
                 _logger.warning("Server-Worker konnte nicht gestartet werden (%s)", type(error).__name__)
         yield
     finally:
+        try:
+            app.state.mail_sender.close()
+        except Exception:
+            _logger.exception("Mailversand konnte nicht geschlossen werden")
         app.state.shutdown_event.set()
         try:
             app.state.live_hub.close_streams()
@@ -188,6 +195,9 @@ def create_app(
     server_url: str | None = None,
     load_proxy: bool = False,
     listen: tuple[str, int] | None = None,
+    auth_config: AuthConfig | None = None,
+    smtp_config: SmtpConfig | None = None,
+    mail_sender: MailSender | None = None,
 ) -> FastAPI:
     """Build the versioned API and UI without opening a database connection."""
     app = FastAPI(
@@ -215,6 +225,9 @@ def create_app(
     app.state.listen = listen
     app.state.proxy_settings = None
     app.state.proxy_builtin = False
+    app.state.auth_config = auth_config if auth_config is not None else AuthConfig()
+    app.state.smtp_config = smtp_config if smtp_config is not None else SmtpConfig()
+    app.state.mail_sender = mail_sender if mail_sender is not None else MailSender()
 
     @app.exception_handler(OperationalError)
     @app.exception_handler(SQLAlchemyTimeoutError)

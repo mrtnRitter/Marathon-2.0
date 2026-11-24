@@ -35,13 +35,58 @@ python3 build.py     # Linux
 
 Bereits erledigte Schritte werden übersprungen. `build.py` erneut ausführen nach jedem `git pull` und nach Änderungen am UI-Code.
 
+### Mailversand einrichten
+
+*Gilt ab Release Zugang & Nutzer.* Marathon verschickt die Anmelde-Mails (6-stelliger Code) über einen vorhandenen Mailserver per SMTP. Ohne Mailversand ist nur der Notfallzugang `python run.py admin-code <mail>` auf dem Server-Rechner möglich.
+
+1. Abschnitt `[smtp]` in `config/marathon.toml` ausfüllen (Beispiele unten).
+2. Verlangt der Mailserver eine Anmeldung: Passwort als Umgebungsvariable `MARATHON_SMTP_PASSWORD` setzen oder in die Datei `.data/smtp.pass` schreiben – nie in `marathon.toml`.
+3. Testmail senden: `python run.py mail-test <adresse>`.
+
+| Eintrag | Bedeutung | Standard |
+|---|---|---|
+| `[smtp] host` | SMTP-Server; leer = Mailversand nicht eingerichtet | `""` |
+| `[smtp] port` | Port (1–65535) | `587` |
+| `[smtp] username` | Anmeldename; leer = ohne Anmeldung | `""` |
+| `[smtp] use_tls` | Verbindung per STARTTLS verschlüsseln | `true` |
+| `[smtp] from_address` | Absenderadresse | `""` |
+| `[smtp] from_name` | Anzeigename des Absenders | `"Marathon"` |
+
+**Microsoft 365 mit Dienstpostfach (Anmeldung mit Passwort):**
+
+```toml
+[smtp]
+host = "smtp.office365.com"
+port = 587
+username = "marathon@looks.film"
+use_tls = true
+from_address = "marathon@looks.film"
+from_name = "Marathon"
+```
+
+Voraussetzung: Für das Postfach ist „Authentifiziertes SMTP“ eingeschaltet. Microsoft schaltet die Anmeldung mit Passwort für SMTP schrittweise ab; dann die Variante ohne Anmeldung nutzen.
+
+**Microsoft 365 ohne Anmeldung (Direct Send, nur an Adressen der eigenen Domains):**
+
+```toml
+[smtp]
+host = "looks-film.mail.protection.outlook.com"
+port = 25
+username = ""
+use_tls = true
+from_address = "marathon@looks.film"
+from_name = "Marathon"
+```
+
+Voraussetzung: Der Server erreicht Port 25 nach außen, Direct Send ist im Tenant nicht gesperrt, und die öffentliche IP-Adresse des Standorts steht im SPF-Eintrag der Domain (sonst landen die Mails im Junk-Ordner).
+
 ## Starten
 
 ```bash
 python run.py
 ```
 
-`run.py` startet die Datenbank, bringt sie auf den neuesten Stand und startet den Server mit dem mitgelieferten HTTPS-Proxy. Beenden mit `stop` und Enter (Strg+C geht als Notfall-Abbruch); danach werden auch Proxy und Datenbank gestoppt.
+`run.py` startet die Datenbank, bringt sie auf den neuesten Stand und startet den Server mit dem mitgelieferten HTTPS-Proxy. Beenden mit `stop` und Enter (Strg+C geht als Notfall-Abbruch); danach werden auch Proxy und Datenbank gestoppt. Neustart mit `restart` und Enter: Server beendet sich sauber und startet neu, die Datenbank läuft weiter.
 
 Oberfläche im Browser öffnen: die öffentliche Adresse, z. B. https://laptop-martin-r (siehe [HTTPS und Zertifikate](#https-und-zertifikate)). Von anderen Rechnern nur über HTTPS erreichbar (Ausnahme auf dem Server-Rechner: Rettungszugang, siehe unten); Port 80 ist zu, daher immer mit `https://` aufrufen.
 
@@ -73,6 +118,8 @@ Oberfläche öffnen: http://127.0.0.1:5173
 | `python run.py` | Datenbank und Server starten |
 | `python run.py --dev` | Datenbank, Server und Live-Vorschau starten |
 | `python run.py --trust` | Stammzertifikat des mitgelieferten Proxys für den angemeldeten Benutzer importieren (Windows); unter Linux Pfad und Vorgehen anzeigen |
+| `python run.py mail-test <adresse>` | Testmail über den eingerichteten Mailversand senden |
+| `python run.py admin-code <mail>` | Notfall-Anmeldecode für einen Admin ausgeben (nur bei laufendem Server, ohne Mailversand) |
 | `python build.py --help` / `python run.py --help` | Hilfe anzeigen |
 
 ### Datenbank zurücksetzen
@@ -116,7 +163,7 @@ Marathon selbst spricht nur HTTP auf `host`/`port` und liegt immer hinter einem 
   - Server-Rechner: `python run.py --trust`.
   - Andere Windows-Rechner: Datei kopieren, Doppelklick → „Zertifikat installieren“ → „Aktueller Benutzer“ → „Alle Zertifikate in folgendem Speicher speichern“ → „Vertrauenswürdige Stammzertifizierungsstellen“. Danach den Browser neu starten.
   - Linux: nach `/usr/local/share/ca-certificates/marathon.crt` kopieren und `update-ca-certificates` ausführen.
-- **Externer Reverse-Proxy:** In den Einstellungen „Mitgelieferten Proxy verwenden“ ausschalten, die IP-Adresse des Proxys unter „Adressen externer Proxys“ eintragen und ggf. die öffentliche Adresse anpassen; dann den Server neu starten. Läuft der Proxy auf einem anderen Rechner, in `config/marathon.toml` `host = "0.0.0.0"` setzen. Der Proxy muss `X-Forwarded-Proto` setzen, Anfragen länger als `poll_timeout_s` offen halten und den Live-Kanal ungepuffert durchreichen.
+- **Externer Reverse-Proxy:** In den Einstellungen „Proxy verwenden“ einschalten, die IP-Adresse des Proxys unter „Proxy“ eintragen und ggf. die öffentliche Adresse anpassen; dann den Server neu starten. Läuft der Proxy auf einem anderen Rechner, in `config/marathon.toml` `host = "0.0.0.0"` setzen. Der Proxy muss `X-Forwarded-Proto` setzen, Anfragen länger als `poll_timeout_s` offen halten und den Live-Kanal ungepuffert durchreichen.
 - **Umleitung:** Anfragen, die Marathon über HTTP oder einen anderen Rechnernamen erreichen, werden auf die öffentliche Adresse umgeleitet.
 - **Worker** verbinden sich nur über `https://` und prüfen das Zertifikat gegen den Zertifikatsspeicher des Systems; mit `--ca-file <datei>` stattdessen nur gegen diese Datei. Die Prüfung lässt sich nicht abschalten. Der Server-Worker nutzt die öffentliche Adresse; mit dem mitgelieferten Proxy prüft er gegen dessen Stammzertifikat, sonst gegen den Zertifikatsspeicher des Systems.
 
@@ -143,8 +190,9 @@ Die Seite „Einstellungen“ speichert in die Datenbank („Speichern“).
 |---|---|---|
 | Ordner-Dialog: Server-Adresse | Rechnername oder IP-Adresse, z. B. `10.0.77.11`. „Server“ im Fenster „Ordner wählen“ zeigt die Freigaben von `\\<Adresse>`. | aus `[folder_dialog] server_address` |
 | Proxy & HTTPS: Öffentliche Adresse | Adresse, unter der Marathon erreichbar ist (nur `https://`, ohne Pfad) | aus `[proxy] public_url` |
-| Proxy & HTTPS: Mitgelieferten Proxy verwenden | Aus: Ein externer Reverse-Proxy übernimmt HTTPS | aus `[proxy] builtin` |
-| Proxy & HTTPS: Adressen externer Proxys | IP-Adressen, durch Komma getrennt; der mitgelieferte Proxy gilt automatisch | aus `[proxy] trusted_proxies` |
+| Proxy & HTTPS: Proxy verwenden | An: Ein externer Reverse-Proxy übernimmt HTTPS; aus: mitgelieferter Proxy | aus `[proxy] builtin` (umgekehrt) |
+| Proxy & HTTPS: Proxy | IP-Adressen externer Proxys, durch Komma getrennt | aus `[proxy] trusted_proxies` |
+| Anmeldung: Erlaubte E-Mail-Domains | Domains für die Selbstregistrierung, exakt (Subdomains einzeln eintragen), durch Komma getrennt | aus `[auth] allowed_domains` |
 
 Änderungen unter „Proxy & HTTPS“ gelten nach einem Neustart des Servers.
 

@@ -77,3 +77,33 @@ def test_seed_defaults_preserves_existing_proxy_values(db_engine, tmp_path):
     assert setting is True
     assert proxy_url == "https://existing"
     assert worker == {"name": "Existing", "status": "stopped", "skills": ["move_file"]}
+
+
+def test_seed_allowed_domains_once(db_engine, tmp_path):
+    from marathon.server.config import AuthConfig, ServerConfig
+    from marathon.server.db.seed import seed_defaults
+
+    first = ServerConfig(auth=AuthConfig(allowed_domains=("looks.film",)))
+    second = ServerConfig(auth=AuthConfig(allowed_domains=("other.test",)))
+    with db_engine.begin() as connection:
+        seed_defaults(connection, first)
+        seed_defaults(connection, second)
+        value = connection.execute(text("SELECT value FROM settings WHERE key = 'auth.allowed_domains'")).scalar_one()
+
+    assert value == ["looks.film"]
+
+
+def test_seed_admin_emails(db_engine, tmp_path):
+    from marathon.server.config import AuthConfig, ServerConfig
+    from marathon.server.db.seed import seed_defaults
+
+    config = ServerConfig(auth=AuthConfig(admin_emails=("new@looks.film", "existing@looks.film")))
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('existing-id', 'existing@looks.film', '', 'user')"))
+        seed_defaults(connection, config)
+        users = connection.execute(text("SELECT email, role FROM users ORDER BY email")).mappings().all()
+
+    assert users == [
+        {"email": "existing@looks.film", "role": "admin"},
+        {"email": "new@looks.film", "role": "admin"},
+    ]

@@ -9,6 +9,7 @@ from sqlalchemy import text
 from marathon.server.app import create_app
 from marathon.server.config import (
     ProxyConfig,
+    domains_error,
     public_url_error,
     trusted_proxies_error,
     trusted_proxies_required_error,
@@ -29,17 +30,22 @@ def api_client(db_engine, tmp_path):
         yield client
 
 
-def settings(folder_address="", proxy=None):
+def settings(folder_address="", proxy=None, auth=None):
     return {
         "folder_dialog": {"server_address": folder_address},
         "proxy": default_proxy if proxy is None else proxy,
+        "auth": {"allowed_domains": []} if auth is None else auth,
     }
 
 
-def put_settings(api_client, folder_address="", proxy=None):
+def put_settings(api_client, folder_address="", proxy=None, allowed_domains=None):
     return api_client.put(
         "/api/v1/settings",
-        json={"folder_dialog": {"server_address": folder_address}, "proxy": default_proxy if proxy is None else proxy},
+        json={
+            "folder_dialog": {"server_address": folder_address},
+            "proxy": default_proxy if proxy is None else proxy,
+            "auth": {"allowed_domains": [] if allowed_domains is None else allowed_domains},
+        },
     )
 
 
@@ -48,6 +54,54 @@ def test_get_settings_without_row_returns_empty_address(api_client):
 
     assert response.status_code == 200
     assert response.json() == settings()
+
+
+def test_settings_auth_default(api_client):
+    response = api_client.get("/api/v1/settings")
+
+    assert response.status_code == 200
+    assert response.json()["auth"]["allowed_domains"] == []
+
+
+def test_settings_auth_roundtrip(api_client):
+    response = put_settings(
+        api_client,
+        allowed_domains=[" @Looks.Film ", "looks.film", "berlin.looks.film", ""],
+    )
+    expected = ["looks.film", "berlin.looks.film"]
+
+    assert response.status_code == 200
+    assert response.json()["auth"]["allowed_domains"] == expected
+    assert api_client.get("/api/v1/settings").json()["auth"]["allowed_domains"] == expected
+
+
+def test_settings_auth_invalid_domain(api_client):
+    put_settings(api_client, "host-1")
+    before = api_client.get("/api/v1/settings").json()
+
+    response = put_settings(
+        api_client,
+        "changed",
+        proxy={
+            "public_url": "https://changed-host",
+            "builtin": True,
+            "trusted_proxies": [],
+        },
+        allowed_domains=["looks"],
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": domains_error}
+    assert api_client.get("/api/v1/settings").json() == before
+
+
+def test_settings_auth_missing_section(api_client):
+    response = api_client.put(
+        "/api/v1/settings",
+        json={"folder_dialog": {"server_address": ""}, "proxy": default_proxy},
+    )
+
+    assert response.status_code == 422
 
 
 def test_put_settings_trims_and_persists_address(api_client, db_engine):
@@ -183,6 +237,7 @@ def test_get_proxy_config(db_engine):
             public_url="https://laptop-martin-r",
             builtin=False,
             trusted_proxies=["10.0.77.20"],
+            allowed_domains=[],
         )["proxy"] == {
             "public_url": "https://laptop-martin-r",
             "builtin": False,

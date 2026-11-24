@@ -224,6 +224,7 @@ export interface WorkerInput {
 export interface Settings {
   folder_dialog: { server_address: string }
   proxy: { public_url: string; builtin: boolean; trusted_proxies: string[] }
+  auth: { allowed_domains: string[] }
 }
 
 export interface WorkflowInput {

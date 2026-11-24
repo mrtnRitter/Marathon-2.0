@@ -42,31 +42,55 @@ Reihenfolge = Umsetzungsreihenfolge. `Offen:` klären wir je Release Punkt für 
 
 ### Nächster Release: Zugang & Nutzer
 
-Vertrag: `docs/spec.md` §3.1–3.3 (ohne `[worker_client]`); offene Punkte unten gehen vor
+Vertrag: `docs/spec.md` §3.1–3.3 (ohne `[worker_client]`); offene Punkte und Entscheidungen unten gehen vor. Migration `0010_users` (nur Nutzer-Tabellen), Worker-Protokoll unverändert
 
-- [ ] Anmeldung per E-Mail (Magic-Link mit Bestätigungsklick gegen Mail-Scanner + 6-stelliger Einmalcode); ein Feld für Login und Selbstregistrierung (Konto wird erst bei Bestätigung angelegt)
-  - Offen: Grenze für falsche Codes. Vorschlag: nach 5 Fehlversuchen wird der Code ungültig
-  - Offen: Verhalten, wenn kein Mailversand eingerichtet ist. Vorschlag: klare Meldung „Mailversand ist nicht eingerichtet“, Admins nutzen den CLI-Notfallbefehl
-  - Offen: Dürfen die Meldungen „Domain nicht freigegeben“ / „Konto deaktiviert“ verraten, ob ein Konto existiert (internes Werkzeug), oder immer neutrale Antwort?
+#### Mailversand (Grundlage für die Anmeldung)
+
+- [ ] Zentraler `[smtp]`-Konfigurationsblock in `config/marathon.toml` (Passwort nur per Umgebungsvariable oder `.data/smtp.pass`), nutzbar für den Anmeldecode und den späteren Bug-Report
+  - Entschieden: Kein eigener Mailserver. Marathon versendet per SMTP über den vorhandenen Mailserver (bei LOOKS Microsoft 365), mit der Python-Standardbibliothek, ohne neue Abhängigkeit; Zeitlimit 10 s je Versand; `username` leer = ohne Anmeldung (z. B. Microsoft 365 Direct Send)
+  - Entschieden: Mailversand gehört zur Einrichtung (README „Mailversand einrichten“); Prüfbefehl `python run.py mail-test <adresse>`; geführte Einrichtung später, nicht in diesem Release
+
+#### Anmeldung und Session
+
+- [ ] Anmeldung per E-Mail mit 6-stelligem Einmalcode (kein Link); ein Feld für Login und Selbstregistrierung (Konto wird erst bei Bestätigung angelegt)
+  - Entschieden: Nur Code, kein Magic-Link – funktioniert auf jedem Gerät und in jedem Browser, Mail-Scanner spielen keine Rolle
+  - Entschieden: 3 falsche Codes je Adresse in 24 Stunden sperren die Adresse für 24 Stunden; Admins heben eine Sperre in der Nutzerverwaltung auf, der CLI-Notfallbefehl hebt sie für Admins selbst auf
+  - Entschieden: Nach außen immer neutral. „Code senden“ antwortet für jede Adresse gleich, auch bei nicht freigegebener Domain: „Falls die Adresse für Marathon freigegeben ist, ist eine E-Mail mit Code unterwegs. Keine E-Mail erhalten? Adresse prüfen oder an den Administrator wenden.“ Die Mail geht im Hintergrund raus, damit auch die Antwortzeit nichts verrät. Falscher, abgelaufener oder verbrauchter Code: „Code ungültig oder abgelaufen“
+  - Entschieden: „Konto deaktiviert“ entfällt, weil es kein Deaktivieren gibt (siehe Nutzerverwaltung)
+  - Entschieden: Ohne eingerichteten Mailversand zeigt die Anmeldeseite vor der Eingabe „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“ (verrät nichts über Konten); Admins nutzen den CLI-Notfallbefehl `python run.py admin-code <mail>`
 - [ ] Langlebige serverseitige Session (`HttpOnly`-Cookie mit Sliding Expiration, z. B. 180 Tage, einzeln widerrufbar); Andockstelle (`AuthProvider`, `external_subject`) für späteres Ökosystem bleibt erhalten
-  - Offen: Wer widerruft Sessions – der Nutzer selbst (Liste seiner Geräte), der Admin für alle oder beide? Schnittstelle und Ansicht dafür fehlen in der Spec -- nur der Admin kann Sessions widerrufen, das passiert in der User-Übersicht, die es grundsätzlich braucht. Wir müssen das UI demnach auch verschieben ausrollen - es gibt eine Admin-Ansicht mit allem (daran arbeiten wir zuerst) und eine User-Ansicht mit reduzierten Menü (zb. keine Settings). 
+  - Entschieden: Nur der Admin widerruft Sessions, in der Nutzerverwaltung (einzeln und „Alle abmelden“ je Nutzer); Nutzer melden sich selbst nur ab
+- [ ] Oberfläche in zwei Ausprägungen: Admin-Ansicht mit allem (wird zuerst gebaut) und Nutzer-Ansicht mit reduziertem Menü (ohne Einstellungen, ohne Nutzer)
 - [ ] Erlaubte E-Mail-Domains für die Selbstregistrierung in den Serversettings pflegbar (Startwert aus `config/marathon.toml` analog zu `folder_dialog.server_address`)
-  - Offen: Form in `GET/PUT /api/v1/settings` und Prüfregel für Domains (z. B. Subdomains erlaubt oder nur exakt)
-- [ ] Zentraler `[smtp]`-Konfigurationsblock in `config/marathon.toml` (Passwort nur per Umgebungsvariable oder `.data/smtp.pass`), nutzbar für Magic-Link und späteren Bug-Report
-- [ ] Rollen `user` und `admin`; Break-Glass über `[auth] admin_emails` in `config/marathon.toml` (immer Admin, in UI nicht herabstufbar/löschbar, Schutz letzter Admin) plus lokaler Server-CLI-Notfallbefehl (`python run.py admin-link <mail>`) ohne SMTP
-  - Offen: Nutzerverwaltung – Schnittstelle und Ansicht für Liste, Rolle, Deaktivieren, Löschen fehlen in der Spec. Löschen erlaubt oder nur Deaktivieren? -- Admin kann User löschen, User deaktivieren braucht es gar nicht. User können sich nicht selbst oder andere löschen.
-  - Offen: Was passiert mit den Workflows eines gelöschten Nutzers? Vorschlag: ohne Eigentümer, nur für Admins sichtbar -- OK!
-- [ ] Workflow-Freigaben je Nutzer in vier Stufen:  privat (nicht teilen), teilen zur Ansicht (kein Bearbeiten, kein Starten/Stoppen/erneutes Verarbeiten), teilen zur Ausführung (starten, stoppen aber nicht verändern), teilen zur Bearbeitung und Ausführung
-  - Offen: Wer darf Workflows anlegen? Vorschlag: jeder Nutzer, Ersteller wird Eigentümer -- ja, genau
-  - Offen: Darf der Eigentümer selbst teilen oder nur ein Admin? -- der Eigentümer und der Admin
-  - Offen: Bestehende Workflows haben nach dem Update keinen Eigentümer. Vorschlag: nur für Admins sichtbar, bis ein Admin sie zuordnet -- ok und guter Punkt: Admins dürfen für Workflows einen Eigentümer setzen
-- [ ] Modultypen je Nutzer einzeln freigebbar/sperrbar (Admin sieht/darf alles; neue Nutzer ab Werk mit allen Modultypen freigegeben)
-  - Offen: Neue Modultypen nach einem Update sind für alle bestehenden Nutzer sofort frei (folgt aus „gesperrt nur per Eintrag“) – so gewollt? - Zu den Modulen habe ich einen Gedanken gehabt (Modul-Builder, steht unter bei "unsortiert" - demnach würde man Module bewusst erzeugen, beim Speichern stellt man die Freigabe ein - Module sind privat oder öffentlich, aber nur der Ersteller und Admin kann es verändern - ein öffentliches Modul kann von anderen Usern nie verändert werden, nur benutzt - für den Anfang gibt es ein paar Standardmodule, die dem Admin gehören und standardmäßig geteilt sind (so wie heute: watchfolder, kopieren, etc)). - Da Modul-Builder noch nicht da ist, bleiben wir erstmal dabei, dass Module immer geteilt sind.
-- [ ] Konsistenzschutz Modul-/Workflow-Freigabe: Workflow mit für den Nutzer gesperrtem Modul lässt sich nicht zur Bearbeitung freigeben (eindeutige Fehlermeldung, nur Ansicht möglich); nachträgliche Modulsperre stuft den Workflow effektiv auf Ansicht zurück; laufende Bearbeitung kann bei zwischenzeitlich entzogener Modulfreigabe nicht gespeichert werden (`403` + klare Meldung)
-- [ ] Normale Nutzer sehen keine Servereinstellungen, keine Nutzerverwaltung und keine fremden Worker; alle API-Routen und der Live-Kanal (SSE) prüfen Rechte serverseitig
-  - Offen: Normale Nutzer brauchen Name und Zustand der Worker, die ihre Workflows nutzen (Worker-Chip, Hinweise am Watchfolder). Vorschlag: eingeschränkte Leseansicht nur dieser Worker (Name, online, Status, Grund), ohne Steuerung
-  - Offen: Der Live-Kanal meldet heute nur geänderte Tabellen an alle. Vorschlag: Ereignisse tragen `workflow_id` und werden je Verbindung nach Rechten gefiltert
-  - anmerkung: fremde worker dürfen schon gesehen werden, aber nicht bearbeitet, vorschläge sind ok.
+  - Entschieden: Form `"auth": { "allowed_domains": ["looks.film"] }` in `GET/PUT /api/v1/settings`; Feld „Erlaubte E-Mail-Domains“ (durch Komma getrennt) in den Einstellungen; Einträge getrimmt, Kleinbuchstaben, führendes `@` entfernt, Doppelte entfernt
+  - Entschieden: Die Liste gilt nur für neue Konten; bestehende Konten melden sich weiter an, auch wenn ihre Domain später entfernt wird
+  - Entschieden: Nur exakte Domains; Subdomains werden bei der Einrichtung einzeln eingetragen
+
+#### Rollen, Nutzer und Freigaben
+
+- [ ] Rollen `user` und `admin`; Break-Glass über `[auth] admin_emails` in `config/marathon.toml` (immer Admin, in UI nicht herabstufbar/löschbar, Schutz letzter Admin) plus lokaler Server-CLI-Notfallbefehl (`python run.py admin-code <mail>`) ohne SMTP
+- [ ] Nutzerverwaltung (nur Admin): Liste, Rolle ändern, Sessions widerrufen, Sperre aufheben, Nutzer löschen
+  - Entschieden: Admin kann Nutzer löschen; Deaktivieren gibt es nicht (`users.active` entfällt). Nutzer können weder sich selbst noch andere löschen; geschützte Admins, der eigene Account und der letzte Admin sind nicht löschbar
+  - Entschieden: Löschen beendet alle Sessions des Nutzers; ist seine Domain freigegeben, kann sich die Adresse neu registrieren (neues, leeres Konto)
+  - Entschieden: Workflows eines gelöschten Nutzers sind ohne Eigentümer und nur für Admins sichtbar
+- [ ] Workflow-Freigaben je Nutzer in vier Stufen: privat (kein Eintrag), `view` teilen zur Ansicht (kein Bearbeiten, kein Starten/Stoppen/erneutes Verarbeiten), `run` teilen zur Ausführung (starten, stoppen, erneut verarbeiten, aber nicht verändern), `edit` teilen zur Bearbeitung und Ausführung
+  - Entschieden: Jeder Nutzer legt Workflows an, der Ersteller wird Eigentümer
+  - Entschieden: Teilen dürfen Eigentümer und Admin
+  - Entschieden: Bestehende Workflows haben nach dem Update keinen Eigentümer und sind nur für Admins sichtbar; Admins dürfen für jeden Workflow den Eigentümer setzen
+- Entschieden: Modulsperren je Nutzer und der Konsistenzschutz Modul-/Workflow-Freigabe entfallen; Module sind bis zum Modul-Builder immer für alle geteilt
+- [ ] Normale Nutzer sehen keine Servereinstellungen und keine Nutzerverwaltung; alle API-Routen und der Live-Kanal (SSE) prüfen Rechte serverseitig
+  - Entschieden: Normale Nutzer sehen alle Worker, aber nur lesend (keine Steuerung, kein Bearbeiten)
+  - Entschieden: Der Live-Kanal verlangt eine Anmeldung und meldet weiter nur Tabellennamen ohne Inhalte; gefiltert wird beim Nachladen über die API
+
+#### Aus „Feedback Martin“
+
+- [ ] Verbindungs-Overlay: Das Icon bekommt unten rechts ein rotes, blinkendes X
+- [ ] Überwachen → Einstellungen: Werte ausgegraut (nur lesen) – laut Spec §2.7 vorgesehen, in der Oberfläche noch nicht wirksam
+- [ ] Modul Warten: Klick auf „Assets“ zeigt eine komplett leere Seite (beobachtet mit über 5.000 Assets)
+- [ ] Spinner erscheint nicht oder zu spät, obwohl Ladezeiten über 0,5 s auftreten
+- [ ] Modul-Log so hoch wie das Seitenpanel; zeigt nur Warnungen und Fehler (alles außer Info); ohne solche Einträge steht dort „Keine Vorkommnisse“
+- [ ] Proxy-Einstellungen: Schalter „Proxy verwenden“ (aus = mitgelieferter Proxy Caddy, an = externer Proxy; `[proxy] builtin` bleibt, die Oberfläche zeigt den umgekehrten Wert), Feld „Proxy“ (Adresse des externen Proxys, nur bei eingeschaltetem Schalter bearbeitbar, Platzhalter `0.0.0.0`); Hilfetexte unter Schalter und Feld entfallen
+- [ ] Server neu starten (nur Admins): Konsolenbefehl `restart` in `python run.py` und Schaltfläche „Server neu starten“ in den Einstellungen; die Datenbank läuft weiter, die Oberfläche zeigt während des Neustarts das Verbindungs-Overlay
 
 ### Release Worker-Client & Steuerung
 
@@ -159,6 +183,29 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
 - [ ] Quelle `Dieser Rechner` (Live-Listing über den ausgehenden Long-Poll des lokal erkannten Workers, abgesichert über `presence_token`; Admins dürfen zusätzlich beliebige Online-Worker wählen; Hinweis + Download-Link falls lokal kein Client läuft)
   - Offen: Verhalten, wenn der Worker gerade nicht antwortet (Zeitlimit 10 s, Meldungstext)
 
+### Release Modul-Builder (grob, Brainstorming folgt)
+
+Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee: die umfassende Abstraktion – aus atomaren Bausteinen entstehen Makro-Systeme
+
+- [ ] Module in der Oberfläche bauen: Ein Modul besteht aus Code-Block, Eingang, Ausgängen, Stats und Settings im Seitenpanel
+- [ ] Freigabe beim Speichern: Module sind privat oder öffentlich; ändern dürfen nur Ersteller und Admin, öffentliche Module können andere nur benutzen
+- [ ] Standardmodule (heute Watchfolder, Warten, Kopieren, Verschieben, Umbenennen, Prioliste) gehören dem Admin und sind ab Werk öffentlich
+- [ ] Löst „Module sind immer für alle geteilt“ aus dem Release Zugang & Nutzer ab; Modulsperren je Nutzer und Konsistenzschutz Modul-/Workflow-Freigabe (aus Zugang & Nutzer zurückgestellt; frühere Fassung in der Git-Historie von `docs/spec.md`) werden hier neu gedacht
+- Offen (Brainstorming):
+  - Wer darf Module bauen – jeder Nutzer oder nur Admins? Der Code-Block läuft auf Workern mit Dateizugriff
+  - Sprache, Ausführung und Absicherung des Code-Blocks
+  - Wie werden Settings-Felder, Ausgänge und Stats im Builder beschrieben?
+  - Verhältnis zu den Modultypen unter `marathon/modules/` und Verteilung an die Worker (Bezug Auto-Update im Backlog)
+  - Versionen: Was passiert mit Workflows, wenn ein Modul geändert, privat gestellt oder gelöscht wird?
+  - Wird ein Sub (Modul aus einem Teil-Workflow) eine Variante des Builders?
+- Aus dem bisherigen Sub-Konzept (zur Prüfung):
+  - Anlegen: Module im Workflow markieren → „Als Sub speichern“; Eingang, Erfolg, Fehler ergeben sich aus der Auswahl
+  - Freigegebene Optionen (z. B. QC-Preset) je Verwendung im Seitenpanel einstellbar
+  - Doppelklick betritt den Sub; Änderungen gelten nur für diese Instanz
+  - Vorlage ändern: Sub in leeren Workflow ziehen, auflösen, ändern, beim Speichern bestehenden Sub ersetzen
+  - Verwendende Workflows bekommen einen Update-Hinweis zum Übernehmen; Instanz-Einstellungen bleiben, sonst Warnung
+  - Offen: Was gilt bei einem Update, wenn die Instanz innen geändert wurde?
+
 ---
 
 ## Backlog
@@ -173,13 +220,6 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
 
 ### Module
 
-- [ ] Teilworkflows als Modul neben den Basis-Modulen, genannt Sub – zurückgestellt bis die Releases Zugang & Nutzer bis Lokale Watchfolder & Rechnerwechsel laufen
-  - Anlegen: Module im Workflow markieren → „Als Sub speichern“; Eingang, Erfolg, Fehler ergeben sich aus der Auswahl
-  - Freigegebene Optionen (z. B. QC-Preset) je Verwendung im Seitenpanel einstellbar
-  - Doppelklick betritt den Sub; Änderungen gelten nur für diese Instanz
-  - Vorlage ändern: Sub in leeren Workflow ziehen, auflösen, ändern, beim Speichern bestehenden Sub ersetzen
-  - Verwendende Workflows bekommen einen Update-Hinweis zum Übernehmen; Instanz-Einstellungen bleiben, sonst Warnung
-  - Offen: Was gilt bei einem Update, wenn die Instanz innen geändert wurde?
 - [ ] Modulpanel mit ausklappbaren Kategorien zur Sortierung
 - [ ] Watchfolder: ersetzte Datei – altes Asset beenden („Quelldatei kann nicht mehr zugeordnet werden“), neues Asset mit Hinweis auf die verlorene Vorgängerdatei
   - Offen: Welcher Status ist „beendet“ – Erledigt oder Fehlgeschlagen?
@@ -227,16 +267,3 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
   - Offen: Übernimmt der übergeordnete Server nur den Login oder auch mehrere Instanzen/Mandanten?
 - [ ] Öffentlicher Zugang aus dem Internet (HTTPS im LAN kommt mit Release HTTPS)
   - Offen: Übernimmt den Zugang von außen ein übergeordneter Server / Reverse-Proxy?
-
-### Feedback Martin
-- [ ] wenn Serververbindung verloren ist, kommt overlay - das Icon soll noch ein rotes blinkendes X unten rechts bekommen
-- [ ] Überwachen → Einstellungen: Werte ausgegraut - sollte schon umgesetzt sein, aber die Werte sind noch nicht ausgegraut
-- [ ] Modul Warten: wenn man auf Assets klickt, kommt eine komplett leere Seite - getestet mit langer Liste über 5k Assets
-- [ ] Spinner scheint noch zu fehlen oder zu spät zu kommen - hab ihn trotz Ladezeiten >0.5s noch nie gesehen
-- [ ] Modullog soll so hoch sein, wie Seitenpanel und doch nur warnungen und fehler beinhalten, alles außer Info - liegt nichts dergleichen vor, dann steht dort: keine Fehler, keine Warnungen, oder allgemein Keine Vorkommnisse
-- [ ] Idee: Modul-Builder: jedes Modul besteht aus Code-Block, Eingang, Ausgang, Stats, Settings im UI-Panel -- ersetzt Idee mit Subs
-- [ ] Mitgelieferten Proxy verwenden: umbenennen in "Proxy verwenden" und Tooltip unter Schalter entfernen, (ist die Option aus, gilt immer Caddy, ist die Option an, kann man IP Adresse von ext. Proxy eingeben), Adresse externer Proxy umbenennen in Proxy, Tooltip im Adressfeld 0.0.0.0, Tooltip unter Adressfeld entfernen
-- [ ] Server braucht einen "restart" Befehl - kann das aus um UI verfolgen (nur für Admins)?
-
-
-

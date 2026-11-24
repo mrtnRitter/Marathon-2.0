@@ -27,6 +27,7 @@ table_names = {
     "module_types", "workflows", "workflow_versions", "workflow_modules",
     "workflow_connections", "workers", "assets", "jobs", "job_assets",
     "asset_history", "log_lines", "watch_modules", "watch_files", "settings", "alembic_version",
+    "users", "auth_codes", "auth_failures", "auth_locks", "sessions", "workflow_shares",
 }
 
 
@@ -46,8 +47,8 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0009"
-    assert upgrade_database(db_engine) == "0009"
+    assert upgrade_database(db_engine) == "0010"
+    assert upgrade_database(db_engine) == "0010"
 
 
 def test_engine_columns_exist(db_engine):
@@ -103,7 +104,7 @@ def test_downgrade_0005(db_engine):
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM jobs WHERE id = 'job-downgrade'")).scalar_one() == "cancelled"
     assert "attempts" not in {column["name"] for column in inspect(db_engine).get_columns("assets")}
-    assert upgrade_database(db_engine) == "0009"
+    assert upgrade_database(db_engine) == "0010"
 
 
 def _migration_config(connection):
@@ -172,7 +173,7 @@ def test_worker_cleanup_migration_up_down_up(db_engine):
         assert defaults == {"priorities": {}, "max_parallel": 1, "client_slots": 1}
         command.upgrade(config, "head")
 
-    assert upgrade_database(db_engine) == "0009"
+    assert upgrade_database(db_engine) == "0010"
 
 
 def test_worker_release_migration_up_down_up(db_engine):
@@ -221,7 +222,7 @@ def test_worker_release_migration_up_down_up(db_engine):
                     {"job_id": job_id, "asset_id": extra_asset_id},
                 )
 
-    assert upgrade_database(db_engine) == "0009"
+    assert upgrade_database(db_engine) == "0010"
     with db_engine.begin() as connection:
         worker = connection.execute(
             text("SELECT skills, online FROM workers WHERE id = 'worker-offline'")
@@ -259,8 +260,115 @@ def test_worker_release_migration_up_down_up(db_engine):
     assert not {"skills", "online"} & {column["name"] for column in inspect(db_engine).get_columns("workers")}
     assert not {"outcome", "finished_at", "error"} & {column["name"] for column in inspect(db_engine).get_columns("job_assets")}
     assert "asset_id" not in {column["name"] for column in inspect(db_engine).get_columns("log_lines")}
-    assert upgrade_database(db_engine) == "0009"
+    assert upgrade_database(db_engine) == "0010"
     assert "settings" in inspect(db_engine).get_table_names()
+
+
+
+def test_0010_users_schema(db_engine):
+    assert {"users", "auth_codes", "auth_failures", "auth_locks", "sessions", "workflow_shares"} <= set(
+        inspect(db_engine).get_table_names()
+    )
+    assert "owner_user_id" in {column["name"] for column in inspect(db_engine).get_columns("workflows")}
+
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO users (id, email, role) VALUES ('user-invalid', 'invalid@example.test', 'x')"
+            ))
+
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, role) VALUES ('user-schema', 'schema@example.test', 'user')"))
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-schema', 'Schema')"))
+
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO workflow_shares (workflow_id, user_id, access) "
+                "VALUES ('wf-schema', 'user-schema', 'own')"
+            ))
+
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO users (id, email, role) VALUES ('user-duplicate', 'schema@example.test', 'user')"
+            ))
+
+
+def test_0010_users_delete_cascades(db_engine):
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, role) VALUES ('user-cascade', 'cascade@example.test', 'user')"))
+        connection.execute(text(
+            "INSERT INTO workflows (id, name, owner_user_id) VALUES ('wf-cascade', 'Cascade', 'user-cascade')"
+        ))
+        connection.execute(text(
+            "INSERT INTO workflow_shares (workflow_id, user_id, access) VALUES ('wf-cascade', 'user-cascade', 'run')"
+        ))
+        connection.execute(text(
+            "INSERT INTO sessions (id, user_id, token_hash, expires_at) "
+            "VALUES ('session-cascade', 'user-cascade', 'hash-cascade', now() + interval '1 hour')"
+        ))
+        connection.execute(text("DELETE FROM users WHERE id = 'user-cascade'"))
+        assert connection.execute(text(
+            "SELECT owner_user_id FROM workflows WHERE id = 'wf-cascade'"
+        )).scalar_one() is None
+        assert connection.execute(text(
+            "SELECT count(*) FROM workflow_shares WHERE user_id = 'user-cascade'"
+        )).scalar_one() == 0
+        assert connection.execute(text(
+            "SELECT count(*) FROM sessions WHERE user_id = 'user-cascade'"
+        )).scalar_one() == 0
+
+
+def test_0010_users_live_trigger(db_engine):
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, role) VALUES ('user-live', 'live@example.test', 'user')"))
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-live', 'Live')"))
+
+    raw_connection = db_engine.raw_connection()
+    driver_connection = raw_connection.driver_connection
+    try:
+        driver_connection.execute("LISTEN marathon_changes")
+        driver_connection.commit()
+
+        with db_engine.begin() as connection:
+            connection.execute(text("UPDATE users SET display_name = 'Live User' WHERE id = 'user-live'"))
+        user_notifications = list(driver_connection.notifies(timeout=1, stop_after=1))
+        assert [notification.payload for notification in user_notifications] == ["users"]
+
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO workflow_shares (workflow_id, user_id, access) "
+                "VALUES ('wf-live', 'user-live', 'view')"
+            ))
+        share_notifications = list(driver_connection.notifies(timeout=1, stop_after=1))
+        assert [notification.payload for notification in share_notifications] == ["workflow_shares"]
+
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO sessions (id, user_id, token_hash, expires_at) "
+                "VALUES ('session-live', 'user-live', 'hash-live', now() + interval '1 hour')"
+            ))
+        assert list(driver_connection.notifies(timeout=0.2, stop_after=1)) == []
+    finally:
+        raw_connection.close()
+
+
+def test_0010_users_downgrade(db_engine):
+    from alembic import command
+
+    with db_engine.begin() as connection:
+        config = _migration_config(connection)
+        command.downgrade(config, "0009")
+        assert not {
+            "users", "auth_codes", "auth_failures", "auth_locks", "sessions", "workflow_shares"
+        } & set(inspect(connection).get_table_names())
+        assert "owner_user_id" not in {
+            column["name"] for column in inspect(connection).get_columns("workflows")
+        }
+        command.upgrade(config, "head")
+
+    assert upgrade_database(db_engine) == "0010"
 
 
 def test_ensure_database_creates_then_reuses(db_config):
@@ -344,7 +452,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0009" in captured.out
+    assert "Revision 0010" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 
@@ -426,7 +534,7 @@ def test_schedule_waiting_migration_up_down_up_preserves_data_rules(db_engine):
             ("legacy-waiting", False, False),
         ]
         command.upgrade(config, "head")
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0009"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0010"
 
 
 def test_schedule_constraints(db_engine):

@@ -7,7 +7,7 @@ Bezeichner im Code englisch (`snake_case`), Texte für Nutzer deutsch und wörtl
 - **Teil 1** hält die entschiedenen Architektur-Grundsätze fest.
 - **Teil 2** beschreibt den **bereits umgesetzten** Systemvertrag für Kern, Engine und Worker-Steuerung (Stand Migration `0009`, Worker-Protokoll 2; Abnahme offen).
 - **Teil 2a** beschreibt den Vertrag für den Release *HTTPS* (keine Migration, Worker-Protokoll unverändert).
-- **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Migration `0010`, Worker-Protokoll 3; noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
+- **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Zugang & Nutzer: Migration `0010_users`, Worker-Protokoll unverändert; übrige Releases: eigene Migrationen, Worker-Protokoll 3; noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
 
 ---
 
@@ -388,13 +388,13 @@ class WorkerSupervisor:
   - Worker-Datensatz: `id`, `name`, `status`, `online`, `capabilities`, `skills`, `running_jobs`, `client_version`, `last_seen` (`COALESCE(last_seen, created_at)`), `ip_address`.
 - **Einstellungen (`GET/PUT /api/v1/settings`):**
   - Form: `{"folder_dialog": {"server_address": str}}` (fehlt der Datensatz: `""`). Validierung: leer oder `^[A-Za-z0-9._-]{1,253}$`, sonst 422 „Server-Adresse: nur Rechnername oder IP-Adresse, z. B. 10.0.77.11“. Upsert mit `updated_at`.
-  - Einstellungsseite zeigt nur echte Einstellungen (Abschnitt „Ordner-Dialog“, Feld „Server-Adresse“, Meldung „Gespeichert“). *(Erweiterung um `auth.allowed_domains` in Teil 3.)*
+  - Einstellungsseite zeigt nur echte Einstellungen (Abschnitt „Ordner-Dialog“, Feld „Server-Adresse“, Meldung „Gespeichert“). *(Erweiterung um `auth.allowed_domains` in Teil 3, §3.3.)*
   - Ordner-Dialog: Umschalter „Laufwerke“ | „Server“ (`\\<Server-Adresse>`, aktiv solange Pfad mit `\\` beginnt; ohne Adresse: „Keine Server-Adresse eingestellt (Einstellungen)“). *(Ausbau zum `FileBrowserDialog` in Teil 3.)*
 - **Oberfläche & Überwachen:**
   - Job-Status: `assigned` „zugeteilt“, `running` „läuft“, `cancelling` „wird abgebrochen“, `interrupted` „unterbrochen“.
   - *Wird pausiert*: Status-Badge „Wird pausiert“, Play/Pause-Buttons gesperrt; bei Dauer > 1 s Hinweis „Workflow wird gerade pausiert“.
   - Zähler „erledigt“ je Modul = Anzahl `job_assets` von Jobs dieses Moduls mit `outcome 'result'` und `output_id IS DISTINCT FROM 'error'`. Warten-Modul zeigt aktuell „läuft“, „erledigt“, „Fehler“ *(Spalte „wartet“ kommt in Teil 3 zurück)*.
-  - Modul-Log (Reiter „Logs“): neueste 500 Einträge des Moduls (inkl. Jobs), aufsteigend nach Zeit: Zeit, Stufe, Asset (Name oder –), Worker (Name oder –), Text.
+  - Modul-Log (Reiter „Logs“): neueste 500 Einträge des Moduls (inkl. Jobs) außer Stufe Info, also nur Warnungen und Fehler, aufsteigend nach Zeit: Zeit, Stufe, Asset (Name oder –), Worker (Name oder –), Text. Ohne solche Einträge: „Keine Vorkommnisse“. Die Liste ist so hoch wie das Seitenpanel. *(Release Zugang & Nutzer)*
   - Asset-Zeitleiste: Ausgang je Asset aus `job_assets.output_id`.
   - Prioliste: Menüpunkt „Bearbeiten“. Überwachen → Einstellungen: Werte ausgegraut (nur lesen). Verbindungslinien beginnen/enden am äußeren Rand der Kreise, auch beim Ziehen.
   - Worker-Seite: Starten/Stoppen in Liste und Kopfleiste, Status/Verbindung/Fähigkeiten/Jobs/Client-Version/Zuletzt gesehen, Kacheln (bereit, Wird gestoppt, gestoppt, offline), Bearbeiten (Name + sortierbare Fähigkeiten-Liste mit Hilfetext „Weiter oben = höhere Priorität. Nicht in der Liste = übernimmt diesen Modultyp nicht.“), „Version ausrollen“ weiterhin „Noch nicht verfügbar“.
@@ -459,8 +459,8 @@ trusted_proxies = []                    # IP-Adressen externer Reverse-Proxys; b
 - **API** `GET/PUT /api/v1/settings`: `{ "folder_dialog": { "server_address": "" }, "proxy": { "public_url": "https://laptop-martin-r", "builtin": true, "trusted_proxies": [] } }`. `PUT` verlangt beide Abschnitte, prüft alle Werte vor dem Speichern und antwortet mit den gespeicherten (normalisierten) Werten; Prüffehler `422` mit `detail` = Fehlertext, nichts wird gespeichert. Ohne Eintrag liefert `GET` die Standardwerte.
 - **Oberfläche** (Einstellungen, Abschnitt „Proxy & HTTPS“ nach „Ordner-Dialog“):
   - „Öffentliche Adresse“ (Platzhalter `https://laptop-martin-r`; Hilfe „Adresse, unter der Marathon erreichbar ist (nur https://, ohne Pfad)“)
-  - Schalter „Mitgelieferten Proxy verwenden“ (Hilfe „Aus: Ein externer Reverse-Proxy übernimmt HTTPS“)
-  - „Adressen externer Proxys“ (Platzhalter `z. B. 10.0.77.20`; Hilfe „IP-Adressen, durch Komma getrennt; der mitgelieferte Proxy gilt automatisch“)
+  - Schalter „Proxy verwenden“ ohne Hilfetext: aus = mitgelieferter Proxy (Caddy), an = externer Reverse-Proxy; zeigt den umgekehrten Wert von `builtin`
+  - „Proxy“ ohne Hilfetext: IP-Adressen externer Proxys, durch Komma getrennt (Platzhalter `0.0.0.0`); nur bei eingeschaltetem Schalter bearbeitbar
   - Hinweis „Änderungen in diesem Abschnitt gelten nach einem Neustart des Servers.“
 
 ## 2a.3 Weiterleitungsangaben und Umleitung
@@ -494,7 +494,7 @@ Gilt für jede HTTP-Anfrage an Marathon, sobald der Server seine Proxy-Einstellu
 
 ---
 
-# Teil 3: Geplante Releases – Infrastruktur (geplant, Migration `0010`, Protokoll 3)
+# Teil 3: Geplante Releases – Infrastruktur (geplant)
 
 Verbindlicher Architektur- und Umsetzungsvertrag (v2: User und Worker strikt getrennt) für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel*. Wo dieser Teil Regeln aus Teil 2 erweitert oder ersetzt, gilt mit Umsetzung des jeweiligen Releases Teil 3. Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt.
 
@@ -505,12 +505,12 @@ Verbindlicher Architektur- und Umsetzungsvertrag (v2: User und Worker strikt get
 admin_emails = []                      # Break-Glass-Admins (immer Admin, in UI nicht herabstufbar/löschbar)
 allowed_domains = []                   # Startwert für erlaubte Mail-Domains (danach gilt DB-Einstellung)
 session_days = 180                     # Sliding-Expiration-Dauer einer Nutzer-Session in Tagen (1–365)
-magic_link_ttl_minutes = 15            # Gültigkeit von Login-Link und Einmalcode in Minuten (1–60)
+code_ttl_minutes = 15                  # Gültigkeit des Anmeldecodes in Minuten (1–60)
 
 [smtp]
-host = ""                              # SMTP-Server (leer = Mailversand nicht konfiguriert)
+host = ""                              # SMTP-Server (leer = Mailversand nicht eingerichtet)
 port = 587                             # 1–65535
-username = ""                          # Optionaler Login-Name
+username = ""                          # Anmeldename; leer = ohne Anmeldung (z. B. Microsoft 365 Direct Send)
 use_tls = true                         # STARTTLS aktivieren
 from_address = ""                      # Absenderadresse, z. B. marathon@looks.film
 from_name = "Marathon"                 # Anzeigename des Absenders
@@ -524,35 +524,39 @@ control_session_hours = 12             # Gültigkeit der lokalen Worker-Steuerun
 Regeln:
 - **Keine Zugangsdaten in `marathon.toml` oder im Code:** Das SMTP-Passwort wird ausschließlich aus der Umgebungsvariable `MARATHON_SMTP_PASSWORD` oder (Fallback) aus `.data/smtp.pass` (Dateirechte `0600` unter Linux) gelesen.
 - **Validierung beim Start:**
-  - `admin_emails` und `allowed_domains` werden auf Kleinbuchstaben normalisiert und auf gültige Syntax geprüft; ungültige Einträge liefern `ConfigError`.
-  - `session_days` (1–365), `magic_link_ttl_minutes` (1–60), `smtp.port` (1–65535), `worker_client.local_bridge_port` (1024–65535), `worker_client.control_session_hours` (1–168).
+  - `admin_emails` und `allowed_domains` werden getrimmt, mit `casefold()` normalisiert, auf gültige Syntax geprüft und ohne Doppelte übernommen (Reihenfolge bleibt); ungültige Einträge liefern `ConfigError`. Bei `allowed_domains` wird ein führendes `@` entfernt.
+  - `session_days` (1–365), `code_ttl_minutes` (1–60), `smtp.port` (1–65535), `smtp.use_tls` Wahrheitswert, `smtp.from_address` leer oder gültige Adresse; `host` gesetzt, aber `from_address` leer → `ConfigError`. `[worker_client]` (Release Worker-Client): `local_bridge_port` (1024–65535), `control_session_hours` (1–168).
+- **Mailversand eingerichtet** heißt: `smtp.host` und `smtp.from_address` sind gesetzt.
 - **Seed (`marathon/server/db/seed.py`):**
   - `settings`: Schlüssel `auth.allowed_domains` wird beim Start mit `config.auth.allowed_domains` angelegt, sofern noch kein Eintrag existiert; danach gilt die Datenbank.
-  - `users`: Jede Adresse aus `config.auth.admin_emails` wird beim Start angelegt oder auf `role = 'admin', active = true` synchronisiert.
+  - `users`: Jede Adresse aus `config.auth.admin_emails` wird beim Start angelegt oder auf `role = 'admin'` synchronisiert.
 
-## 3.2 Datenbank (Migration `0010_infrastructure.py`)
+## 3.2 Datenbank
 
-Ausschließlich ergänzende Migration auf Basis von `0009_worker_cleanup.py`, mit vollständigem Downgrade.
+Ausschließlich ergänzende Migrationen mit vollständigem Downgrade.
 
-### Neue Tabellen
+### Migration `0010_users.py` (Release Zugang & Nutzer, auf Basis von `0009_worker_cleanup.py`)
 
 | Tabelle | Spalten & Constraints |
 |---|---|
-| `users` | `id TEXT PRIMARY KEY`, `email TEXT NOT NULL UNIQUE`, `display_name TEXT NOT NULL DEFAULT ''`, `role TEXT NOT NULL CHECK (role IN ('user','admin'))`, `active BOOLEAN NOT NULL DEFAULT true`, `external_subject TEXT NULL UNIQUE`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `last_login_at TIMESTAMPTZ NULL` |
-| `auth_tokens` | `id TEXT PRIMARY KEY`, `email TEXT NOT NULL`, `token_hash TEXT NOT NULL UNIQUE`, `code_hash TEXT NOT NULL`, `expires_at TIMESTAMPTZ NOT NULL`, `consumed_at TIMESTAMPTZ NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(email, expires_at)` |
+| `users` | `id TEXT PRIMARY KEY`, `email TEXT NOT NULL UNIQUE`, `display_name TEXT NOT NULL DEFAULT ''`, `role TEXT NOT NULL CHECK (role IN ('user','admin'))`, `external_subject TEXT NULL UNIQUE`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `last_login_at TIMESTAMPTZ NULL` |
+| `auth_codes` | `id TEXT PRIMARY KEY`, `email TEXT NOT NULL`, `code_hash TEXT NOT NULL`, `expires_at TIMESTAMPTZ NOT NULL`, `consumed_at TIMESTAMPTZ NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(email, created_at)` |
+| `auth_failures` | `id BIGSERIAL PRIMARY KEY`, `email TEXT NOT NULL`, `failed_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(email, failed_at)` |
+| `auth_locks` | `email TEXT PRIMARY KEY`, `locked_until TIMESTAMPTZ NOT NULL` |
 | `sessions` | `id TEXT PRIMARY KEY`, `user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE`, `token_hash TEXT NOT NULL UNIQUE`, `expires_at TIMESTAMPTZ NOT NULL`, `last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `user_agent TEXT NOT NULL DEFAULT ''`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(user_id)` |
-| `user_module_permissions` | `user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE`, `module_type TEXT NOT NULL`, `allowed BOOLEAN NOT NULL`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `PRIMARY KEY (user_id, module_type)` |
-| `workflow_shares` | `workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE`, `user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE`, `access TEXT NOT NULL CHECK (access IN ('view','edit'))`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `PRIMARY KEY (workflow_id, user_id)` |
+| `workflow_shares` | `workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE`, `user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE`, `access TEXT NOT NULL CHECK (access IN ('view','run','edit'))`, `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`, `PRIMARY KEY (workflow_id, user_id)` |
+| `workflows` (Erweiterung) | `owner_user_id TEXT NULL REFERENCES users(id) ON DELETE SET NULL` · Index `(owner_user_id)` |
+
+Die neuen Tabellen erhalten dieselben Live-Kanal-Trigger wie die bestehenden Tabellen (Migration `0006`), außer `auth_codes`, `auth_failures` und `sessions`.
+
+### Migration des Releases Worker-Client & Steuerung (Nummer bei Klärung)
+
+| Tabelle | Spalten & Constraints |
+|---|---|
 | `worker_ephemeral_tokens` | `token_hash TEXT PRIMARY KEY`, `worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE`, `purpose TEXT NOT NULL CHECK (purpose IN ('control_link','presence'))`, `expires_at TIMESTAMPTZ NOT NULL`, `consumed_at TIMESTAMPTZ NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(worker_id, expires_at)` |
 | `worker_control_sessions` | `id TEXT PRIMARY KEY`, `worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE`, `token_hash TEXT NOT NULL UNIQUE`, `expires_at TIMESTAMPTZ NOT NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(worker_id)` |
-
-### Erweiterungen bestehender Tabellen
-
-| Tabelle | Änderung |
-|---|---|
-| `workflows` | `owner_user_id TEXT NULL REFERENCES users(id) ON DELETE SET NULL` · Index `(owner_user_id)` |
-| `workers` | `token_hash TEXT NULL UNIQUE`; `approved BOOLEAN NOT NULL DEFAULT true`; `availability_config JSONB NOT NULL DEFAULT '{}'`; `client_available BOOLEAN NOT NULL DEFAULT true`; `availability_reason TEXT NOT NULL DEFAULT ''`; `ck_workers_status` erweitern auf `('ready','draining','stopping','stopped')` |
-| `assets` | `locality_worker_id TEXT NULL REFERENCES workers(id) ON DELETE SET NULL` · Index `(locality_worker_id)` |
+| `workers` (Erweiterung) | `token_hash TEXT NULL UNIQUE`; `approved BOOLEAN NOT NULL DEFAULT true`; `availability_config JSONB NOT NULL DEFAULT '{}'`; `client_available BOOLEAN NOT NULL DEFAULT true`; `availability_reason TEXT NOT NULL DEFAULT ''`; `ck_workers_status` erweitern auf `('ready','draining','stopping','stopped')` |
+| `assets` (Erweiterung, Release Lokale Watchfolder) | `locality_worker_id TEXT NULL REFERENCES workers(id) ON DELETE SET NULL` · Index `(locality_worker_id)` |
 
 *(Bewusst **kein** `owner_user_id` auf `workers` – Worker gehören Rechnern, nicht Nutzerkonten.)*
 
@@ -560,72 +564,106 @@ Ausschließlich ergänzende Migration auf Basis von `0009_worker_cleanup.py`, mi
 
 ### Auth-Schnittstelle (Andockstelle fürs spätere Ökosystem)
 
-- `marathon/server/auth/provider.py` definiert eine klare Schnittstelle (`resolve_session`, `start_login`, `complete_login`).
-- Standard-Implementierung: `MagicLinkProvider`.
-- Durch `users.external_subject` und normalisierte `users.email` kann später ein OIDC- oder Reverse-Proxy-Header-Provider eingehängt werden, ohne `users`, `workflow_shares` oder `user_module_permissions` umzubauen.
+- `marathon/server/auth/provider.py` definiert die Schnittstelle `AuthProvider` (`resolve_session`, `start_login`, `complete_login`).
+- Standard-Implementierung: `EmailCodeProvider` (Anmeldung per Einmalcode, ohne Link).
+- Durch `users.external_subject` und normalisierte `users.email` kann später ein OIDC- oder Reverse-Proxy-Header-Provider eingehängt werden, ohne `users` oder `workflow_shares` umzubauen.
 
-### Magic-Link- & Code-Anmeldung (SafeLinks-sicher)
+### Mailversand (`marathon/server/mail.py`)
 
-1. **`POST /api/v1/auth/request-link`** mit `{ "email": "…" }`:
-   - E-Mail trimmen & `casefold()`.
-   - Prüfen: Existiert der Nutzer und ist `active = true`? Falls nein: Liegt die Domain exakt in `settings['auth.allowed_domains']` oder steht die Adresse in `config.auth.admin_emails`? Sonst `403` mit *„Diese E-Mail-Domain ist nicht freigegeben“*. Ist ein bestehendes Konto deaktiviert: `403` mit *„Dieses Konto ist deaktiviert“*.
-   - Erzeugt kryptografisch starken Token (`secrets.token_urlsafe(32)`) und 6-stelligen Zifferncode; speichert nur SHA-256-Hashes in `auth_tokens` (gültig für `magic_link_ttl_minutes`).
-   - Sendet E-Mail über den zentralen SMTP-Dienst mit Link `<public_url>/login/verify?token=<token>` **und** dem 6-stelligen Code.
-   - Rate-Limit: max. 5 Anfragen pro E-Mail / 15 Minuten.
-2. **`GET /api/v1/auth/verify?token=<token>`**:
-   - Prüft ausschließlich, ob der Token existiert, nicht abgelaufen und nicht verbraucht ist. **Verbraucht den Token nicht** (Schutz gegen automatische Firmen-Linkscanner).
-3. **`POST /api/v1/auth/confirm`** mit `{ "token": "…" }` **oder** `{ "email": "…", "code": "123456" }`:
-   - Konsumiert den Eintrag atomar (`UPDATE auth_tokens SET consumed_at = now() WHERE … AND consumed_at IS NULL AND expires_at > now()`).
-   - Existiert kein `users`-Eintrag, wird er jetzt angelegt (`role = 'admin'` wenn in `admin_emails`, sonst `'user'`).
-   - Erstellt Session in `sessions`, setzt Cookie `marathon_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure`, `Max-Age = session_days * 86400`).
-4. **Sliding Expiration:** Bei authentifizierten Anfragen wird `sessions.expires_at` automatisch verlängert, sobald weniger als 80 % der Laufzeit übrig sind (und das Cookie im Response aufgefrischt).
-5. **`POST /api/v1/auth/logout`**, **`GET /api/v1/auth/me`**: Session serverseitig löschen bzw. aktuellen Nutzer inkl. Rolle und erlaubter Modultypen liefern.
+- SMTP über die Python-Standardbibliothek (`smtplib`, `email.message`), keine neue Abhängigkeit; Zeitlimit 10 s je Versand (Verbindung, STARTTLS, Anmeldung, Senden).
+- Passwort ausschließlich aus `MARATHON_SMTP_PASSWORD`, sonst aus `.data/smtp.pass` (Leerraum am Ende entfernt); nur nötig, wenn `smtp.username` gesetzt ist. Fehlt es dann: Fehler „SMTP-Passwort fehlt (MARATHON_SMTP_PASSWORD oder .data/smtp.pass)“. Passwort und Code erscheinen nie in Logs oder Fehlermeldungen.
+- Prüfbefehl `python run.py mail-test <adresse>`: sendet Betreff „Marathon: Testmail“, Text „Der Mailversand von Marathon funktioniert.“; Erfolg „Testmail an <adresse> gesendet“ (Exit-Code 0), sonst „Fehler: Testmail nicht gesendet: <Grund>“ (Exit-Code 1); ohne eingerichteten Mailversand „Fehler: Mailversand ist nicht eingerichtet ([smtp] host und from_address in config/marathon.toml)“.
+- Anmelde-Mail: Betreff „<code> ist Dein Marathon-Code“, Text „Dein Anmeldecode für Marathon: <code>\n\nDer Code gilt <code_ttl_minutes> Minuten. Falls Du keine Anmeldung angefordert hast, ignoriere diese E-Mail.“
+
+### Anmeldung per Einmalcode
+
+Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freigegeben ist.
+
+1. **`GET /api/v1/auth/status`** (ohne Anmeldung) → `{ "mail_configured": bool }`. Ist der Mailversand nicht eingerichtet, zeigt die Anmeldeseite statt des Formulars „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“
+2. **`POST /api/v1/auth/request-code`** mit `{ "email": "…" }`:
+   - E-Mail trimmen & `casefold()`; ungültige Syntax → `422` „Bitte eine gültige E-Mail-Adresse eingeben“.
+   - Mailversand nicht eingerichtet → `503` mit dem Text aus Schritt 1.
+   - Adresse gesperrt (`auth_locks.locked_until > now()`) → `429` „Zu viele falsche Codes. Die Anmeldung für diese Adresse ist vorübergehend gesperrt.“
+   - Mehr als 5 Einträge in `auth_codes` für diese Adresse in den letzten 15 Minuten → `429` „Zu viele Anfragen. Bitte in ein paar Minuten erneut versuchen.“
+   - Berechtigt ist die Adresse, wenn ein Konto existiert, die Domain **exakt** in `settings['auth.allowed_domains']` steht (Subdomains werden einzeln eingetragen) oder die Adresse in `config.auth.admin_emails` steht.
+   - Ältere, unverbrauchte Codes der Adresse werden ungültig (`consumed_at = now()`). Neuer 6-stelliger Zifferncode (`secrets.randbelow`), gespeichert nur als SHA-256 von `<email>:<code>` in `auth_codes`, gültig `code_ttl_minutes`. Für nicht berechtigte Adressen wird ebenfalls ein Eintrag angelegt, aber keine Mail gesendet (gleiches Verhalten bei Rate-Limit und Antwortzeit).
+   - Die Mail geht im Hintergrund raus (begrenzter Thread-Pool, Zeitlimit 10 s); die Antwort wartet nie auf den Versand. Fehler landen nur im Server-Log.
+   - Antwort immer `200` `{ "detail": "Falls die Adresse für Marathon freigegeben ist, ist eine E-Mail mit Code unterwegs. Keine E-Mail erhalten? Adresse prüfen oder an den Administrator wenden." }`.
+3. **`POST /api/v1/auth/confirm`** mit `{ "email": "…", "code": "123456" }`:
+   - Adresse gesperrt → `429` wie oben.
+   - Verbraucht den passenden Eintrag atomar (`UPDATE auth_codes SET consumed_at = now() WHERE email = … AND code_hash = … AND consumed_at IS NULL AND expires_at > now()`).
+   - Kein Treffer → Eintrag in `auth_failures`; liegen damit für die Adresse in den letzten 24 Stunden 3 Fehlversuche vor, wird sie für 24 Stunden gesperrt (`auth_locks.locked_until = now() + 24 h`, ihre `auth_failures` werden gelöscht) und die Antwort ist `429` wie oben; sonst `400` „Code ungültig oder abgelaufen“. Fehlversuche zählen für jede Adresse gleich, auch ohne Konto.
+   - Treffer: Existiert kein `users`-Eintrag, wird er jetzt angelegt (`role = 'admin'` wenn in `admin_emails`, sonst `'user'`); `last_login_at = now()`; `auth_failures` der Adresse werden gelöscht.
+   - Erstellt Session in `sessions` (Token `secrets.token_urlsafe(32)`, gespeichert als SHA-256), setzt Cookie `marathon_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure`, `Max-Age = session_days * 86400`); Antwort wie `GET /api/v1/auth/me`.
+4. **Sliding Expiration:** Bei authentifizierten Anfragen wird `sessions.expires_at` auf `now() + session_days` verlängert und das Cookie aufgefrischt, sobald weniger als 80 % der Laufzeit übrig sind; `last_seen_at` wird dabei mit aktualisiert.
+5. **`POST /api/v1/auth/logout`** (`204`, Session gelöscht, Cookie entfernt), **`GET /api/v1/auth/me`** → `{ "id", "email", "display_name", "role" }`, ohne gültige Session `401`.
+
+### Zugriffsschutz der API
+
+- Ohne gültige Session antworten alle Routen unter `/api/v1` mit `401` „Nicht angemeldet“, außer `GET /health`, `GET /auth/status`, `POST /auth/request-code`, `POST /auth/confirm` und der Worker-Schnittstelle `/worker/…` (Worker-Token). Der Live-Kanal `GET /events` verlangt ebenfalls eine Session.
+- Admin-Routen antworten normalen Nutzern mit `403` „Nur für Admins“.
+- Die Oberfläche (statische Dateien) ist ohne Anmeldung erreichbar; sie leitet bei `401` auf `/login` um.
 
 ### Break-Glass-Admin
 
 - Alle Adressen aus `config.auth.admin_emails` sind geschützte Bootstrap-Admins:
-  - In der UI sind Rolle und Aktiv-Status gesperrt (Hinweis *„In Konfiguration festgelegt“*).
-  - API lehnt Herabstufen/Deaktivieren geschützter Admins sowie des letzten aktiven Admins mit `409 Conflict` ab.
+  - In der UI ist ihre Rolle gesperrt und sie sind nicht löschbar (Hinweis *„In Konfiguration festgelegt“*).
+  - Die API lehnt Herabstufen oder Löschen geschützter Admins und des letzten Admins mit `409` ab: „In Konfiguration festgelegt“ bzw. „Der letzte Admin kann nicht herabgestuft oder gelöscht werden“.
 - **Lokaler CLI-Notfallzugang (ohne SMTP):**
-  - `python run.py admin-link <email>` (ruft `python -m marathon.server.auth admin-link <email>` auf).
-  - Erzeugt für einen aktiven Admin (oder eine Adresse aus `admin_emails`) einen 15-Minuten-Eintrag in `auth_tokens` und gibt den fertigen Link + 6-stelligen Code ausschließlich lokal auf stdout aus.
+  - `python run.py admin-code <email>` (ruft `python -m marathon.server.auth admin-code <email>` auf; die Datenbank muss laufen, also bei laufendem Server).
+  - Nur für bestehende Admins oder Adressen aus `admin_emails`, sonst „Fehler: <email> ist kein Admin“ (Exit-Code 1). Hebt eine Sperre der Adresse auf, erzeugt einen Code (Gültigkeit `code_ttl_minutes`) und gibt ausschließlich lokal aus: „Anmeldecode für <email>: <code> (gültig <n> Minuten)“.
 
-### Freigaben für Workflows und Module
+### Nutzerverwaltung (nur Admins, Seite „Nutzer“)
 
-**Modultyp-Freigaben**
-- Standard für normale Nutzer: **alle Modultypen freigegeben** (Opt-out über `user_module_permissions.allowed = false`).
-- Admins haben immer alle Modultypen freigegeben und können je Nutzer einzelne Modultypen sperren/freigeben (`PUT /api/v1/users/{user_id}/modules`).
-- Im Workflow-Editor zeigt die Modul-Palette nur für den Nutzer freigegebene Modultypen.
+- `GET /api/v1/users` → Liste `{ id, email, display_name, role, protected, created_at, last_login_at, session_count, locked_until }` (`locked_until` nur bei aktiver Sperre, sonst `null`).
+- `PUT /api/v1/users/{id}` mit `{ "role": "user" | "admin" }`.
+- `DELETE /api/v1/users/{id}`: löscht Konto und Sessions; Workflows des Nutzers sind danach ohne Eigentümer (nur für Admins sichtbar). Nicht möglich für den eigenen Account (`409` „Du kannst Dein eigenes Konto nicht löschen“), geschützte Admins und den letzten Admin. Mit freigegebener Domain kann sich die Adresse neu registrieren (neues, leeres Konto). Ein Deaktivieren gibt es nicht.
+- `GET /api/v1/users/{id}/sessions` → `{ id, user_agent, created_at, last_seen_at, expires_at, current }`; `DELETE /api/v1/users/{id}/sessions/{session_id}` und `DELETE /api/v1/users/{id}/sessions` (alle) widerrufen Sessions. Nur Admins widerrufen Sessions; Nutzer melden sich selbst nur ab.
+- `DELETE /api/v1/users/{id}/lock` hebt eine Sperre wegen falscher Codes auf.
+- `GET /api/v1/users/directory` (jeder angemeldete Nutzer) → `{ id, email, display_name }` aller Nutzer, für den Teilen-Dialog.
 
-**Workflow-Freigaben (`workflow_shares`)**
+### Erlaubte E-Mail-Domains (Einstellungen)
+
+- `GET/PUT /api/v1/settings` erhält den Abschnitt `"auth": { "allowed_domains": ["looks.film"] }`; `PUT` verlangt alle Abschnitte.
+- Prüfregel: Einträge getrimmt, `casefold()`, führendes `@` entfernt, Doppelte entfernt (Reihenfolge bleibt), jede Domain mit mindestens einem Punkt aus Labels `a–z 0–9 -` (1–63 Zeichen, nicht mit `-` beginnend oder endend), insgesamt höchstens 253 Zeichen. Fehler `422` „E-Mail-Domains: nur Domains ohne Adresse, z. B. looks.film“.
+- Vergleich exakt: `looks.film` erlaubt `max@looks.film`, nicht `max@berlin.looks.film`.
+- Die Liste gilt nur für neue Konten; bestehende Konten melden sich weiter an.
+- Oberfläche: Abschnitt „Anmeldung“, Feld „Erlaubte E-Mail-Domains“ (durch Komma getrennt, Platzhalter `z. B. looks.film`).
+
+### Workflow-Freigaben (`workflow_shares`)
+
+- Module sind bis zum Release Modul-Builder immer für alle Nutzer freigegeben; Modulsperren je Nutzer gibt es nicht.
+- Jeder Nutzer legt Workflows an; der Ersteller wird Eigentümer (`owner_user_id`). Duplizieren setzt voraus, dass der Nutzer den Workflow sehen darf; Eigentümer der Kopie ist der Nutzer.
 - Stufen je `(workflow_id, user_id)`:
-  - Kein Eintrag = **nicht geteilt** (kein Zugriff).
-  - `view` = **Teilen zur Ansicht**: Workflow, Module, Assets, Logs und Status ansehen; **kein** Bearbeiten, **kein** Speichern, **kein** Starten/Stoppen/Zeitplan ändern, **kein** erneutes Verarbeiten.
-  - `edit` = **Teilen zur Bearbeitung und Ausführung**: zusätzlich Bearbeiten, Speichern, Starten, Stoppen, Zeitplan, Assets erneut verarbeiten.
-- Eigentümer (`owner_user_id`) hat implizit `edit` (solange kein verwendetes Modul gesperrt wurde); Admins haben immer Vollzugriff und können Eigentümer/Freigaben verwalten.
-
-**Verbindliche Konsistenzregeln (Modul- × Workflow-Freigabe)**
-1. **Freigabeversuch auf `edit` (`PUT /api/v1/workflows/{id}/shares`):**
-   - Server ermittelt alle im Workflow verwendeten Modultypen und prüft sie gegen die gesperrten Modultypen des Zielnutzers.
-   - Ist mindestens ein Modultyp gesperrt → `409 Conflict` mit `detail`: *„Freigabe zur Bearbeitung nicht möglich: Für <Nutzer> sind folgende Module gesperrt: <Modulnamen>. Es ist nur die Freigabe zur Ansicht möglich.“* und `blocked_modules: [...]`.
-2. **Nachträgliche Modulsperrung (`effective_access`):**
-   - Effektive Stufe wird bei jedem API-Aufruf live berechnet: Hat ein Nutzer `edit` (oder Eigentümerschaft), enthält der Workflow aber einen für ihn gesperrten Modultyp, fällt die **effektive** Stufe automatisch auf `view` zurück (`effective_access = 'view'`, `downgraded_reason = 'blocked_modules'`, `blocked_modules = [...]`).
-   - UI zeigt ein klares Hinweisbanner und schaltet Editor/Steuerung auf schreibgeschützte Ansicht um. Wird das Modul später wieder freigegeben (oder aus dem Workflow entfernt), greift wieder `edit`.
-3. **Save-Guard bei laufender Bearbeitung (`PUT /api/v1/workflows/{id}`):**
-   - Beim Speichern prüft der Server sowohl die effektive Berechtigung am bestehenden Workflow **als auch** alle Modultypen im eingereichten neuen Graphen gegen die aktuellen Modulfreigaben des Nutzers.
-   - Ist mindestens ein Modultyp gesperrt → `403 Forbidden` mit *„Speichern nicht möglich: Folgende Module sind für Dich gesperrt: <Modulnamen>.“*; der Workflow bleibt unverändert.
-   - Ändert ein Admin Modulfreigaben eines Nutzers, sendet der Server das SSE-Event `permissions.changed` für diesen Nutzer, sodass geöffnete Editor-Ansichten sofort warnen.
+  - Kein Eintrag = **privat** (kein Zugriff).
+  - `view` = **Teilen zur Ansicht**: Workflow, Module, Assets, Logs und Status ansehen; kein Bearbeiten, Speichern, Starten, Stoppen, Zeitplan ändern oder erneutes Verarbeiten.
+  - `run` = **Teilen zur Ausführung**: zusätzlich Starten, Stoppen und Assets erneut verarbeiten; kein Bearbeiten, Speichern oder Zeitplan ändern.
+  - `edit` = **Teilen zur Bearbeitung und Ausführung**: zusätzlich Bearbeiten, Speichern und Zeitplan.
+- Eigentümer hat implizit `edit` und darf zusätzlich löschen und teilen. Admins haben immer Vollzugriff, sehen auch Workflows ohne Eigentümer und setzen Eigentümer.
+- Wirksame Stufe je Workflow `access`: `admin` | `owner` | `edit` | `run` | `view`; Workflows ohne Zugriff erscheinen nirgends (Listen, Dashboard, Assets, Reports) und antworten mit `404` „Workflow nicht gefunden“. Unzureichende Stufe → `403` „Keine Berechtigung für diesen Workflow“. Erneut verarbeiten in einen anderen Workflow verlangt dort ebenfalls mindestens `run`.
+- `GET /api/v1/workflows/{id}/shares` und `PUT /api/v1/workflows/{id}/shares` mit `{ "shares": [{ "user_id": "…", "access": "view" | "run" | "edit" }] }` (ersetzt alle Freigaben; nur Eigentümer und Admins; der Eigentümer selbst steht nicht in der Liste).
+- `PUT /api/v1/workflows/{id}/owner` mit `{ "user_id": "…" }` (nur Admins).
+- Workflow-Datensätze enthalten `owner` (`{ id, email, display_name }` oder `null`) und `access`.
 
 ### Rollen-Abgrenzung in Oberfläche, API & Live-Kanal
 
-- **Admin (eingeloggt):** Voller Zugriff auf alle Workflows, alle Worker (inkl. Server-Worker, Zulassung und Fähigkeiten-Rangliste), Servereinstellungen (`/settings`), Nutzer- und Modulfreigaben (`/users`).
+- **Admin (eingeloggt):** Voller Zugriff auf alle Workflows, alle Worker (inkl. Server-Worker, Zulassung und Fähigkeiten-Rangliste), Servereinstellungen (`/settings`), Nutzerverwaltung (`/users`) und Server-Neustart.
 - **Normaler Nutzer (eingeloggt):**
-  - Sieht keine Servereinstellungen (`/settings`), keine Nutzerverwaltung (`/users`) und keine Gesamtliste fremder Worker (entsprechende Admin-Routen liefern `403`).
-  - Sieht in Workflows/Dashboard/Reports/SSE-Events ausschließlich eigene und für ihn freigegebene Workflows.
-  - Sitzt er vor einem Rechner mit laufendem Worker-Client, kann er genau diesen lokalen Worker im Browser steuern (über Tray-Link oder den lokalen Worker-Link in der UI) und für lokale Workflows aktivieren.
-- **Person vor einem Worker OHNE Marathon-Login:**
+  - Menü ohne „Einstellungen“ und „Nutzer“; die Admin-Routen liefern `403`.
+  - Sieht in Workflows, Dashboard, Assets und Reports ausschließlich eigene und für ihn freigegebene Workflows.
+  - Sieht alle Worker nur lesend (keine Steuerung, kein Bearbeiten).
+  - Ordner-Dialog und Modul-Palette stehen ihm zur Verfügung.
+- **Live-Kanal:** Ereignisse enthalten nur die Namen geänderter Tabellen, keine Inhalte; die Oberfläche lädt daraufhin über die API, die nach Rechten filtert.
+- **Person vor einem Worker OHNE Marathon-Login** *(Release Worker-Client & Steuerung)*:
   - Öffnet per Doppelklick / Rechtsklick im Tray-Icon die dedizierte Steuerungsansicht `/worker-control` (abgesichert über das lokale `marathon_worker_control`-Cookie für genau diese `worker_id`).
   - Darf dort ausschließlich **diesen einen Worker** starten, stoppen (sanft), sofort stoppen und dessen Verfügbarkeitsregeln pflegen; sieht keine Workflows, keine Assets, keine Nutzer, keine Servereinstellungen und keine fremden Worker.
+  - Sitzt ein eingeloggter Nutzer vor einem Rechner mit laufendem Worker-Client, kann er genau diesen lokalen Worker im Browser steuern und für lokale Workflows aktivieren.
+
+### Server-Neustart (nur Admins)
+
+- Konsole von `python run.py` (auch `--dev`): `restart` und Enter beendet den Server sauber und startet ihn neu; Datenbank und Live-Vorschau laufen weiter. Ausgabe „Server wird neu gestartet …“.
+- `POST /api/v1/server/restart` → `202` `{ "detail": "Server wird neu gestartet" }`; der Server beendet sich sauber mit Exit-Code `75`, `run.py` startet ihn daraufhin neu. Jeder andere Exit-Code beendet `run.py` wie bisher.
+- Einstellungen: Schaltfläche „Server neu starten“ mit Bestätigung „Server jetzt neu starten? Laufende Jobs werden unterbrochen und neu verteilt.“; während des Neustarts zeigt die Oberfläche das Verbindungs-Overlay.
 
 ## 3.4 Worker-Client (Windows-Tray), Entkopplung & Verfügbarkeitsregeln
 
@@ -792,9 +830,9 @@ Ausbau des bestehenden `ui/src/components/FolderDialog.tsx` zu einer wiederverwe
 
 ## 3.7 Abnahmekriterien (Releases Zugang & Nutzer bis Lokale Watchfolder & Rechnerwechsel)
 
-- Login per Magic-Link (inkl. SafeLinks-Schutz per Bestätigungs-POST) und 6-stelligem Code funktioniert; Session überlebt Browser-Neustart und verlängert sich bei Aktivität.
-- Selbstregistrierung akzeptiert nur konfigurierte Domains; Break-Glass-Admin aus `marathon.toml` und CLI-Notfall-Link funktionieren auch ohne SMTP.
-- Workflow-Freigaben (`none`, `view`, `edit`) und Modulsperren greifen in UI, API und SSE-Live-Kanal; alle drei Konsistenzregeln (Sperre bei Freigabe, automatischer Rückfall auf `view`, Save-Guard `403` bei laufender Bearbeitung) sind durch Tests abgedeckt.
+- Login per 6-stelligem Code funktioniert; 3 falsche Codes in 24 h sperren die Adresse für 24 h; Antworten verraten nicht, ob ein Konto existiert; Session überlebt Browser-Neustart und verlängert sich bei Aktivität.
+- Selbstregistrierung akzeptiert nur exakt konfigurierte Domains; Break-Glass-Admin aus `marathon.toml` und CLI-Notfallcode funktionieren auch ohne SMTP.
+- Workflow-Freigaben (privat, `view`, `run`, `edit`) greifen in UI und API; Workflows ohne Zugriff erscheinen nirgends; Admins verwalten Nutzer, Sessions, Eigentümer und Freigaben.
 - Nutzerkonten und Worker sind vollständig entkoppelt: Eine Person vor einem Worker kann diesen über das Tray-Icon im Browser steuern (Starten, Stoppen/Drain, Sofort stoppen, Positiv-Verfügbarkeit) – ganz ohne Marathon-Nutzerkonto und ohne Zugriff auf fremde Worker.
 - Ein eingeloggter Nutzer kann einen Workflow mit lokalen Pfaden an Rechner 1 anlegen, zu Rechner 2 wechseln, per 1-Klick-Umschaltung dort aktivieren (inkl. Pfadprüfung) und laufen lassen; fremde Workstations lassen sich ohne lokalen Presence-Nachweis nicht browsen oder kapern.
 - Lokale Watchfolder binden Folgejobs per Sticky Locality bis zum ersten Netzwerkpfad und zeigen fehlende/abweichende/inaktive Worker mit direktem Link am Modul an.

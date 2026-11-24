@@ -26,11 +26,18 @@ class ProxyInput(BaseModel):
     trusted_proxies: list[str]
 
 
+class AuthInput(BaseModel):
+    """Authentication settings supplied by the client."""
+
+    allowed_domains: list[str]
+
+
 class SettingsInput(BaseModel):
     """Settings supplied by the client."""
 
     folder_dialog: FolderDialogInput
     proxy: ProxyInput
+    auth: AuthInput
 
 
 router = APIRouter(tags=["settings"])
@@ -54,6 +61,7 @@ def put_settings(payload: SettingsInput, engine: Engine = Depends(get_engine)) -
                 public_url=payload.proxy.public_url,
                 builtin=payload.proxy.builtin,
                 trusted_proxies=payload.proxy.trusted_proxies,
+                allowed_domains=payload.auth.allowed_domains,
             )
     except SettingsValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

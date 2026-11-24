@@ -9,7 +9,9 @@ from sqlalchemy import text
 
 from marathon.modules import load_catalog
 from marathon.server.app import create_app
+from marathon.server.config import domains_error
 from marathon.server.db.catalog_writes import sync_module_types
+from marathon.server.db.settings_writes import SettingsValidationError, save_settings
 
 
 # FIXTURES
@@ -46,6 +48,21 @@ def _save_watchfolder_settings(api_client, settings):
 
 
 # TESTS
+def test_save_settings_rejects_invalid_allowed_domain(db_engine):
+    with db_engine.begin() as connection:
+        with pytest.raises(SettingsValidationError) as error:
+            save_settings(
+                connection,
+                "",
+                public_url="https://localhost",
+                builtin=True,
+                trusted_proxies=[],
+                allowed_domains=["looks"],
+            )
+
+    assert str(error.value) == domains_error
+
+
 def test_saves_missing_path_with_issue(api_client):
     workflow_id, response = _save_watchfolder_settings(api_client, {"path": ""})
     assert response.status_code == 200, response.json()

@@ -14,6 +14,7 @@ export function SettingsPage() {
   const [public_url, set_public_url] = useState('')
   const [builtin, set_builtin] = useState(true)
   const [trusted_text, set_trusted_text] = useState('')
+  const [allowed_domains_text, set_allowed_domains_text] = useState('')
   const [loading, set_loading] = useState(true)
   const [saving, set_saving] = useState(false)
   const disabled = loading || saving
@@ -28,6 +29,7 @@ export function SettingsPage() {
           set_public_url(settings.proxy.public_url)
           set_builtin(settings.proxy.builtin)
           set_trusted_text(format_proxy_addresses(settings.proxy.trusted_proxies))
+          set_allowed_domains_text(format_proxy_addresses(settings.auth.allowed_domains))
         }
       } catch {
         // The request already reports errors.
@@ -45,11 +47,13 @@ export function SettingsPage() {
       const settings: Settings = await save_settings({
         folder_dialog: { server_address },
         proxy: { public_url, builtin, trusted_proxies: parse_proxy_addresses(trusted_text) },
+        auth: { allowed_domains: parse_proxy_addresses(allowed_domains_text) },
       })
       set_server_address(settings.folder_dialog.server_address)
       set_public_url(settings.proxy.public_url)
       set_builtin(settings.proxy.builtin)
       set_trusted_text(format_proxy_addresses(settings.proxy.trusted_proxies))
+      set_allowed_domains_text(format_proxy_addresses(settings.auth.allowed_domains))
       notify('Gespeichert')
     } catch {
       // The request already reports errors.
@@ -98,37 +102,51 @@ export function SettingsPage() {
                 </div>
               </div>
               <div className="form-field">
-                <label htmlFor="settings-proxy-builtin" className="form-field-label">Mitgelieferten Proxy verwenden</label>
+                <label htmlFor="settings-proxy-builtin" className="form-field-label">Proxy verwenden</label>
                 <div className="form-field-control">
                   <label className="form-switch">
                     <input
                       id="settings-proxy-builtin"
                       type="checkbox"
-                      checked={builtin}
+                      checked={!builtin}
                       disabled={disabled}
-                      onChange={event => set_builtin(event.target.checked)}
+                      onChange={event => set_builtin(!event.target.checked)}
                     />
                     <span className="form-switch-track" />
                   </label>
-                  <div className="form-field-help">Aus: Ein externer Reverse-Proxy übernimmt HTTPS</div>
                 </div>
               </div>
               <div className="form-field">
-                <label htmlFor="settings-trusted-proxies" className="form-field-label">Adressen externer Proxys</label>
+                <label htmlFor="settings-trusted-proxies" className="form-field-label">Proxy</label>
                 <div className="form-field-control">
                   <input
                     id="settings-trusted-proxies"
                     className="input"
                     type="text"
                     value={trusted_text}
-                    placeholder="z. B. 10.0.77.20"
-                    disabled={disabled}
+                    placeholder="0.0.0.0"
+                    disabled={disabled || builtin}
                     onChange={event => set_trusted_text(event.target.value)}
                   />
-                  <div className="form-field-help">IP-Adressen, durch Komma getrennt; der mitgelieferte Proxy gilt automatisch</div>
                 </div>
               </div>
               <div className="form-field-help">Änderungen in diesem Abschnitt gelten nach einem Neustart des Servers.</div>
+            </FormSection>
+            <FormSection title="Anmeldung">
+              <div className="form-field">
+                <label htmlFor="settings-allowed-domains" className="form-field-label">Erlaubte E-Mail-Domains</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-allowed-domains"
+                    className="input"
+                    type="text"
+                    value={allowed_domains_text}
+                    placeholder="z. B. looks.film"
+                    disabled={disabled}
+                    onChange={event => set_allowed_domains_text(event.target.value)}
+                  />
+                </div>
+              </div>
             </FormSection>
           </div>
         </div>

@@ -11,6 +11,7 @@ from sqlalchemy.engine import Connection
 from marathon.server.config import (
     ProxyConfig,
     check_proxy,
+    normalize_domains,
     normalize_public_url,
     normalize_trusted_proxies,
     trusted_proxies_error,
@@ -20,6 +21,7 @@ from marathon.server.config import (
 # CONFIG
 _setting_key = "folder_dialog.server_address"
 _proxy_setting_keys = ("proxy.public_url", "proxy.builtin", "proxy.trusted_proxies")
+_auth_setting_key = "auth.allowed_domains"
 _server_address_pattern = re.compile(r"^[A-Za-z0-9._-]{1,253}$")
 
 
@@ -54,11 +56,14 @@ def get_proxy_config(connection: Connection) -> ProxyConfig:
 
 
 def get_settings(connection: Connection) -> dict:
-    """Return the folder-dialog and proxy settings, using defaults when unset."""
+    """Return folder-dialog, proxy, and authentication settings, using defaults when unset."""
     server_address = connection.execute(
         text("SELECT value FROM settings WHERE key = :key"), {"key": _setting_key}
     ).scalar_one_or_none()
     proxy = get_proxy_config(connection)
+    allowed_domains = connection.execute(
+        text("SELECT value FROM settings WHERE key = :key"), {"key": _auth_setting_key}
+    ).scalar_one_or_none()
     return {
         "folder_dialog": {"server_address": server_address or ""},
         "proxy": {
@@ -66,6 +71,7 @@ def get_settings(connection: Connection) -> dict:
             "builtin": proxy.builtin,
             "trusted_proxies": list(proxy.trusted_proxies),
         },
+        "auth": {"allowed_domains": allowed_domains or []},
     }
 
 
@@ -76,8 +82,9 @@ def save_settings(
     public_url: str,
     builtin: bool,
     trusted_proxies: Sequence[str],
+    allowed_domains: Sequence[str] = (),
 ) -> dict:
-    """Validate and upsert folder-dialog and proxy settings."""
+    """Validate and upsert folder-dialog, proxy, and authentication settings."""
     server_address = server_address.strip()
     if server_address and not _server_address_pattern.fullmatch(server_address):
         raise SettingsValidationError(
@@ -96,12 +103,17 @@ def save_settings(
         check_proxy(builtin, trusted_proxies)
     except ValueError as error:
         raise SettingsValidationError(str(error)) from error
+    try:
+        allowed_domains = normalize_domains(list(allowed_domains))
+    except ValueError as error:
+        raise SettingsValidationError(str(error)) from error
 
     values = {
         _setting_key: server_address,
         _proxy_setting_keys[0]: public_url,
         _proxy_setting_keys[1]: builtin,
         _proxy_setting_keys[2]: list(trusted_proxies),
+        _auth_setting_key: list(allowed_domains),
     }
     statement = text(
         "INSERT INTO settings (key, value) VALUES (:key, :value) "
@@ -117,4 +129,5 @@ def save_settings(
             "builtin": builtin,
             "trusted_proxies": list(trusted_proxies),
         },
+        "auth": {"allowed_domains": list(allowed_domains)},
     }

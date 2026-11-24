@@ -17,6 +17,7 @@ import pytest
 
 import build
 import run
+import marathon.server.__main__ as server_main
 
 
 # FUNC
@@ -87,8 +88,8 @@ def test_main_orders_database_migration_server_and_stop(ready_runner, monkeypatc
     monkeypatch.setattr(run.subprocess, "run", fake_run)
     process = SimpleNamespace(args=["python", "-m", "marathon.server"], returncode=0)
     monkeypatch.setattr(run, "_start_child", lambda command, **kwargs: process)
-    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
-    monkeypatch.setattr(run, "_wait_child", lambda child, stop_event: calls.append("server") or 0)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event, restart_event=None: None)
+    monkeypatch.setattr(run, "_wait_child", lambda child, stop_event, restart_event=None: calls.append("server") or 0)
 
     assert run.main([]) == 0
     assert calls == ["status", "start", "upgrade", "server", "stop"]
@@ -105,13 +106,14 @@ def test_main_stops_database_after_server_keyboard_interrupt(ready_runner, monke
         raise KeyboardInterrupt
 
     monkeypatch.setattr(run.subprocess, "run", fake_run)
-    process = SimpleNamespace(args=["python", "-m", "marathon.server"], returncode=None)
+    process = FakeProcess(args=("python", "-m", "marathon.server"), signal_returncode=0)
     monkeypatch.setattr(run, "_start_child", lambda command, **kwargs: process)
-    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event, restart_event=None: None)
     monkeypatch.setattr(run, "_wait_child", interrupt_server)
 
     assert run.main([]) == 0
     assert calls == ["status", "start", "-m", "stop"]
+    assert process.signals == [signal.SIGINT]
 
 
 def test_main_cleans_database_if_start_is_interrupted(ready_runner, monkeypatch):
@@ -274,7 +276,7 @@ def test_dev_kills_unresponsive_server_then_stops_database(ready_runner, monkeyp
 
     monkeypatch.setattr(run.subprocess, "run", fake_run)
     monkeypatch.setattr(run, "_start_child", fake_start_child)
-    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event, restart_event=None: None)
 
     assert run.main(["--dev"]) == 0
     assert events == ["server-start", "vite-start", f"signal-{signal.SIGINT}", "wait-10", "kill", "wait-5", "db-stop"]
@@ -387,6 +389,193 @@ def watch_stream(stream):
     return stop_event
 
 
+def test_watch_console_restart():
+    stop_event = threading.Event()
+    restart_event = threading.Event()
+    thread = run._watch_console(stop_event, io.StringIO("restart\n"), restart_event)
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert restart_event.is_set()
+    assert not stop_event.is_set()
+
+
+def test_start_server_restarts_on_exit_75(monkeypatch, capsys):
+    processes = [FakeProcess(returncode=75), FakeProcess(returncode=0)]
+    starts = []
+    monkeypatch.setattr(run, "_start_child", lambda *args, **kwargs: starts.append(args[0]) or processes.pop(0))
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event, restart_event=None: None)
+
+    assert run.start_server(Path("python")) == 0
+    assert len(starts) == 2
+    assert "Server wird neu gestartet …" in capsys.readouterr().out
+
+
+def test_start_server_clears_restart_event_before_new_child(monkeypatch):
+    starts = []
+    processes = [FakeProcess(returncode=75), FakeProcess(returncode=0)]
+
+    def start_child(*args, **kwargs):
+        starts.append(args[0])
+        return processes.pop(0)
+
+    def request_restart(stop_event, restart_event=None):
+        restart_event.set()
+
+    monkeypatch.setattr(run, "_start_child", start_child)
+    monkeypatch.setattr(run, "_watch_console", request_restart)
+
+    assert run.start_server(Path("python")) == 0
+    assert len(starts) == 2
+
+
+def test_start_server_restart_command(monkeypatch, capsys):
+    events = {}
+    starts = []
+
+    class ExitsWithoutSignal(FakeProcess):
+        def wait(self, timeout=None):
+            self.wait_timeouts.append(timeout)
+            self.returncode = 9
+            return self.returncode
+
+    first = ExitsWithoutSignal()
+    second = FakeProcess(signal_returncode=0)
+
+    def start_child(*args, **kwargs):
+        process = first if not starts else second
+        starts.append(args[0])
+        if len(starts) == 2:
+            events["stop_event"].set()
+        return process
+
+    def watch_console(stop_event, restart_event=None):
+        events["stop_event"] = stop_event
+        restart_event.set()
+
+    monkeypatch.setattr(run, "_start_child", start_child)
+    monkeypatch.setattr(run, "_watch_console", watch_console)
+
+    assert run.start_server(Path("python")) == 0
+    assert len(starts) == 2
+    assert first.signals == [signal.SIGINT]
+    assert second.signals == [signal.SIGINT]
+    assert "Server wird neu gestartet …" in capsys.readouterr().out
+
+
+def test_stop_wins_over_restart(monkeypatch):
+    starts = []
+    monkeypatch.setattr(run, "_start_child", lambda *args, **kwargs: starts.append(args[0]) or FakeProcess(returncode=75))
+
+    def stop_and_restart(stop_event, restart_event=None):
+        stop_event.set()
+        restart_event.set()
+
+    monkeypatch.setattr(run, "_watch_console", stop_and_restart)
+
+    assert run.start_server(Path("python")) == 75
+    assert len(starts) == 1
+
+
+def test_start_server_restart_child_ignores_stop(monkeypatch, capsys):
+    events = {}
+    starts = []
+    first = FakeProcess()
+    second = FakeProcess(signal_returncode=0)
+    original_wait_child = run._wait_child
+
+    def start_child(*args, **kwargs):
+        process = first if not starts else second
+        starts.append(args[0])
+        if len(starts) == 2:
+            events["stop_event"].set()
+        return process
+
+    def watch_console(stop_event, restart_event=None):
+        events["stop_event"] = stop_event
+        restart_event.set()
+
+    def bounded_wait(process, stop_event, grace_s=10.0, restart_event=None):
+        if restart_event is None:
+            process.returncode = 75
+            return process.returncode
+        return original_wait_child(process, stop_event, grace_s=0.01, restart_event=restart_event)
+
+    monkeypatch.setattr(run, "_start_child", start_child)
+    monkeypatch.setattr(run, "_watch_console", watch_console)
+    monkeypatch.setattr(run, "_wait_child", bounded_wait)
+
+    assert run.start_server(Path("python")) == 0
+    assert len(starts) == 2
+    assert first.signals == [signal.SIGINT]
+    assert first.killed
+    assert "Server wird neu gestartet …" in capsys.readouterr().out
+
+
+def test_dev_restart_keeps_vite(ready_runner, monkeypatch, capsys):
+    events = {}
+    server_starts = []
+    vite_starts = []
+
+    class StopsOnPoll(FakeProcess):
+        def poll(self):
+            events["stop_event"].set()
+            return None
+
+    first_server = FakeProcess(args=("python", "-m", "marathon.server"), returncode=75)
+    second_server = StopsOnPoll(args=("python", "-m", "marathon.server"), signal_returncode=0)
+    vite = FakeProcess(args=("vite",))
+
+    def start_child(command, **kwargs):
+        if command[-1:] == ["marathon.server"]:
+            process = first_server if not server_starts else second_server
+            server_starts.append(command)
+            return process
+        vite_starts.append(command)
+        return vite
+
+    monkeypatch.setattr(run, "_start_child", start_child)
+    def watch_console(stop_event, restart_event=None):
+        events["stop_event"] = stop_event
+
+    monkeypatch.setattr(run, "_watch_console", watch_console)
+    monkeypatch.setattr(run, "node_env", lambda: {})
+    monkeypatch.setattr(run, "ui_command", lambda *args: ["vite"])
+
+    assert run.start_dev(ready_runner, Path("python")) == 0
+    assert len(server_starts) == 2
+    assert len(vite_starts) == 1
+    assert vite.returncode == -15
+    assert "Server wird neu gestartet …" in capsys.readouterr().out
+
+
+def test_main_returns_75_on_restart(tmp_path, monkeypatch):
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            shutdown_event=threading.Event(),
+            live_hub=SimpleNamespace(close_streams=lambda: None),
+        )
+    )
+    config = SimpleNamespace(host="127.0.0.1", port=8080, engine=None, server_worker=None)
+    static_dir = tmp_path / "static"
+    static_dir.mkdir()
+    (static_dir / "index.html").touch()
+    monkeypatch.setattr(server_main, "load_server_config", lambda: config)
+    monkeypatch.setattr(server_main, "default_static_dir", static_dir)
+    monkeypatch.setattr(server_main, "create_app", lambda **kwargs: app)
+
+    def request_restart(app, host, port):
+        app.state.request_restart = lambda: setattr(app.state, "restart_requested", True)
+        app.state.request_restart()
+
+    monkeypatch.setattr(server_main, "serve", request_restart)
+
+    assert server_main.main() == 75
+
+    monkeypatch.setattr(server_main, "serve", lambda app, host, port: None)
+    assert server_main.main() == 0
+
+
 def test_stop_command_requests_stop_once_and_returns_child_exit_code():
     stop_event = watch_stream(io.StringIO("stop\n"))
     process = FakeProcess(returncode=None, signal_returncode=23)
@@ -441,6 +630,22 @@ def test_keyboard_interrupt_requests_orderly_stop():
     assert process.signals == [signal.SIGINT]
 
 
+def test_start_server_stops_child_if_interrupted_before_wait(monkeypatch):
+    process = FakeProcess(signal_returncode=0)
+    starts = []
+
+    def watch_console(stop_event, restart_event=None):
+        restart_event.set()
+
+    monkeypatch.setattr(run, "_watch_console", watch_console)
+    monkeypatch.setattr(run, "_start_child", lambda *args, **kwargs: starts.append(args[0]) or process)
+    monkeypatch.setattr(run, "_wait_child", lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt))
+
+    assert run.start_server(Path("python")) == 0
+    assert len(starts) == 1
+    assert process.signals == [signal.SIGINT]
+
+
 @pytest.mark.parametrize("ended", ["server", "vite"])
 def test_dev_child_exit_stops_the_other_child(ready_runner, monkeypatch, capsys, ended):
     server = FakeProcess(args=("python", "-m", "marathon.server"), signal_returncode=0)
@@ -456,14 +661,14 @@ def test_dev_child_exit_stops_the_other_child(ready_runner, monkeypatch, capsys,
         return server if command[-1:] == ["marathon.server"] else vite
 
     monkeypatch.setattr(run, "_start_child", fake_start_child)
-    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event, restart_event=None: None)
     monkeypatch.setattr(run, "node_env", lambda: {})
     monkeypatch.setattr(run, "ui_command", lambda *args: ["vite"])
 
     assert run.start_dev(ready_runner, Path("python")) == expected_code
     assert server.returncode is not None
     assert vite.returncode is not None
-    assert "Beenden mit „stop“ und Enter" in capsys.readouterr().out
+    assert "Beenden mit „stop“, Neustart mit „restart“ und Enter" in capsys.readouterr().out
     assert server.signals == ([] if ended == "server" else [signal.SIGINT])
 
 
@@ -517,7 +722,7 @@ def test_main_stops_database_after_kill_wait_timeout(ready_runner, monkeypatch, 
             return completed()
         raise AssertionError(command)
 
-    def stop_console(stop_event, stream=None):
+    def stop_console(stop_event, stream=None, restart_event=None):
         stop_event.set()
         return None
 
@@ -590,7 +795,7 @@ def test_dev_keyboard_interrupt_stops_both_children(ready_runner, monkeypatch):
     server = FakeProcess(args=("python", "-m", "marathon.server"), signal_returncode=0)
     vite = FakeProcess(args=("vite",))
     monkeypatch.setattr(run, "_start_child", lambda command, **kwargs: server if command[-1:] == ["marathon.server"] else vite)
-    monkeypatch.setattr(run, "_watch_console", lambda stop_event: None)
+    monkeypatch.setattr(run, "_watch_console", lambda stop_event, restart_event=None: None)
     monkeypatch.setattr(run, "node_env", lambda: {})
     monkeypatch.setattr(run, "ui_command", lambda *args: ["vite"])
     monkeypatch.setattr(run, "_wait_for_dev_end", lambda *args: (_ for _ in ()).throw(KeyboardInterrupt))
@@ -662,3 +867,41 @@ def test_help_lists_trust_option(monkeypatch, capsys):
 
     assert error.value.code == 0
     assert "--trust" in capsys.readouterr().out
+
+
+def test_run_mail_test_calls_module(ready_runner, monkeypatch):
+    calls = []
+
+    def fake_run(command, *, timeout):
+        calls.append((command, timeout))
+        return completed(7)
+
+    monkeypatch.setattr(run, "_run_command", fake_run)
+    assert run.main(["mail-test", "max@example.test"]) == 7
+    assert calls == [([str(run.venv_python()), "-m", "marathon.server.mail", "test", "max@example.test"], 60)]
+
+def test_run_mail_test_requires_address(ready_runner, monkeypatch):
+    monkeypatch.setattr(run, "_run_command", lambda *args, **kwargs: pytest.fail("no subprocess expected"))
+    with pytest.raises(SystemExit) as caught:
+        run.main(["mail-test"])
+    assert caught.value.code == 2
+
+
+def test_run_admin_code_calls_module(ready_runner, monkeypatch):
+    calls = []
+
+    def fake_run(command, *, timeout):
+        calls.append((command, timeout))
+        return completed(7)
+
+    monkeypatch.setattr(run, "_run_command", fake_run)
+    assert run.main(["admin-code", "admin@example.test"]) == 7
+    assert calls == [([str(run.venv_python()), "-m", "marathon.server.auth", "admin-code", "admin@example.test"], 60)]
+
+
+def test_run_admin_code_requires_address(ready_runner, monkeypatch, capsys):
+    monkeypatch.setattr(run, "_run_command", lambda *args, **kwargs: pytest.fail("no subprocess expected"))
+    with pytest.raises(SystemExit) as caught:
+        run.main(["admin-code"])
+    assert caught.value.code == 2
+    assert "admin-code braucht eine E-Mail-Adresse" in capsys.readouterr().err

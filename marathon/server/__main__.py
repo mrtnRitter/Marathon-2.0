@@ -14,6 +14,9 @@ from marathon.server.scheduler import tick_interval_s
 from marathon.server.ui import default_static_dir
 
 
+restart_exit_code = 75
+
+
 # FUNC
 def _begin_shutdown(app: FastAPI) -> None:
     """Signal pending worker polls and close live streams."""
@@ -33,7 +36,16 @@ def serve(app: FastAPI, host: str, port: int) -> None:
         log_level="warning",
         timeout_graceful_shutdown=5,
     )
-    _LiveServer(config, lambda: _begin_shutdown(app)).run()
+    app.state.restart_requested = False
+    server = _LiveServer(config, lambda: _begin_shutdown(app))
+
+    def request_restart() -> None:
+        app.state.restart_requested = True
+        _begin_shutdown(app)
+        server.should_exit = True
+
+    app.state.request_restart = request_restart
+    server.run()
 
 
 class _LiveServer(uvicorn.Server):
@@ -70,9 +82,12 @@ def main() -> int:
         server_worker=config.server_worker,
         load_proxy=True,
         listen=(config.host, config.port),
+        auth_config=getattr(config, "auth", None),
+        smtp_config=getattr(config, "smtp", None),
     )
+    app.state.restart_requested = False
     serve(app, config.host, config.port)
-    return 0
+    return restart_exit_code if app.state.restart_requested else 0
 
 
 # EXEC

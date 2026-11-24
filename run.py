@@ -41,6 +41,8 @@ app_version = "2.0.0"
 
 setup_hint = "Zuerst python build.py ausführen."
 stop_command = "stop"
+restart_command = "restart"
+restart_exit_code = 75
 
 
 # FUNC
@@ -148,6 +150,26 @@ def _run_database_command(venv: Path, subcommand: str) -> None:
         raise BuildError(f"Datenbank-Unterbefehl fehlgeschlagen: {subcommand}")
 
 
+def _mail_test(address: str) -> int:
+    """Run the isolated SMTP diagnostic without starting local services."""
+    command = [str(venv_python()), "-m", "marathon.server.mail", "test", address]
+    try:
+        return _run_command(command, timeout=60).returncode
+    except BuildError as error:
+        print(f"Fehler: {error}", file=sys.stderr)
+        return 1
+
+
+def _admin_code(address: str) -> int:
+    """Run the emergency admin-code command without starting local services."""
+    command = [str(venv_python()), "-m", "marathon.server.auth", "admin-code", address]
+    try:
+        return _run_command(command, timeout=60).returncode
+    except BuildError as error:
+        print(f"Fehler: {error}", file=sys.stderr)
+        return 1
+
+
 def _force_stop_database() -> None:
     command = [str(pg_tool("pg_ctl")), "stop", "-D", str(pg_data_dir), "-m", "immediate", "-w", "-t", "30"]
     result = _run_command(command, timeout=20)
@@ -232,14 +254,21 @@ def _request_stop(process: subprocess.Popen) -> None:
             raise
 
 
-def _watch_console(stop_event: threading.Event, stream: TextIO = sys.stdin) -> threading.Thread:
-    """Watch console lines for the stop command without blocking process shutdown."""
+def _watch_console(
+    stop_event: threading.Event,
+    stream: TextIO = sys.stdin,
+    restart_event: threading.Event | None = None,
+) -> threading.Thread:
+    """Watch console lines for stop and optional restart commands."""
     def watch() -> None:
         try:
             while line := stream.readline():
-                if line.strip().casefold() == stop_command:
+                command = line.strip().casefold()
+                if command == stop_command:
                     stop_event.set()
                     return
+                if command == restart_command and restart_event is not None and not stop_event.is_set():
+                    restart_event.set()
         except Exception:
             return
 
@@ -268,14 +297,20 @@ def _wait_after_kill(process: subprocess.Popen, command_name: str) -> int:
                 raise BuildError(f"Zeitlimit beim Beenden des Servers überschritten: {command_name}")
 
 
-def _wait_child(process: subprocess.Popen, stop_event: threading.Event, grace_s: float = 10.0) -> int:
+def _wait_child(
+    process: subprocess.Popen,
+    stop_event: threading.Event,
+    grace_s: float = 10.0,
+    restart_event: threading.Event | None = None,
+) -> int:
     """Wait for a child, then stop it gracefully and bound forced cleanup."""
-    while not stop_event.is_set():
+    while not stop_event.is_set() and not (restart_event and restart_event.is_set()):
         try:
             return process.wait(timeout=0.2)
         except subprocess.TimeoutExpired:
             continue
         except KeyboardInterrupt:
+            stop_event.set()
             break
 
     if process.poll() is not None:
@@ -287,7 +322,7 @@ def _wait_child(process: subprocess.Popen, stop_event: threading.Event, grace_s:
     except subprocess.TimeoutExpired:
         pass
     except KeyboardInterrupt:
-        pass
+        stop_event.set()
 
     if process.poll() is not None:
         return process.wait(timeout=0)
@@ -332,16 +367,24 @@ def _finish_server(process: subprocess.Popen, command_name: str, request_stop: b
     _wait_after_kill(process, command_name)
 
 
-def _wait_for_dev_end(server: subprocess.Popen, vite: subprocess.Popen, stop_event: threading.Event) -> int | None:
+def _wait_for_dev_end(
+    server: subprocess.Popen,
+    vite: subprocess.Popen,
+    stop_event: threading.Event,
+    restart_event: threading.Event,
+) -> tuple[int | None, str]:
     while True:
         if stop_event.is_set():
-            return None
+            return _wait_child(server, stop_event, restart_event=restart_event), "stop"
         server_code = server.poll()
         if server_code is not None:
-            return server_code
+            return server_code, "server"
         vite_code = vite.poll()
         if vite_code is not None:
-            return vite_code
+            return vite_code, "vite"
+        if restart_event.is_set():
+            code = _wait_child(server, stop_event, restart_event=restart_event)
+            return code, "stop" if stop_event.is_set() else "restart"
         time.sleep(0.2)
 
 
@@ -350,12 +393,15 @@ def start_dev(config: ServerConfig, venv: Path) -> int:
     server_command = [str(venv), "-m", "marathon.server"]
     server = None
     vite = None
-    try:
+
+    def start_server_child() -> subprocess.Popen:
         try:
-            server = _start_child(server_command, cwd=root_dir)
+            return _start_child(server_command, cwd=root_dir)
         except OSError as error:
             raise BuildError(f"Server konnte nicht gestartet werden: {error}") from error
 
+    try:
+        server = start_server_child()
         api_url = _api_url(config.host, config.port)
         env = {**node_env(), "MARATHON_API_URL": api_url}
         try:
@@ -363,14 +409,26 @@ def start_dev(config: ServerConfig, venv: Path) -> int:
         except OSError as error:
             raise BuildError(f"Live-Vorschau konnte nicht gestartet werden: {error}") from error
 
-        print("Beenden mit „stop“ und Enter")
+        print("Beenden mit „stop“, Neustart mit „restart“ und Enter")
         stop_event = threading.Event()
-        _watch_console(stop_event)
+        restart_event = threading.Event()
+        _watch_console(stop_event, restart_event=restart_event)
         try:
-            exit_code = _wait_for_dev_end(server, vite, stop_event)
+            while True:
+                exit_code, reason = _wait_for_dev_end(server, vite, stop_event, restart_event)
+                if stop_event.is_set() or reason == "stop":
+                    return 0
+                if reason == "vite":
+                    return exit_code if exit_code is not None else 0
+                if restart_event.is_set() or exit_code == restart_exit_code:
+                    restart_event.clear()
+                    print("Server wird neu gestartet …")
+                    server = start_server_child()
+                    continue
+                return exit_code if exit_code is not None else 0
         except KeyboardInterrupt:
-            exit_code = None
-        return exit_code if exit_code is not None else 0
+            stop_event.set()
+            return 0
     finally:
         cleanup_error = None
         for process, name, request_stop in (
@@ -392,14 +450,29 @@ def start_dev(config: ServerConfig, venv: Path) -> int:
 def start_server(venv: Path) -> int:
     """Run the configured Marathon server in the foreground."""
     command = [str(venv), "-m", "marathon.server"]
-    try:
-        process = _start_child(command, cwd=root_dir)
-    except OSError as error:
-        raise BuildError(f"Server konnte nicht gestartet werden: {error}") from error
-    print("Beenden mit „stop“ und Enter")
     stop_event = threading.Event()
-    _watch_console(stop_event)
-    return _wait_child(process, stop_event)
+    restart_event = threading.Event()
+    print("Beenden mit „stop“, Neustart mit „restart“ und Enter")
+    _watch_console(stop_event, restart_event=restart_event)
+
+    while True:
+        try:
+            process = _start_child(command, cwd=root_dir)
+        except OSError as error:
+            raise BuildError(f"Server konnte nicht gestartet werden: {error}") from error
+        try:
+            exit_code = _wait_child(process, stop_event, restart_event=restart_event)
+        except KeyboardInterrupt:
+            stop_event.set()
+            _finish_server(process, Path(command[0]).name)
+            return 0
+        if stop_event.is_set():
+            return exit_code
+        if restart_event.is_set() or exit_code == restart_exit_code:
+            restart_event.clear()
+            print("Server wird neu gestartet …")
+            continue
+        return exit_code
 
 
 # MAIN
@@ -409,7 +482,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dev", action="store_true", help="Live-Vorschau der Oberfläche starten")
     parser.add_argument("--trust", action="store_true", help="Stammzertifikat des mitgelieferten Proxys für diesen Benutzer importieren")
+    parser.add_argument("command", nargs="?", choices=["mail-test", "admin-code"])
+    parser.add_argument("address", nargs="?")
     args = parser.parse_args(argv)
+    if args.command in ("mail-test", "admin-code"):
+        if not args.address:
+            parser.error(f"{args.command} braucht eine E-Mail-Adresse")
+        return _mail_test(args.address) if args.command == "mail-test" else _admin_code(args.address)
+    if args.address is not None:
+        parser.error("unrecognized arguments: " + args.address)
     if args.trust:
         return trust_certificate()
 
