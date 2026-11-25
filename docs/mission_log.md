@@ -293,3 +293,8 @@ Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee:
   - Erst nach Klärung des Mail-Wegs (SMTP, Graph API) und nach wichtigeren Releases
 - [ ] Öffentlicher Zugang aus dem Internet (HTTPS im LAN kommt mit Release HTTPS)
   - Offen: Übernimmt den Zugang von außen ein übergeordneter Server / Reverse-Proxy?
+
+### Änderungen Martin (diesen Bereich immer im Doc belassen!)
+- [ ] Reihenfolge linkes Seitenmenü -> System: Nutzer, Worker, Einstellungen -- Einstellungen immer als letztes, auch wenn noch weitere Optionen dazukommen
+- [ ] Tooltips sollen überall keine Internas preisgeben (IP Adressen, Domain, Server) - immer neutrale Tooltips verwenden
+- [ ] 
