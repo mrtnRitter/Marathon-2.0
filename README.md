@@ -37,48 +37,39 @@ Bereits erledigte Schritte werden übersprungen. `build.py` erneut ausführen na
 
 ### Mailversand einrichten
 
-Marathon verschickt die Anmelde-Mails (6-stelliger Code) über einen vorhandenen Mailserver per SMTP. Ohne Mailversand ist nur der Notfallzugang `python run.py admin-code <mail>` auf dem Server-Rechner möglich.
+Admins richten den SMTP-Versand für Anmelde-Mails unter **Einstellungen → Mailversand** ein. Dort stehen die Felder „SMTP-Server“, „Port“, „Benutzername“, „STARTTLS verwenden“, „Absenderadresse“, „Absendername“ und „Passwort“.
 
-1. Abschnitt `[smtp]` in `config/marathon.toml` ausfüllen (Beispiele unten).
-2. Verlangt der Mailserver eine Anmeldung: Passwort als Umgebungsvariable `MARATHON_SMTP_PASSWORD` setzen oder in die Datei `.data/smtp.pass` schreiben – nie in `marathon.toml`.
-3. Testmail senden: `python run.py mail-test <adresse>`.
-
-| Eintrag | Bedeutung | Standard |
-|---|---|---|
-| `[smtp] host` | SMTP-Server; leer = Mailversand nicht eingerichtet | `""` |
-| `[smtp] port` | Port (1–65535) | `587` |
-| `[smtp] username` | Anmeldename; leer = ohne Anmeldung | `""` |
-| `[smtp] use_tls` | Verbindung per STARTTLS verschlüsseln | `true` |
-| `[smtp] from_address` | Absenderadresse | `""` |
-| `[smtp] from_name` | Anzeigename des Absenders | `"Marathon"` |
+- Ein leerer „SMTP-Server“ schaltet den Mailversand aus.
+- Das Passwort ist nur beschreibbar: Ein leeres Passwortfeld lässt das gespeicherte Passwort unverändert. Ein eingegebenes Passwort wird lokal in `.data/smtp.pass` gespeichert, nie im Repo. Ist `MARATHON_SMTP_PASSWORD` gesetzt, hat diese Umgebungsvariable Vorrang vor der Datei.
+- Die Werte in `[smtp]` in `config/marathon.toml` sind nur Startwerte beim ersten Start; der Abschnitt darf leer bleiben. Danach gelten die Werte aus den Einstellungen.
+- Änderungen am Mailversand gelten ohne Neustart.
 
 **Microsoft 365 mit Dienstpostfach (Anmeldung mit Passwort):**
 
-```toml
-[smtp]
-host = "smtp.office365.com"
-port = 587
-username = "marathon@looks.film"
-use_tls = true
-from_address = "marathon@looks.film"
-from_name = "Marathon"
-```
+- SMTP-Server: `smtp.office365.com`
+- Port: `587`
+- Benutzername: `marathon@looks.film`
+- STARTTLS verwenden: an
+- Absenderadresse: `marathon@looks.film`
+- Absendername: `Marathon`
+- Passwort: Passwort des Dienstpostfachs
 
 Voraussetzung: Für das Postfach ist „Authentifiziertes SMTP“ eingeschaltet. Microsoft schaltet die Anmeldung mit Passwort für SMTP schrittweise ab; dann die Variante ohne Anmeldung nutzen.
 
 **Microsoft 365 ohne Anmeldung (Direct Send, nur an Adressen der eigenen Domains):**
 
-```toml
-[smtp]
-host = "looks-film.mail.protection.outlook.com"
-port = 25
-username = ""
-use_tls = true
-from_address = "marathon@looks.film"
-from_name = "Marathon"
-```
+- SMTP-Server: `looks-film.mail.protection.outlook.com`
+- Port: `25`
+- Benutzername: leer
+- STARTTLS verwenden: an
+- Absenderadresse: `marathon@looks.film`
+- Absendername: `Marathon`
 
 Voraussetzung: Der Server erreicht Port 25 nach außen, Direct Send ist im Tenant nicht gesperrt, und die öffentliche IP-Adresse des Standorts steht im SPF-Eintrag der Domain (sonst landen die Mails im Junk-Ordner).
+
+Testmail senden: `python run.py mail-test <adresse>`. Der Befehl startet die Datenbank bei Bedarf und stoppt sie danach wieder, wenn er sie selbst gestartet hat.
+
+Ohne Mailversand geht die erste Anmeldung lokal auf dem Server-Rechner per Notfallzugang: Während `python run.py` läuft, `admin-code <adresse>` und Enter eingeben. Alternativ `python run.py admin-code <adresse>` ausführen; auch dieser Einzelbefehl startet die Datenbank bei Bedarf und stoppt sie danach wieder.
 
 ## Starten
 
@@ -140,8 +131,9 @@ Oberfläche öffnen: http://127.0.0.1:5173
 | `python run.py --dev` | Datenbank, Server und Live-Vorschau starten |
 | `python run.py --trust` | Stammzertifikat des mitgelieferten Proxys für den angemeldeten Benutzer importieren (Windows); unter Linux Pfad und Vorgehen anzeigen |
 | `restart` + Enter (während `python run.py` läuft) | Server sauber neu starten; die Datenbank läuft weiter |
-| `python run.py mail-test <adresse>` | Testmail über den eingerichteten Mailversand senden |
-| `python run.py admin-code <mail>` | Notfall-Anmeldecode für einen Admin ausgeben (nur bei laufendem Server, ohne Mailversand) |
+| `admin-code <adresse>` + Enter (während `python run.py` läuft) | Notfall-Anmeldecode für einen Admin ausgeben (ohne Mailversand) |
+| `python run.py mail-test <adresse>` | Testmail senden; startet die Datenbank bei Bedarf und stoppt sie danach wieder, wenn dieser Befehl sie gestartet hat |
+| `python run.py admin-code <adresse>` | Notfall-Anmeldecode für einen Admin ausgeben; startet die Datenbank bei Bedarf und stoppt sie danach wieder, wenn dieser Befehl sie gestartet hat (ohne Mailversand) |
 | `python build.py --help` / `python run.py --help` | Hilfe anzeigen |
 
 ### Datenbank zurücksetzen
@@ -215,6 +207,13 @@ Die Seite „Einstellungen“ speichert in die Datenbank („Speichern“).
 | Proxy & HTTPS: Proxy verwenden | An: Ein externer Reverse-Proxy übernimmt HTTPS; aus: mitgelieferter Proxy | aus `[proxy] builtin` (umgekehrt) |
 | Proxy & HTTPS: Proxy | IP-Adressen externer Proxys, durch Komma getrennt | aus `[proxy] trusted_proxies` |
 | Anmeldung: Erlaubte E-Mail-Domains | Domains für die Selbstregistrierung, exakt (Subdomains einzeln eintragen), durch Komma getrennt | aus `[auth] allowed_domains` |
+| Mailversand: SMTP-Server | SMTP-Rechnername oder IP-Adresse; leer = Mailversand aus | aus `[smtp] host` |
+| Mailversand: Port | SMTP-Port (1–65535) | aus `[smtp] port` |
+| Mailversand: Benutzername | Anmeldename; leer = ohne Anmeldung | aus `[smtp] username` |
+| Mailversand: STARTTLS verwenden | SMTP-Verbindung per STARTTLS verschlüsseln | aus `[smtp] use_tls` |
+| Mailversand: Absenderadresse | Adresse, die als Absender verwendet wird | aus `[smtp] from_address` |
+| Mailversand: Absendername | Anzeigename des Absenders | aus `[smtp] from_name` |
+| Mailversand: Passwort | SMTP-Passwort; wird lokal gespeichert, nicht im Repo | `.data/smtp.pass` |
 
 Änderungen unter „Proxy & HTTPS“ gelten nach einem Neustart des Servers. Unter „Einstellungen“ → „Server“ startet die Schaltfläche „Server neu starten“ den Server neu.
 

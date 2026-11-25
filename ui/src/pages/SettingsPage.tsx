@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { FormSection } from '../components/FormField'
 import { PageHeader } from '../components/PageHeader'
 import { notify } from '../components/Toast'
-import { get_settings, restart_server, save_settings } from '../data/api'
-import type { Settings } from '../data/types'
+import { get_settings, get_smtp_settings, restart_server, save_settings, save_smtp_settings } from '../data/api'
+import type { Settings, SmtpSettingsInput } from '../data/types'
 import { format_proxy_addresses, parse_proxy_addresses } from '../lib/proxy_settings'
 import './SettingsPage.css'
 
@@ -15,6 +15,14 @@ export function SettingsPage() {
   const [builtin, set_builtin] = useState(true)
   const [trusted_text, set_trusted_text] = useState('')
   const [allowed_domains_text, set_allowed_domains_text] = useState('')
+  const [smtp_host, set_smtp_host] = useState('')
+  const [smtp_port, set_smtp_port] = useState(587)
+  const [smtp_username, set_smtp_username] = useState('')
+  const [smtp_use_tls, set_smtp_use_tls] = useState(true)
+  const [smtp_from_address, set_smtp_from_address] = useState('')
+  const [smtp_from_name, set_smtp_from_name] = useState('')
+  const [smtp_password, set_smtp_password] = useState('')
+  const [smtp_password_set, set_smtp_password_set] = useState(false)
   const [loading, set_loading] = useState(true)
   const [saving, set_saving] = useState(false)
   const disabled = loading || saving
@@ -23,13 +31,20 @@ export function SettingsPage() {
     let active = true
     const load_settings = async () => {
       try {
-        const settings = await get_settings()
+        const [settings, smtp_settings] = await Promise.all([get_settings(), get_smtp_settings()])
         if (active) {
           set_server_address(settings.folder_dialog.server_address)
           set_public_url(settings.proxy.public_url)
           set_builtin(settings.proxy.builtin)
           set_trusted_text(format_proxy_addresses(settings.proxy.trusted_proxies))
           set_allowed_domains_text(format_proxy_addresses(settings.auth.allowed_domains))
+          set_smtp_host(smtp_settings.host)
+          set_smtp_port(smtp_settings.port)
+          set_smtp_username(smtp_settings.username)
+          set_smtp_use_tls(smtp_settings.use_tls)
+          set_smtp_from_address(smtp_settings.from_address)
+          set_smtp_from_name(smtp_settings.from_name)
+          set_smtp_password_set(smtp_settings.password_set)
         }
       } catch {
         // The request already reports errors.
@@ -58,11 +73,28 @@ export function SettingsPage() {
         proxy: { public_url, builtin, trusted_proxies: parse_proxy_addresses(trusted_text) },
         auth: { allowed_domains: parse_proxy_addresses(allowed_domains_text) },
       })
+      const smtp_settings = await save_smtp_settings({
+        host: smtp_host,
+        port: smtp_port,
+        username: smtp_username,
+        use_tls: smtp_use_tls,
+        from_address: smtp_from_address,
+        from_name: smtp_from_name,
+        password: smtp_password === '' ? null : smtp_password,
+      } satisfies SmtpSettingsInput)
       set_server_address(settings.folder_dialog.server_address)
       set_public_url(settings.proxy.public_url)
       set_builtin(settings.proxy.builtin)
       set_trusted_text(format_proxy_addresses(settings.proxy.trusted_proxies))
       set_allowed_domains_text(format_proxy_addresses(settings.auth.allowed_domains))
+      set_smtp_host(smtp_settings.host)
+      set_smtp_port(smtp_settings.port)
+      set_smtp_username(smtp_settings.username)
+      set_smtp_use_tls(smtp_settings.use_tls)
+      set_smtp_from_address(smtp_settings.from_address)
+      set_smtp_from_name(smtp_settings.from_name)
+      set_smtp_password('')
+      set_smtp_password_set(smtp_settings.password_set)
       notify('Gespeichert')
     } catch {
       // The request already reports errors.
@@ -153,6 +185,106 @@ export function SettingsPage() {
                     placeholder="z. B. looks.film"
                     disabled={disabled}
                     onChange={event => set_allowed_domains_text(event.target.value)}
+                  />
+                </div>
+              </div>
+            </FormSection>
+            <FormSection title="Mailversand">
+              <div className="form-field">
+                <label htmlFor="settings-smtp-host" className="form-field-label">SMTP-Server</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-smtp-host"
+                    className="input"
+                    type="text"
+                    value={smtp_host}
+                    placeholder="z. B. smtp.office365.com"
+                    disabled={disabled}
+                    onChange={event => set_smtp_host(event.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="settings-smtp-port" className="form-field-label">Port</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-smtp-port"
+                    className="input"
+                    type="number"
+                    value={smtp_port}
+                    disabled={disabled}
+                    onChange={event => set_smtp_port(Number(event.target.value))}
+                  />
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="settings-smtp-username" className="form-field-label">Benutzername</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-smtp-username"
+                    className="input"
+                    type="text"
+                    value={smtp_username}
+                    placeholder="leer = ohne Anmeldung"
+                    disabled={disabled}
+                    onChange={event => set_smtp_username(event.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="settings-smtp-use-tls" className="form-field-label">STARTTLS verwenden</label>
+                <div className="form-field-control">
+                  <label className="form-switch">
+                    <input
+                      id="settings-smtp-use-tls"
+                      type="checkbox"
+                      checked={smtp_use_tls}
+                      disabled={disabled}
+                      onChange={event => set_smtp_use_tls(event.target.checked)}
+                    />
+                    <span className="form-switch-track" />
+                  </label>
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="settings-smtp-from-address" className="form-field-label">Absenderadresse</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-smtp-from-address"
+                    className="input"
+                    type="text"
+                    value={smtp_from_address}
+                    placeholder="z. B. marathon@looks.film"
+                    disabled={disabled}
+                    onChange={event => set_smtp_from_address(event.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="settings-smtp-from-name" className="form-field-label">Absendername</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-smtp-from-name"
+                    className="input"
+                    type="text"
+                    value={smtp_from_name}
+                    disabled={disabled}
+                    onChange={event => set_smtp_from_name(event.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="settings-smtp-password" className="form-field-label">Passwort</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-smtp-password"
+                    className="input"
+                    type="password"
+                    autoComplete="new-password"
+                    value={smtp_password}
+                    placeholder={smtp_password_set ? 'Gespeichert – leer lassen, um es beizubehalten' : 'Nicht gesetzt'}
+                    disabled={disabled}
+                    onChange={event => set_smtp_password(event.target.value)}
                   />
                 </div>
               </div>

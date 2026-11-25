@@ -182,15 +182,30 @@ def test_mail_sender_logs_failure_without_exception_details(caplog):
 
 
 def test_mail_main_test_command(tmp_path, monkeypatch, capsys):
+    from contextlib import nullcontext
+
     config_file = tmp_path / "marathon.toml"
     config_file.write_text(
-        '[smtp]\nhost = "smtp.example.test"\nfrom_address = "marathon@example.test"\n',
+        '[smtp]\nhost = "stale.example.test"\nfrom_address = "stale@example.test"\n',
         encoding="utf-8",
     )
+    database_smtp = smtp_config(host="database.example.test", from_address="database@example.test")
+
+    class FakeEngine:
+        def connect(self):
+            return nullcontext(object())
+
+        def dispose(self):
+            pass
+
+    monkeypatch.setattr(mail, "read_password", lambda path: "test-db-password", raising=False)
+    monkeypatch.setattr(mail, "create_db_engine", lambda database, password: FakeEngine())
+    monkeypatch.setattr(mail, "get_smtp_config", lambda connection: database_smtp)
     sent = []
     monkeypatch.setattr(mail, "send_mail", lambda config, address, subject, body: sent.append((config, address, subject, body)))
     assert mail.main(["test", "Max@Example.Test"], config_file=config_file) == 0
     assert capsys.readouterr().out.strip() == "Testmail an max@example.test gesendet"
+    assert sent[0][0] == database_smtp
     assert sent[0][1:] == (
         "max@example.test", "Marathon: Testmail", "Der Mailversand von Marathon funktioniert."
     )
@@ -202,3 +217,31 @@ def test_mail_main_test_command(tmp_path, monkeypatch, capsys):
     assert "Fehler: Testmail nicht gesendet:" in capsys.readouterr().err
     assert mail.main(["test", "keine-adresse"], config_file=config_file) == 2
     assert "Fehler: Bitte eine gültige E-Mail-Adresse eingeben" in capsys.readouterr().err
+
+
+def test_mail_main_passes_database_password(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+
+    config_file = tmp_path / "marathon.toml"
+    config_file.write_text('[database]\nport = 5544\n', encoding="utf-8")
+    database = mail.load_server_config(config_file).database
+    captured = {}
+
+    class FakeEngine:
+        def connect(self):
+            return nullcontext(object())
+
+        def dispose(self):
+            pass
+
+    monkeypatch.setattr(mail, "read_password", lambda path: "postgres-secret", raising=False)
+    monkeypatch.setattr(
+        mail,
+        "create_db_engine",
+        lambda config, password: captured.update(config=config, password=password) or FakeEngine(),
+    )
+    monkeypatch.setattr(mail, "get_smtp_config", lambda connection: smtp_config())
+    monkeypatch.setattr(mail, "send_mail", lambda *args, **kwargs: None)
+
+    assert mail.main(["test", "admin@example.test"], config_file=config_file) == 0
+    assert captured == {"config": database, "password": "postgres-secret"}

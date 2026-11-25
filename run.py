@@ -43,6 +43,9 @@ setup_hint = "Zuerst python build.py ausführen."
 stop_command = "stop"
 restart_command = "restart"
 restart_exit_code = 75
+console_admin_code_timeout_s = 30.0
+console_admin_code_poll_interval_s = 0.1
+console_admin_code_stop_timeout_s = 5.0
 
 
 # FUNC
@@ -109,14 +112,18 @@ def _api_url(host: str, port: int) -> str:
     return f"http://{api_host}:{port}"
 
 
-def start_database(config: ServerConfig) -> None:
-    """Start PostgreSQL when needed; a successful return transfers cleanup to the caller."""
+class _DatabaseStartInterrupted(KeyboardInterrupt):
+    """Signal that a one-shot database start may have launched PostgreSQL."""
+
+
+def start_database(config: ServerConfig) -> bool:
+    """Start PostgreSQL when needed and report whether this call started it."""
     pg_ctl = str(pg_tool("pg_ctl"))
     data_path = str(pg_data_dir)
     status = _run_command([pg_ctl, "status", "-D", data_path], timeout=15)
     if status.returncode == 0:
         print("Datenbank läuft bereits")
-        return
+        return False
 
     database_config = config.database
     command = [
@@ -125,11 +132,18 @@ def start_database(config: ServerConfig) -> None:
     ]
     try:
         result = _run_command(command, timeout=45)
+        if result.returncode:
+            raise BuildError("Datenbank startet nicht, Details in .data/postgres.log")
+        print(f"Datenbank läuft auf {database_config.host}:{database_config.port}")
+    except KeyboardInterrupt as error:
+        raise _DatabaseStartInterrupted from error
     except BuildError as error:
         if not isinstance(error.__cause__, subprocess.TimeoutExpired):
             raise
         try:
             status = _run_command([pg_ctl, "status", "-D", data_path], timeout=15)
+        except KeyboardInterrupt as interrupt:
+            raise _DatabaseStartInterrupted from interrupt
         except BuildError:
             raise error
         if status.returncode == 0:
@@ -138,9 +152,7 @@ def start_database(config: ServerConfig) -> None:
             except BuildError as stop_error:
                 raise BuildError(f"{error}; Bereinigung fehlgeschlagen: {stop_error}") from error
         raise
-    if result.returncode:
-        raise BuildError("Datenbank startet nicht, Details in .data/postgres.log")
-    print(f"Datenbank läuft auf {database_config.host}:{database_config.port}")
+    return True
 
 
 def _run_database_command(venv: Path, subcommand: str) -> None:
@@ -151,7 +163,7 @@ def _run_database_command(venv: Path, subcommand: str) -> None:
 
 
 def _mail_test(address: str) -> int:
-    """Run the isolated SMTP diagnostic without starting local services."""
+    """Run the SMTP diagnostic command."""
     command = [str(venv_python()), "-m", "marathon.server.mail", "test", address]
     try:
         return _run_command(command, timeout=60).returncode
@@ -161,7 +173,7 @@ def _mail_test(address: str) -> int:
 
 
 def _admin_code(address: str) -> int:
-    """Run the emergency admin-code command without starting local services."""
+    """Run the emergency admin-code command."""
     command = [str(venv_python()), "-m", "marathon.server.auth", "admin-code", address]
     try:
         return _run_command(command, timeout=60).returncode
@@ -254,21 +266,118 @@ def _request_stop(process: subprocess.Popen) -> None:
             raise
 
 
+class _ConsoleAdminCodeJobs:
+    """Run console admin-code subprocesses without blocking console control."""
+
+    def __init__(self) -> None:
+        self._cancel_event = threading.Event()
+        self._lock = threading.Lock()
+        self._processes: set[subprocess.Popen] = set()
+        self._threads: list[threading.Thread] = []
+
+    def start(self, address: str) -> None:
+        thread = threading.Thread(target=self._run, args=(address,), daemon=True)
+        with self._lock:
+            self._threads.append(thread)
+        thread.start()
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
+        with self._lock:
+            processes = tuple(self._processes)
+        for process in processes:
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+
+    def _stop_process(self, process: subprocess.Popen) -> None:
+        if process.poll() is not None:
+            return
+        try:
+            process.terminate()
+        except OSError:
+            if process.poll() is not None:
+                return
+            raise
+        try:
+            process.wait(timeout=console_admin_code_stop_timeout_s)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        try:
+            process.kill()
+        except OSError:
+            if process.poll() is not None:
+                return
+            raise
+        try:
+            process.wait(timeout=console_admin_code_stop_timeout_s)
+        except subprocess.TimeoutExpired:
+            return
+
+    def _run(self, address: str) -> None:
+        if self._cancel_event.is_set():
+            return
+        command = [str(venv_python()), "-m", "marathon.server.auth", "admin-code", address]
+        try:
+            process = subprocess.Popen(command, cwd=root_dir, stdin=subprocess.DEVNULL)
+        except OSError as error:
+            print(f"Fehler: admin-code konnte nicht gestartet werden ({error})", file=sys.stderr)
+            return
+
+        with self._lock:
+            self._processes.add(process)
+        try:
+            deadline = time.monotonic() + console_admin_code_timeout_s
+            while True:
+                if self._cancel_event.is_set():
+                    self._stop_process(process)
+                    return
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    print("Fehler: admin-code hat nicht rechtzeitig geantwortet")
+                    self._stop_process(process)
+                    return
+                try:
+                    process.wait(timeout=min(remaining, console_admin_code_poll_interval_s))
+                    return
+                except subprocess.TimeoutExpired:
+                    continue
+        finally:
+            with self._lock:
+                self._processes.discard(process)
+
+
 def _watch_console(
     stop_event: threading.Event,
     stream: TextIO = sys.stdin,
     restart_event: threading.Event | None = None,
 ) -> threading.Thread:
-    """Watch console lines for stop and optional restart commands."""
+    """Watch console lines for stop, restart, and asynchronous admin-code commands."""
+    admin_code_jobs = getattr(stop_event, "_admin_code_jobs", None)
+    if admin_code_jobs is None:
+        admin_code_jobs = _ConsoleAdminCodeJobs()
+        stop_event._admin_code_jobs = admin_code_jobs
+
     def watch() -> None:
         try:
             while line := stream.readline():
-                command = line.strip().casefold()
-                if command == stop_command:
+                normalized = line.strip().casefold()
+                if normalized == stop_command:
                     stop_event.set()
+                    admin_code_jobs.cancel()
                     return
-                if command == restart_command and restart_event is not None and not stop_event.is_set():
+                if normalized == restart_command and restart_event is not None and not stop_event.is_set():
                     restart_event.set()
+                    continue
+                parts = line.strip().split(maxsplit=1)
+                if parts and parts[0].casefold() == "admin-code":
+                    if len(parts) == 1 or not parts[1].strip():
+                        print("Fehler: Adresse fehlt (admin-code <adresse>)")
+                    else:
+                        admin_code_jobs.start(parts[1].strip())
         except Exception:
             return
 
@@ -393,6 +502,7 @@ def start_dev(config: ServerConfig, venv: Path) -> int:
     server_command = [str(venv), "-m", "marathon.server"]
     server = None
     vite = None
+    admin_code_jobs = None
 
     def start_server_child() -> subprocess.Popen:
         try:
@@ -411,6 +521,8 @@ def start_dev(config: ServerConfig, venv: Path) -> int:
 
         print("Beenden mit „stop“, Neustart mit „restart“ und Enter")
         stop_event = threading.Event()
+        admin_code_jobs = _ConsoleAdminCodeJobs()
+        stop_event._admin_code_jobs = admin_code_jobs
         restart_event = threading.Event()
         _watch_console(stop_event, restart_event=restart_event)
         try:
@@ -430,6 +542,8 @@ def start_dev(config: ServerConfig, venv: Path) -> int:
             stop_event.set()
             return 0
     finally:
+        if admin_code_jobs is not None:
+            admin_code_jobs.cancel()
         cleanup_error = None
         for process, name, request_stop in (
             (server, Path(server_command[0]).name, True),
@@ -451,28 +565,54 @@ def start_server(venv: Path) -> int:
     """Run the configured Marathon server in the foreground."""
     command = [str(venv), "-m", "marathon.server"]
     stop_event = threading.Event()
+    admin_code_jobs = _ConsoleAdminCodeJobs()
+    stop_event._admin_code_jobs = admin_code_jobs
     restart_event = threading.Event()
     print("Beenden mit „stop“, Neustart mit „restart“ und Enter")
     _watch_console(stop_event, restart_event=restart_event)
 
-    while True:
-        try:
-            process = _start_child(command, cwd=root_dir)
-        except OSError as error:
-            raise BuildError(f"Server konnte nicht gestartet werden: {error}") from error
-        try:
-            exit_code = _wait_child(process, stop_event, restart_event=restart_event)
-        except KeyboardInterrupt:
-            stop_event.set()
-            _finish_server(process, Path(command[0]).name)
-            return 0
-        if stop_event.is_set():
+    try:
+        while True:
+            try:
+                process = _start_child(command, cwd=root_dir)
+            except OSError as error:
+                raise BuildError(f"Server konnte nicht gestartet werden: {error}") from error
+            try:
+                exit_code = _wait_child(process, stop_event, restart_event=restart_event)
+            except KeyboardInterrupt:
+                stop_event.set()
+                _finish_server(process, Path(command[0]).name)
+                return 0
+            if stop_event.is_set():
+                return exit_code
+            if restart_event.is_set() or exit_code == restart_exit_code:
+                restart_event.clear()
+                print("Server wird neu gestartet …")
+                continue
             return exit_code
-        if restart_event.is_set() or exit_code == restart_exit_code:
-            restart_event.clear()
-            print("Server wird neu gestartet …")
-            continue
-        return exit_code
+    finally:
+        admin_code_jobs.cancel()
+
+
+def _run_single_database_command(command_runner, address: str) -> int:
+    """Run a one-shot command, owning database cleanup only when needed."""
+    database_started = False
+    try:
+        try:
+            config = load_server_config()
+        except ConfigError as error:
+            raise BuildError(str(error)) from error
+        try:
+            database_started = start_database(config)
+        except _DatabaseStartInterrupted:
+            database_started = True
+            raise
+        if database_started:
+            _run_database_command(venv_python(), "upgrade")
+        return command_runner(address)
+    finally:
+        if database_started:
+            stop_database()
 
 
 # MAIN
@@ -488,7 +628,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ("mail-test", "admin-code"):
         if not args.address:
             parser.error(f"{args.command} braucht eine E-Mail-Adresse")
-        return _mail_test(args.address) if args.command == "mail-test" else _admin_code(args.address)
+        command_runner = _mail_test if args.command == "mail-test" else _admin_code
+        try:
+            return _run_single_database_command(command_runner, args.address)
+        except KeyboardInterrupt:
+            return 0
+        except BuildError as error:
+            print(f"Fehler: {error}", file=sys.stderr)
+            return 1
     if args.address is not None:
         parser.error("unrecognized arguments: " + args.address)
     if args.trust:

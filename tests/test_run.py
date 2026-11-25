@@ -873,6 +873,8 @@ def test_run_mail_test_calls_module(ready_runner, monkeypatch):
     calls = []
 
     def fake_run(command, *, timeout):
+        if command[1:2] == ["status"]:
+            return completed(0)
         calls.append((command, timeout))
         return completed(7)
 
@@ -891,6 +893,8 @@ def test_run_admin_code_calls_module(ready_runner, monkeypatch):
     calls = []
 
     def fake_run(command, *, timeout):
+        if command[1:2] == ["status"]:
+            return completed(0)
         calls.append((command, timeout))
         return completed(7)
 
@@ -905,3 +909,254 @@ def test_run_admin_code_requires_address(ready_runner, monkeypatch, capsys):
         run.main(["admin-code"])
     assert caught.value.code == 2
     assert "admin-code braucht eine E-Mail-Adresse" in capsys.readouterr().err
+
+
+# ADMIN-CODE CONSOLE AND SINGLE-COMMAND TESTS
+class AdminCodeProcess:
+    def __init__(self, wait_action=None):
+        self.wait_action = wait_action
+        self.returncode = None
+        self.terminated = False
+        self.killed = False
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        if self.wait_action is not None:
+            return self.wait_action(self, timeout)
+        self.returncode = 0
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = -15
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+
+def test_console_admin_code_runs_command_and_inherits_output(monkeypatch, capsys):
+    process = AdminCodeProcess()
+    commands = []
+
+    def fake_popen(command, **kwargs):
+        commands.append((command, kwargs))
+        print("admin stdout")
+        print("admin stderr", file=sys.stderr)
+        return process
+
+    monkeypatch.setattr(run.subprocess, "Popen", fake_popen)
+    stop_event = threading.Event()
+    thread = run._watch_console(stop_event, io.StringIO("admin-code a@b.de\n"))
+    thread.join(timeout=1)
+    jobs = getattr(stop_event, "_admin_code_jobs")
+    assert jobs._threads[0].daemon is True
+    jobs._threads[0].join(timeout=1)
+
+    assert commands[0][0] == [
+        str(run.venv_python()), "-m", "marathon.server.auth", "admin-code", "a@b.de"
+    ]
+    assert "stdout" not in commands[0][1]
+    assert "stderr" not in commands[0][1]
+    captured = capsys.readouterr()
+    assert "admin stdout" in captured.out
+    assert "admin stderr" in captured.err
+
+
+def test_console_admin_code_without_address_prints_error(capsys):
+    stop_event = threading.Event()
+    thread = run._watch_console(stop_event, io.StringIO("admin-code\n"))
+    thread.join(timeout=1)
+
+    assert "Fehler: Adresse fehlt (admin-code <adresse>)" in capsys.readouterr().out
+
+
+def test_console_admin_code_timeout_keeps_accepting_stop(monkeypatch, capsys):
+    timed_out = threading.Event()
+    process = AdminCodeProcess()
+
+    def never_finishes(child, timeout):
+        raise subprocess.TimeoutExpired("admin-code", timeout)
+
+    process.wait_action = never_finishes
+    process.kill = lambda: (setattr(process, "killed", True), timed_out.set(), setattr(process, "returncode", -9))
+    monkeypatch.setattr(run, "console_admin_code_timeout_s", 0.01, raising=False)
+    monkeypatch.setattr(run.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    class TimeoutThenStop:
+        def __init__(self):
+            self.lines = iter(("admin-code a@b.de\n", "stop\n"))
+
+        def readline(self):
+            line = next(self.lines, "")
+            if line and line.startswith("stop") and not timed_out.wait(timeout=1):
+                return ""
+            return line
+
+    stop_event = threading.Event()
+    thread = run._watch_console(stop_event, TimeoutThenStop())
+    thread.join(timeout=2)
+    jobs = getattr(stop_event, "_admin_code_jobs")
+    jobs._threads[0].join(timeout=1)
+
+    assert not thread.is_alive()
+    assert stop_event.is_set()
+    assert "Fehler: admin-code hat nicht rechtzeitig geantwortet" in capsys.readouterr().out
+
+
+def test_stop_during_admin_code_terminates_process(monkeypatch):
+    started = threading.Event()
+    process = AdminCodeProcess(wait_action=lambda child, timeout: (_ for _ in ()).throw(
+        subprocess.TimeoutExpired("admin-code", timeout)
+    ))
+
+    def fake_popen(*args, **kwargs):
+        started.set()
+        return process
+
+    monkeypatch.setattr(run.subprocess, "Popen", fake_popen)
+
+    class AdminThenStop:
+        def __init__(self):
+            self.lines = iter(("admin-code a@b.de\n", "stop\n"))
+
+        def readline(self):
+            line = next(self.lines, "")
+            if line and line.startswith("stop") and not started.wait(timeout=1):
+                return ""
+            return line
+
+    stop_event = threading.Event()
+    thread = run._watch_console(stop_event, AdminThenStop())
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert stop_event.is_set()
+    jobs = getattr(stop_event, "_admin_code_jobs")
+    jobs._threads[0].join(timeout=1)
+    assert process.terminated
+
+
+def patch_single_command_database(monkeypatch, calls, status_code=1, start_code=0, command_code=0):
+    def fake_run(command, **kwargs):
+        action = command[1]
+        if action == "status":
+            calls.append("status")
+            return completed(status_code)
+        if action == "start":
+            calls.append("start")
+            return completed(start_code)
+        if action == "stop":
+            calls.append("stop")
+            return completed()
+        if command[1:4] == ["-m", "marathon.server.db", "upgrade"]:
+            calls.append("upgrade")
+            return completed()
+        if command[1:4] == ["-m", "marathon.server.auth", "admin-code"]:
+            calls.append("admin-code")
+            return completed(command_code)
+        if command[1:4] == ["-m", "marathon.server.mail", "test"]:
+            calls.append("mail-test")
+            return completed(command_code)
+        raise AssertionError(command)
+
+    monkeypatch.setattr(run.subprocess, "run", fake_run)
+
+
+def test_single_command_starts_upgrades_runs_and_stops_database(ready_runner, monkeypatch):
+    calls = []
+    patch_single_command_database(monkeypatch, calls)
+
+    assert run.main(["admin-code", "a@b.de"]) == 0
+    assert calls == ["status", "start", "upgrade", "admin-code", "stop"]
+
+
+def test_single_command_leaves_already_running_database_alone(ready_runner, monkeypatch):
+    calls = []
+    patch_single_command_database(monkeypatch, calls, status_code=0)
+
+    assert run.main(["mail-test", "a@b.de"]) == 0
+    assert calls == ["status", "mail-test"]
+
+
+def test_single_command_failure_still_stops_database_and_returns_command_code(ready_runner, monkeypatch):
+    calls = []
+    patch_single_command_database(monkeypatch, calls, command_code=7)
+
+    assert run.main(["admin-code", "a@b.de"]) == 7
+    assert calls == ["status", "start", "upgrade", "admin-code", "stop"]
+
+
+def test_single_command_database_start_failure_skips_command(ready_runner, monkeypatch, capsys):
+    calls = []
+    patch_single_command_database(monkeypatch, calls, start_code=1)
+
+    assert run.main(["admin-code", "a@b.de"]) == 1
+    assert calls == ["status", "start"]
+    assert "Datenbank startet nicht, Details in .data/postgres.log" in capsys.readouterr().err
+
+
+
+def test_single_command_keyboard_interrupt_still_stops_started_database(ready_runner, monkeypatch):
+    calls = []
+    patch_single_command_database(monkeypatch, calls)
+
+    def interrupt_command(address):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(run, "_admin_code", interrupt_command)
+
+    assert run.main(["admin-code", "a@b.de"]) == 0
+    assert calls == ["status", "start", "upgrade", "stop"]
+
+
+
+def test_restart_does_not_wait_for_admin_code(monkeypatch):
+    started = threading.Event()
+    process = AdminCodeProcess(wait_action=lambda child, timeout: (_ for _ in ()).throw(
+        subprocess.TimeoutExpired("admin-code", timeout)
+    ))
+
+    def fake_popen(*args, **kwargs):
+        started.set()
+        return process
+
+    monkeypatch.setattr(run.subprocess, "Popen", fake_popen)
+    stop_event = threading.Event()
+    restart_event = threading.Event()
+    thread = run._watch_console(
+        stop_event, io.StringIO("admin-code a@b.de\nrestart\n"), restart_event
+    )
+    thread.join(timeout=1)
+
+    assert not thread.is_alive()
+    assert restart_event.is_set()
+    assert started.wait(timeout=1)
+    jobs = getattr(stop_event, "_admin_code_jobs")
+    jobs.cancel()
+    jobs._threads[0].join(timeout=1)
+    assert process.terminated
+
+
+
+def test_single_command_keyboard_interrupt_during_database_start_cleans_up(ready_runner, monkeypatch):
+    calls = []
+
+    def interrupt_start(command, **kwargs):
+        if command[1] == "status":
+            calls.append("status")
+            return completed(1)
+        if command[1] == "start":
+            calls.append("start")
+            raise KeyboardInterrupt
+        if command[1] == "stop":
+            calls.append("stop")
+            return completed()
+        raise AssertionError(command)
+
+    monkeypatch.setattr(run.subprocess, "run", interrupt_start)
+
+    assert run.main(["admin-code", "a@b.de"]) == 0
+    assert calls == ["status", "start", "stop"]

@@ -13,6 +13,7 @@ from marathon.server.auth.codes import AuthError, neutral_text
 from marathon.server.auth.provider import EmailCodeProvider
 from marathon.server.auth.sessions import AuthUser, cookie_name, delete_session
 from marathon.server.config import AuthConfig, SmtpConfig
+from marathon.server.db.settings_writes import get_smtp_config
 from marathon.server.mail import MailSender, login_code_mail
 
 # CONFIG
@@ -57,15 +58,24 @@ def _user_payload(user: dict) -> dict[str, str]:
 
 # ROUTES
 @router.get("/auth/status")
-def auth_status(request: Request) -> dict[str, bool]:
-    return {"mail_configured": request.app.state.smtp_config.configured}
+def auth_status(request: Request, engine: Engine = Depends(get_engine)) -> dict[str, bool]:
+    try:
+        with engine.connect() as connection:
+            smtp = get_smtp_config(connection)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=mail_not_configured_text) from error
+    return {"mail_configured": smtp.configured}
 
 
 @router.post("/auth/request-code")
 def request_login_code(
     payload: EmailRequest, request: Request, engine: Engine = Depends(get_engine)
 ) -> dict[str, str]:
-    smtp = request.app.state.smtp_config
+    try:
+        with engine.connect() as connection:
+            smtp = get_smtp_config(connection)
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=mail_not_configured_text) from error
     if not smtp.configured:
         raise HTTPException(status_code=503, detail=mail_not_configured_text)
 

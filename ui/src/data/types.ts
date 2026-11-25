@@ -277,6 +277,20 @@ export interface Settings {
   auth: { allowed_domains: string[] }
 }
 
+export interface SmtpSettings {
+  host: string
+  port: number
+  username: string
+  use_tls: boolean
+  from_address: string
+  from_name: string
+  password_set: boolean
+}
+
+export interface SmtpSettingsInput extends Omit<SmtpSettings, 'password_set'> {
+  password: string | null
+}
+
 export interface WorkflowInput {
   name: string
   description: string

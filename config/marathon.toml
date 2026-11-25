@@ -33,6 +33,7 @@ allowed_domains = []   # Startwert für erlaubte E-Mail-Domains der Selbstregist
 session_days = 180     # Gültigkeit einer Anmeldung in Tagen, verlängert sich bei Nutzung (1–365)
 code_ttl_minutes = 15  # Gültigkeit des Anmeldecodes in Minuten (1–60)
 
+# Startwert beim ersten Start; danach Einstellungen → Mailversand (Datenbank)
 [smtp]
 host = ""              # SMTP-Server; leer = Mailversand nicht eingerichtet
 port = 587             # Port (1–65535)

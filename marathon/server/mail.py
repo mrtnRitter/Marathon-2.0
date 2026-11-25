@@ -7,6 +7,7 @@ import os
 import smtplib
 import ssl
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
@@ -14,22 +15,24 @@ from pathlib import Path
 from threading import Lock
 from typing import Mapping
 
+from marathon.server import config as server_config
 from marathon.server.config import (
     ConfigError,
     SmtpConfig,
-    data_dir,
     default_config_file,
     load_server_config,
     normalize_email,
+    pg_password_file,
 )
+from marathon.server.db.engine import create_db_engine, read_password
+from marathon.server.db.settings_writes import get_smtp_config
 
 # CONFIG
 app_name = "marathon-mail"
 app_version = "2.0.0"
 smtp_timeout_s = 10.0
 password_env = "MARATHON_SMTP_PASSWORD"
-password_file = data_dir / "smtp.pass"
-not_configured_error = "Mailversand ist nicht eingerichtet ([smtp] host und from_address in config/marathon.toml)"
+not_configured_error = "Mailversand ist nicht eingerichtet (Einstellungen → Mailversand)"
 
 
 # FUNC
@@ -37,15 +40,58 @@ class MailError(Exception):
     """An SMTP delivery failure safe to show without exposing credentials."""
 
 
-def read_smtp_password(env: Mapping[str, str] = os.environ, file: Path = password_file) -> str:
+def read_smtp_password(
+    env: Mapping[str, str] | None = None, file: Path | None = None
+) -> str:
     """Read the SMTP password from the environment first, then the local password file."""
+    env = os.environ if env is None else env
     value = env.get(password_env)
     if value is not None:
         return value
+    password_file = server_config.smtp_password_file if file is None else file
     try:
-        return file.read_text(encoding="utf-8").rstrip()
+        return password_file.read_text(encoding="utf-8").rstrip()
     except FileNotFoundError:
         return ""
+
+
+def smtp_password_is_set() -> bool:
+    """Return whether the environment or non-empty password file is configured."""
+    if password_env in os.environ:
+        return True
+    try:
+        return bool(server_config.smtp_password_file.read_text(encoding="utf-8").rstrip())
+    except OSError:
+        return False
+
+
+def write_smtp_password(password: str) -> None:
+    """Atomically replace the local password file, removing temporary files on failure."""
+    password_file = server_config.smtp_password_file
+    password_file.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=password_file.parent,
+            prefix=f".{password_file.name}.",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            if os.name == "posix":
+                os.fchmod(temporary_file.fileno(), 0o600)
+            temporary_file.write(password)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, password_file)
+    except BaseException:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def send_mail(
@@ -151,7 +197,17 @@ def main(argv: list[str] | None = None, config_file: Path = default_config_file)
         print(f"Fehler: {error}", file=sys.stderr)
         return 1
     try:
-        send_mail(config.smtp, address, "Marathon: Testmail", "Der Mailversand von Marathon funktioniert.")
+        engine = create_db_engine(config.database, read_password(pg_password_file))
+        try:
+            with engine.connect() as connection:
+                smtp = get_smtp_config(connection)
+        finally:
+            engine.dispose()
+    except Exception:
+        print("Fehler: SMTP-Einstellungen konnten nicht aus der Datenbank gelesen werden", file=sys.stderr)
+        return 1
+    try:
+        send_mail(smtp, address, "Marathon: Testmail", "Der Mailversand von Marathon funktioniert.")
     except MailError as error:
         if str(error) == not_configured_error:
             print(f"Fehler: {error}", file=sys.stderr)

@@ -1,6 +1,6 @@
 // Single data access point for all pages; talks to the server API.
 import { notify } from '../components/Toast'
-import type { Asset, AssetDetail, AssetStatus, AuthUser, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Settings, UserDirectoryEntry, UserRecord, UserSession, UserRole, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput, WorkflowShare, WorkflowShareAccess } from './types'
+import type { Asset, AssetDetail, AssetStatus, AuthUser, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Settings, SmtpSettings, SmtpSettingsInput, UserDirectoryEntry, UserRecord, UserSession, UserRole, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput, WorkflowShare, WorkflowShareAccess } from './types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -162,6 +162,12 @@ export const get_settings = (): Promise<Settings> => request<Settings>('/setting
 
 export const save_settings = (input: Settings): Promise<Settings> =>
   request<Settings>('/settings', { method: 'PUT', body: input }).then(data => data!)
+
+export const get_smtp_settings = (): Promise<SmtpSettings> =>
+  request<SmtpSettings>('/settings/smtp').then(data => data!)
+
+export const save_smtp_settings = (input: SmtpSettingsInput): Promise<SmtpSettings> =>
+  request<SmtpSettings>('/settings/smtp', { method: 'PUT', body: input }).then(data => data!)
 
 export const get_dashboard = (): Promise<DashboardData> => request<DashboardData>('/dashboard').then(data => data!)
 

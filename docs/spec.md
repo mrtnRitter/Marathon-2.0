@@ -508,7 +508,7 @@ session_days = 180                     # Sliding-Expiration-Dauer einer Nutzer-S
 code_ttl_minutes = 15                  # Gültigkeit des Anmeldecodes in Minuten (1–60)
 
 [smtp]
-host = ""                              # SMTP-Server (leer = Mailversand nicht eingerichtet)
+host = ""                              # Startwert; danach Einstellungen → Mailversand (Datenbank); leer = Mailversand nicht eingerichtet
 port = 587                             # 1–65535
 username = ""                          # Anmeldename; leer = ohne Anmeldung (z. B. Microsoft 365 Direct Send)
 use_tls = true                         # STARTTLS aktivieren
@@ -529,6 +529,7 @@ Regeln:
 - **Mailversand eingerichtet** heißt: `smtp.host` und `smtp.from_address` sind gesetzt.
 - **Seed (`marathon/server/db/seed.py`):**
   - `settings`: Schlüssel `auth.allowed_domains` wird beim Start mit `config.auth.allowed_domains` angelegt, sofern noch kein Eintrag existiert; danach gilt die Datenbank.
+  - `settings`: Schlüssel `smtp` wird beim Start mit den Werten aus `[smtp]` in `config/marathon.toml` angelegt, aber nur, wenn der Eintrag noch fehlt; danach gilt die Datenbank und Änderungen erfolgen unter Einstellungen → Mailversand.
   - `users`: Jede Adresse aus `config.auth.admin_emails` wird beim Start angelegt oder auf `role = 'admin'` synchronisiert.
 
 ## 3.2 Datenbank
@@ -571,8 +572,12 @@ Die neuen Tabellen erhalten dieselben Live-Kanal-Trigger wie die bestehenden Tab
 ### Mailversand (`marathon/server/mail.py`)
 
 - SMTP über die Python-Standardbibliothek (`smtplib`, `email.message`), keine neue Abhängigkeit; Zeitlimit 10 s je Versand (Verbindung, STARTTLS, Anmeldung, Senden).
-- Passwort ausschließlich aus `MARATHON_SMTP_PASSWORD`, sonst aus `.data/smtp.pass` (Leerraum am Ende entfernt); nur nötig, wenn `smtp.username` gesetzt ist. Fehlt es dann: Fehler „SMTP-Passwort fehlt (MARATHON_SMTP_PASSWORD oder .data/smtp.pass)“. Passwort und Code erscheinen nie in Logs oder Fehlermeldungen.
-- Prüfbefehl `python run.py mail-test <adresse>`: sendet Betreff „Marathon: Testmail“, Text „Der Mailversand von Marathon funktioniert.“; Erfolg „Testmail an <adresse> gesendet“ (Exit-Code 0), sonst „Fehler: Testmail nicht gesendet: <Grund>“ (Exit-Code 1); ohne eingerichteten Mailversand „Fehler: Mailversand ist nicht eingerichtet ([smtp] host und from_address in config/marathon.toml)“.
+- SMTP-Einstellungen werden in `settings` unter dem Schlüssel `smtp` gespeichert. Die Werte aus `[smtp]` in `config/marathon.toml` sind nur Startwerte beim ersten Start; danach gelten die Datenbankwerte. Ein leerer `host` bedeutet, dass der Mailversand nicht eingerichtet ist. Einstellungsänderungen gelten ohne Neustart.
+- Nur Admins dürfen `GET /api/v1/settings/smtp` und `PUT /api/v1/settings/smtp` verwenden. GET und erfolgreiche PUT antworten mit `{host, port, username, use_tls, from_address, from_name, password_set}`; das Passwort selbst wird nie zurückgegeben.
+- PUT akzeptiert `{host, port, username, use_tls, from_address, from_name, password}`. `password: null` lässt das gespeicherte Passwort unverändert; ein nichtleeres Passwort wird atomar nach `.data/smtp.pass` geschrieben (Dateirechte `0600` unter Linux). Die UI sendet bei leerem Passwortfeld `null`. `MARATHON_SMTP_PASSWORD` hat Vorrang vor der Datei. Ein gesetztes SMTP-Passwort wird nur verwendet, wenn `username` gesetzt ist.
+- SMTP-Validierungsfehler antworten mit `422` und exakt einem dieser Texte: „Mailversand: Server nur als Rechnername oder IP-Adresse, z. B. smtp.office365.com“, „Mailversand: Port muss zwischen 1 und 65535 liegen“, „Mailversand: Absenderadresse fehlt“, „Mailversand: Absenderadresse ungültig“, „Mailversand: Absendername ist zu lang (max. 100 Zeichen)“, „Mailversand: Passwort darf keinen Zeilenumbruch enthalten“ oder „Mailversand: Passwort ist zu lang (max. 1024 Zeichen)“.
+- Passwort und Code erscheinen nie in Logs oder Fehlermeldungen. Fehlt das Passwort bei gesetztem `username`: Fehler „SMTP-Passwort fehlt (MARATHON_SMTP_PASSWORD oder .data/smtp.pass)“.
+- Prüfbefehl `python run.py mail-test <adresse>`: sendet Betreff „Marathon: Testmail“, Text „Der Mailversand von Marathon funktioniert.“; Erfolg „Testmail an <adresse> gesendet“ (Exit-Code 0), sonst „Fehler: Testmail nicht gesendet: <Grund>“ (Exit-Code 1). Als Einzelbefehl startet er die Datenbank bei Bedarf und stoppt sie wieder, wenn er sie selbst gestartet hat. Ohne eingerichteten Mailversand: „Fehler: Mailversand ist nicht eingerichtet (Einstellungen → Mailversand)“.
 - Anmelde-Mail: Betreff „<code> ist Dein Marathon-Code“, Text „Dein Anmeldecode für Marathon: <code>\n\nDer Code gilt <code_ttl_minutes> Minuten. Falls Du keine Anmeldung angefordert hast, ignoriere diese E-Mail.“
 
 ### Anmeldung per Einmalcode
@@ -611,8 +616,9 @@ Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freig
   - In der UI ist ihre Rolle gesperrt und sie sind nicht löschbar (Hinweis *„In Konfiguration festgelegt“*).
   - Die API lehnt Herabstufen oder Löschen geschützter Admins und des letzten Admins mit `409` ab: „In Konfiguration festgelegt“ bzw. „Der letzte Admin kann nicht herabgestuft oder gelöscht werden“.
 - **Lokaler CLI-Notfallzugang (ohne SMTP):**
-  - `python run.py admin-code <email>` (ruft `python -m marathon.server.auth admin-code <email>` auf; die Datenbank muss laufen, also bei laufendem Server).
-  - Nur für bestehende Admins oder Adressen aus `admin_emails`, sonst „Fehler: <email> ist kein Admin“ (Exit-Code 1). Hebt eine Sperre der Adresse auf, erzeugt einen Code (Gültigkeit `code_ttl_minutes`) und gibt ausschließlich lokal aus: „Anmeldecode für <email>: <code> (gültig <n> Minuten)“.
+  - Während `python run.py` läuft, in dessen Konsole `admin-code <adresse>` und Enter eingeben. Alternativ `python run.py admin-code <adresse>` ohne laufenden Server ausführen.
+  - Der Einzelbefehl startet die Datenbank bei Bedarf selbst, führt bei eigenem Datenbankstart das Upgrade aus und stoppt die Datenbank danach wieder; eine bereits laufende Datenbank lässt er weiterlaufen.
+  - Nur für bestehende Admins oder Adressen aus `admin_emails`, sonst „Fehler: <adresse> ist kein Admin“ (Exit-Code 1). Hebt eine Sperre der Adresse auf, erzeugt einen Code (Gültigkeit `code_ttl_minutes`) und gibt ausschließlich lokal aus: „Anmeldecode für <adresse>: <code> (gültig <n> Minuten)“.
 
 ### Nutzerverwaltung (nur Admins, Seite „Nutzer“)
 

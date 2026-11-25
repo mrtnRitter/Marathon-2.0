@@ -15,6 +15,7 @@ from marathon.server.app import create_app
 from marathon.server.auth.codes import neutral_text
 from marathon.server.auth.sessions import cookie_name, create_session
 from marathon.server.config import AuthConfig, SmtpConfig
+from marathon.server.db.settings_writes import save_smtp_config
 
 
 class FakeMailSender:
@@ -53,11 +54,22 @@ class FakeMailSender:
 def app_factory(db_engine, tmp_path):
     def make(*, auth=None, smtp=None, sender=None):
         mail_sender = sender or FakeMailSender()
+        smtp = smtp or SmtpConfig()
+        with db_engine.begin() as connection:
+            save_smtp_config(
+                connection,
+                host=smtp.host,
+                port=smtp.port,
+                username=smtp.username,
+                use_tls=smtp.use_tls,
+                from_address=smtp.from_address,
+                from_name=smtp.from_name,
+            )
         app = create_app(
             static_dir=tmp_path,
             engine=db_engine,
             auth_config=auth or AuthConfig(),
-            smtp_config=smtp or SmtpConfig(),
+            smtp_config=smtp,
             mail_sender=mail_sender,
         )
         return app, mail_sender
@@ -91,10 +103,11 @@ def _login(client, sender, email):
 
 def test_auth_status_reports_mail_configuration(app_factory):
     configured_app, _ = app_factory(smtp=SmtpConfig(host="smtp.test", from_address="auth@test.invalid"))
-    unconfigured_app, _ = app_factory()
 
     with TestClient(configured_app, base_url="https://testserver") as client:
         assert client.get("/api/v1/auth/status").json() == {"mail_configured": True}
+
+    unconfigured_app, _ = app_factory()
     with TestClient(unconfigured_app, base_url="https://testserver") as client:
         assert client.get("/api/v1/auth/status").json() == {"mail_configured": False}
 
@@ -129,6 +142,30 @@ def test_request_code_sends_authorized_email_with_neutral_response(db_engine, ap
     assert sender.closed is True
 
 
+def test_request_code_uses_latest_database_smtp_settings(db_engine, app_factory):
+    _allow_domains(db_engine, ["looks.film"])
+    old_smtp = SmtpConfig(host="old.smtp.test", from_address="old@test.invalid")
+    new_smtp = SmtpConfig(host="new.smtp.test", from_address="new@test.invalid")
+    app, sender = app_factory(smtp=old_smtp)
+    with db_engine.begin() as connection:
+        save_smtp_config(
+            connection,
+            host=new_smtp.host,
+            port=new_smtp.port,
+            username=new_smtp.username,
+            use_tls=new_smtp.use_tls,
+            from_address=new_smtp.from_address,
+            from_name=new_smtp.from_name,
+        )
+
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.post("/api/v1/auth/request-code", json={"email": "max@looks.film"})
+
+    assert response.status_code == 200
+    assert sender.wait_for_count(1)
+    assert sender.snapshot()[0][0] == new_smtp
+
+
 def test_request_code_unknown_address_has_same_response_and_no_mail(db_engine, app_factory):
     app, sender = app_factory(smtp=SmtpConfig(host="smtp.test", from_address="auth@test.invalid"))
 
@@ -160,6 +197,7 @@ def test_request_code_uses_same_database_work_for_known_and_unknown(db_engine, a
     listener = lambda *args: statements.append(args[2])
     event.listen(db_engine, "after_cursor_execute", listener)
     app, _ = app_factory(smtp=SmtpConfig(host="smtp.test", from_address="auth@test.invalid"))
+    statements.clear()
     try:
         with TestClient(app, base_url="https://testserver") as client:
             known = client.post("/api/v1/auth/request-code", json={"email": "known@other.test"})
@@ -294,3 +332,20 @@ def test_require_admin_rejects_user_and_accepts_admin(db_engine):
     assert user_access.json() == {"detail": "Nur für Admins"}
     assert admin_access.status_code == 200
     assert admin_access.json() == {"role": "admin"}
+
+
+def test_request_code_settings_read_error_returns_503(db_engine, app_factory, monkeypatch):
+    app, _ = app_factory(smtp=SmtpConfig(host="smtp.test", from_address="auth@test.invalid"))
+
+    def fail_read(connection):
+        raise RuntimeError("private database detail")
+
+    monkeypatch.setattr(auth_api, "get_smtp_config", fail_read)
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.post("/api/v1/auth/request-code", json={"email": "max@looks.film"})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator."
+    }
+    assert "private database detail" not in response.text
