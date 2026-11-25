@@ -1,13 +1,13 @@
 // Single data access point for all pages; talks to the server API.
 import { notify } from '../components/Toast'
-import type { Asset, AssetDetail, AssetStatus, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Settings, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput } from './types'
+import type { Asset, AssetDetail, AssetStatus, AuthUser, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Settings, UserDirectoryEntry, UserRecord, UserSession, UserRole, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput, WorkflowShare, WorkflowShareAccess } from './types'
 
 export class ApiError extends Error {
   readonly status: number
   readonly detail: string
 
   constructor(status: number, detail: string) {
-    super(`Fehler ${status}: ${detail}`)
+    super(detail)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail
@@ -15,6 +15,7 @@ export class ApiError extends Error {
 }
 
 const api_base = '/api/v1'
+let login_redirect_started = false
 
 async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; body?: unknown; allow_404?: boolean; quiet?: boolean } = {}): Promise<T | null> {
   const { method = 'GET', body, allow_404 = false, quiet = false } = options
@@ -35,6 +36,14 @@ async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PU
   }
 
   if (response.status === 404 && allow_404) return null
+  const should_redirect_to_login = response.status === 401
+    && !['/auth/status', '/auth/request-code', '/auth/confirm'].includes(path.split('?')[0])
+    && window.location.pathname !== '/login'
+  if (should_redirect_to_login && !login_redirect_started) {
+    login_redirect_started = true
+    const next = `${window.location.pathname}${window.location.search}`
+    window.location.assign(`/login?next=${encodeURIComponent(next)}`)
+  }
   if (response.status === 204) return null
   if (!response.ok) {
     let detail = response.statusText
@@ -42,10 +51,58 @@ async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PU
       const response_body = await response.json() as { detail?: unknown }
       if (typeof response_body.detail === 'string') detail = response_body.detail
     } catch {}
-    if (!quiet) notify(`Fehler ${response.status}: ${detail}`)
+    if (!quiet && !should_redirect_to_login) notify(detail)
     throw new ApiError(response.status, detail)
   }
   return await response.json() as T
+}
+
+export const get_auth_status = (): Promise<{ mail_configured: boolean }> =>
+  request<{ mail_configured: boolean }>('/auth/status', { quiet: true }).then(data => data!)
+
+export const request_auth_code = (email: string): Promise<{ detail: string }> =>
+  request<{ detail: string }>('/auth/request-code', { method: 'POST', body: { email }, quiet: true }).then(data => data!)
+
+export const confirm_auth_code = (email: string, code: string): Promise<AuthUser> =>
+  request<AuthUser>('/auth/confirm', { method: 'POST', body: { email, code }, quiet: true }).then(data => data!)
+
+export const get_auth_me = (): Promise<AuthUser> =>
+  request<AuthUser>('/auth/me', { quiet: true }).then(data => data!)
+
+export async function logout(): Promise<void> {
+  await request<null>('/auth/logout', { method: 'POST' })
+}
+
+export const get_users = (): Promise<UserRecord[]> => request<UserRecord[]>('/users').then(data => data!)
+
+export const get_user_directory = (): Promise<UserDirectoryEntry[]> =>
+  request<UserDirectoryEntry[]>('/users/directory').then(data => data!)
+
+export const update_user_role = async (id: string, role: UserRole): Promise<void> => {
+  await request<unknown>(`/users/${encodeURIComponent(id)}`, { method: 'PUT', body: { role } })
+}
+
+export async function delete_user(id: string): Promise<void> {
+  await request<null>(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export const get_user_sessions = (id: string): Promise<UserSession[]> =>
+  request<UserSession[]>(`/users/${encodeURIComponent(id)}/sessions`).then(data => data!)
+
+export async function delete_user_session(id: string, session_id: string): Promise<void> {
+  await request<null>(`/users/${encodeURIComponent(id)}/sessions/${encodeURIComponent(session_id)}`, { method: 'DELETE' })
+}
+
+export async function delete_user_sessions(id: string): Promise<void> {
+  await request<null>(`/users/${encodeURIComponent(id)}/sessions`, { method: 'DELETE' })
+}
+
+export async function unlock_user(id: string): Promise<void> {
+  await request<null>(`/users/${encodeURIComponent(id)}/lock`, { method: 'DELETE' })
+}
+
+export async function restart_server(): Promise<void> {
+  await request<{ detail: string }>('/server/restart', { method: 'POST' })
 }
 
 export const get_workflows = (): Promise<Workflow[]> => request<Workflow[]>('/workflows').then(data => data!)
@@ -55,6 +112,15 @@ export const set_workflow_active = (id: string, active: boolean): Promise<Workfl
 
 export const get_workflow = (id: string): Promise<Workflow | null> =>
   request<Workflow>(`/workflows/${encodeURIComponent(id)}`, { allow_404: true })
+
+export const get_workflow_shares = (id: string): Promise<WorkflowShare[]> =>
+  request<{ shares: WorkflowShare[] }>(`/workflows/${encodeURIComponent(id)}/shares`).then(data => data!.shares)
+
+export const set_workflow_shares = (id: string, shares: { user_id: string; access: WorkflowShareAccess }[]): Promise<WorkflowShare[]> =>
+  request<{ shares: WorkflowShare[] }>(`/workflows/${encodeURIComponent(id)}/shares`, { method: 'PUT', body: { shares } }).then(data => data!.shares)
+
+export const set_workflow_owner = (id: string, user_id: string): Promise<Workflow> =>
+  request<Workflow>(`/workflows/${encodeURIComponent(id)}/owner`, { method: 'PUT', body: { user_id } }).then(data => data!)
 
 export const get_workflow_graph = (id: string, options: { quiet?: boolean } = {}): Promise<WorkflowGraph | null> => request<WorkflowGraph>(`/workflows/${encodeURIComponent(id)}/graph`, { allow_404: true, quiet: options.quiet })
 

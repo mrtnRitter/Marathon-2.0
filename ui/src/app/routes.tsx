@@ -9,6 +9,8 @@ import { SettingsPage } from '../pages/SettingsPage'
 import { WorkersPage } from '../pages/WorkersPage'
 import { WorkflowDetailPage } from '../pages/WorkflowDetailPage'
 import { WorkflowsPage } from '../pages/WorkflowsPage'
+import { UsersPage } from '../pages/UsersPage'
+import { RequireAdmin } from '../data/auth'
 
 export const routes: { path: string; element: ReactNode }[] = [
   { path: '/', element: <Navigate to="/dashboard" replace /> },
@@ -20,6 +22,7 @@ export const routes: { path: string; element: ReactNode }[] = [
   { path: '/assets/:asset_id', element: <AssetDetailPage /> },
   { path: '/reports', element: <ReportsPage /> },
   { path: '/workers', element: <WorkersPage /> },
-  { path: '/settings', element: <SettingsPage /> },
+  { path: '/settings', element: <RequireAdmin><SettingsPage /></RequireAdmin> },
+  { path: '/users', element: <RequireAdmin><UsersPage /></RequireAdmin> },
   { path: '*', element: <NotFoundPage /> },
 ]

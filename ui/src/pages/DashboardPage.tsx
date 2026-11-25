@@ -19,8 +19,9 @@ function WorkflowRow({ workflow, on_changed }: { workflow: Workflow; on_changed:
   const navigate = useNavigate()
   const [busy, set_busy] = useState(false)
   const open = (tab: string) => navigate(`/workflows/${workflow.id}/${tab}`)
+  const can_run = ['admin', 'owner', 'edit', 'run'].includes(workflow.access)
   const toggle = async () => {
-    if (busy) return
+    if (!can_run || busy) return
     set_busy(true)
     try { await set_workflows_active([workflow], !workflow.active) } catch { /* request already reported */ } finally { set_busy(false); on_changed() }
   }
@@ -40,7 +41,7 @@ function WorkflowRow({ workflow, on_changed }: { workflow: Workflow; on_changed:
         ))}
       </div>
       <div className="dashboard-row-actions" onClick={event => event.stopPropagation()}>
-        <Button label={workflow.pausing ? 'Wird gestoppt' : workflow.active ? 'Stoppen' : 'Starten'} icon={workflow.active || workflow.pausing ? 'stop' : 'play'} on_click={toggle} disabled={busy || workflow.pausing} />
+        {can_run && <Button label={workflow.pausing ? 'Wird gestoppt' : workflow.active ? 'Stoppen' : 'Starten'} icon={workflow.active || workflow.pausing ? 'stop' : 'play'} on_click={toggle} disabled={busy || workflow.pausing} />}
         <Button label="Assets" icon="files" on_click={() => open('assets')} />
       </div>
     </div>

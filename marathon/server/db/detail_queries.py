@@ -6,7 +6,9 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from marathon.server.auth.sessions import AuthUser
 from marathon.server.db.queries import list_assets, list_workers
+from marathon.server.db.workflow_access import workflow_access_filter
 
 
 def get_graph(connection: Connection, workflow_id: str) -> dict[str, Any] | None:
@@ -67,6 +69,7 @@ def get_module_activity(
     connection: Connection,
     workflow_id: str,
     module_id: str,
+    user: AuthUser | None = None,
 ) -> dict[str, Any] | None:
     """Return current module activity, or None if its workflow/module is missing."""
     exists = connection.execute(text(
@@ -78,7 +81,7 @@ def get_module_activity(
         return None
 
     assets = [
-        asset for asset in list_assets(connection, workflow_id=workflow_id)
+        asset for asset in list_assets(connection, workflow_id=workflow_id, user=user)
         if asset["current_module_id"] == module_id
     ]
     jobs = []
@@ -109,6 +112,7 @@ def get_module_activity(
         "LEFT JOIN jobs AS job ON job.id = log.job_id "
         "LEFT JOIN workers AS worker ON worker.id = job.worker_id "
         "WHERE log.workflow_id = :workflow_id AND log.module_id = :module_id "
+        "AND log.level IN ('warn', 'error') "
         "ORDER BY log.ts DESC, log.id DESC LIMIT 500"
         ") AS recent_logs ORDER BY ts, id"
     ), {"workflow_id": workflow_id, "module_id": module_id}).mappings()
@@ -141,16 +145,23 @@ def _output_label(outputs: Any, output_id: str | None) -> str | None:
     return output_id
 
 
-def get_asset_detail(connection: Connection, asset_id: str, now: datetime | None = None) -> dict[str, Any] | None:
-    """Return an asset with its job timeline, messages, and logs, or None."""
+def get_asset_detail(
+    connection: Connection,
+    asset_id: str,
+    now: datetime | None = None,
+    user: AuthUser | None = None,
+) -> dict[str, Any] | None:
+    """Return an accessible asset with its timeline, messages, and logs, or None."""
+    access_filter, parameters = workflow_access_filter(user)
+    parameters["asset_id"] = asset_id
     asset_row = connection.execute(text(
         "SELECT asset.id, asset.workflow_id, asset.name, asset.status, asset.current_module_id, "
         "module.name AS current_module, asset.step_status, asset.updated_at, asset.created_at, asset.metadata "
         "FROM assets AS asset JOIN workflows AS workflow ON workflow.id = asset.workflow_id "
         "LEFT JOIN workflow_modules AS module ON module.workflow_id = asset.workflow_id "
         "AND module.version = workflow.current_version AND module.id = asset.current_module_id "
-        "WHERE asset.id = :asset_id"
-    ), {"asset_id": asset_id}).mappings().one_or_none()
+        f"WHERE asset.id = :asset_id AND {access_filter}"
+    ), parameters).mappings().one_or_none()
     if asset_row is None:
         return None
     detail = dict(asset_row)

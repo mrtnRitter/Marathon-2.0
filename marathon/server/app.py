@@ -7,14 +7,14 @@ import logging
 import os
 from threading import Event
 
-from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError, TimeoutError as SQLAlchemyTimeoutError
 
 from marathon.common.version import app_name, app_version
 from marathon.server.api import api_prefix, api_routers
-from marathon.server.api.deps import app_engine
+from marathon.server.api.deps import app_engine, current_user
 from marathon.server.config import (
     AuthConfig,
     ConfigError,
@@ -228,6 +228,8 @@ def create_app(
     app.state.auth_config = auth_config if auth_config is not None else AuthConfig()
     app.state.smtp_config = smtp_config if smtp_config is not None else SmtpConfig()
     app.state.mail_sender = mail_sender if mail_sender is not None else MailSender()
+    if not hasattr(app.state, "request_restart"):
+        app.state.request_restart = None
 
     @app.exception_handler(OperationalError)
     @app.exception_handler(SQLAlchemyTimeoutError)
@@ -244,9 +246,13 @@ def create_app(
 
 
 def _create_api_fallback() -> APIRouter:
-    router = APIRouter()
+    router = APIRouter(dependencies=[Depends(current_user)])
 
-    @router.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+    @router.api_route(
+        "/api/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+        include_in_schema=False,
+    )
     def api_not_found(path: str) -> None:
         raise HTTPException(404, f"Unbekannter API-Pfad: /api/{path}")
 

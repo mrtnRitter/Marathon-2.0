@@ -3,6 +3,7 @@ export interface NavItem {
   path: string
   label: string
   icon: string
+  admin_only?: boolean
 }
 
 export const nav_groups: { title: string; items: NavItem[] }[] = [
@@ -19,7 +20,8 @@ export const nav_groups: { title: string; items: NavItem[] }[] = [
     title: 'System',
     items: [
       { path: '/workers', label: 'Worker', icon: 'server' },
-      { path: '/settings', label: 'Einstellungen', icon: 'settings' },
+      { path: '/settings', label: 'Einstellungen', icon: 'settings', admin_only: true },
+      { path: '/users', label: 'Nutzer', icon: 'users', admin_only: true },
     ],
   },
 ]

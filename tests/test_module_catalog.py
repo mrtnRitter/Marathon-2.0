@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+
+from auth_helpers import sign_in
 from sqlalchemy import text
 
 from marathon.modules import CatalogError, build_catalog, catalog_module, load_catalog, required_keys
@@ -154,12 +156,20 @@ def test_sync_writes_execution(db_engine):
 def test_app_syncs_catalog_only_when_enabled(db_engine, tmp_path):
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
 
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+
+    sign_in(_test_app)
+
+    with TestClient(_test_app) as client:
         existing = client.get("/api/v1/module-types")
     assert existing.status_code == 200
     assert all(spec["id"] != "watchfolder" for spec in existing.json())
 
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine, sync_catalog=True)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine, sync_catalog=True)
+
+    sign_in(_test_app)
+
+    with TestClient(_test_app) as client:
         synced = client.get("/api/v1/module-types")
     assert synced.status_code == 200
     watchfolder_spec = next(spec for spec in synced.json() if spec["id"] == "watchfolder")

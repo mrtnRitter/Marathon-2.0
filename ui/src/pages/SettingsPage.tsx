@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { FormSection } from '../components/FormField'
 import { PageHeader } from '../components/PageHeader'
 import { notify } from '../components/Toast'
-import { get_settings, save_settings } from '../data/api'
+import { get_settings, restart_server, save_settings } from '../data/api'
 import type { Settings } from '../data/types'
 import { format_proxy_addresses, parse_proxy_addresses } from '../lib/proxy_settings'
 import './SettingsPage.css'
@@ -40,6 +40,15 @@ export function SettingsPage() {
     void load_settings()
     return () => { active = false }
   }, [])
+
+  const restart = async () => {
+    if (!window.confirm('Server jetzt neu starten? Laufende Jobs werden unterbrochen und neu verteilt.')) return
+    try {
+      await restart_server()
+    } catch {
+      // The API client already reports the error.
+    }
+  }
 
   const save = async () => {
     set_saving(true)
@@ -147,6 +156,9 @@ export function SettingsPage() {
                   />
                 </div>
               </div>
+            </FormSection>
+            <FormSection title="Server">
+              <button type="button" className="button" onClick={() => { void restart() }} disabled={disabled}>Server neu starten</button>
             </FormSection>
           </div>
         </div>

@@ -6,6 +6,8 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+
+from auth_helpers import sign_in
 from sqlalchemy import text
 
 from marathon.server.app import create_app
@@ -17,6 +19,7 @@ def api_client(db_engine, tmp_path):
     """Provide an API client backed by the isolated test database."""
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
     with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('test-admin', 'admin@test.local', 'Test Admin', 'admin')"))
         module_types = (
             ("source", "Quelle", False, "none", [{"id": "success"}]),
             ("step", "Schritt", True, "worker", [{"id": "success"}, {"id": "error"}]),
@@ -36,7 +39,9 @@ def api_client(db_engine, tmp_path):
                     "outputs": json.dumps(outputs),
                 },
             )
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         yield client
 
 

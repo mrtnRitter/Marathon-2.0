@@ -12,6 +12,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+
+from auth_helpers import sign_in
 import pytest
 from sqlalchemy import text
 import uvicorn
@@ -47,6 +49,7 @@ def _join_helper(thread: threading.Thread, hub: LiveHub) -> None:
 
 
 def _get_stream_response(app, hub: LiveHub):
+    sign_in(app)
     responses = []
     failures = []
     completed = threading.Event()
@@ -153,6 +156,7 @@ def test_server_shutdown_closes_open_stream(db_engine, tmp_path):
         port = sock.getsockname()[1]
 
     app = create_app(engine=db_engine, run_live=True, static_dir=_static_dir(tmp_path))
+    sign_in(app)
     server = _LiveServer(
         uvicorn.Config(
             app,

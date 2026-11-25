@@ -120,12 +120,17 @@ def confirm_login(
 
 @router.post("/auth/logout", status_code=204)
 def logout(
+    request: Request,
     response: Response,
-    user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> Response:
-    with engine.begin() as connection:
-        delete_session(connection, user.session_id)
+    token = request.cookies.get(cookie_name)
+    if token:
+        provider = EmailCodeProvider(request.app.state.auth_config)
+        with engine.begin() as connection:
+            resolved = provider.resolve_session(connection, token)
+            if resolved is not None:
+                delete_session(connection, resolved[0].session_id)
     response.delete_cookie(key=cookie_name, path="/", secure=True, httponly=True, samesite="lax")
     response.status_code = 204
     return response

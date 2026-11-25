@@ -98,7 +98,11 @@
 .module-settings-body { flex: 1; overflow: auto; padding: var(--space-3); }
 
 .module-settings-output { display: grid; grid-template-columns: 90px 1fr; gap: var(--space-3); padding: 4px 0; font-size: var(--font-size-sm); }
-.module-activity-body { padding-top: var(--space-3); }
+.slide-panel-body.module-activity-panel-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.module-activity-panel-body > .tabs { flex: none; }
+.module-activity-body { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: auto; padding-top: var(--space-3); }
+.module-activity-body.logs-active { overflow: hidden; }
+.module-activity-loading { position: relative; flex: 1; min-height: 120px; }
 
 .module-node-lock { position: absolute; top: 4px; right: 4px; display: grid; place-items: center; padding: 2px; background: none; border: none; color: var(--text-dim); cursor: pointer; }
 .module-node-lock:hover { color: var(--text); }
@@ -114,10 +118,10 @@ span.module-node-lock { cursor: default; }
 
 .module-settings-description { display: block; width: 100%; resize: none; overflow: hidden; line-height: 1.4; }
 
-.module-settings-form.read-only input,
-.module-settings-form.read-only select,
-.module-settings-form.read-only textarea,
-.module-settings-form.read-only .form-field-unit { color: var(--text-dim); cursor: default; }
-.module-settings-form.read-only .form-switch-track { cursor: default; opacity: 0.6; }
-.module-settings-form.read-only .form-switch-track::before { background: var(--text-dim); }
+.module-settings-form.read-only .form-field-control input:not([type='checkbox']):disabled,
+.module-settings-form.read-only .form-field-control select:disabled,
+.module-settings-form.read-only .form-field-control textarea:disabled { color: var(--text-dim); opacity: 0.62; cursor: default; }
+.module-settings-form.read-only .form-field-unit { color: var(--text-dim); opacity: 0.7; }
+.module-settings-form.read-only .form-switch-track { cursor: default; opacity: 0.6; background: var(--bg-hover); border-color: var(--text-dim); }
 .module-settings-form.read-only .form-switch input:checked + .form-switch-track { background: var(--bg-hover); border-color: var(--text-dim); }
+.module-settings-form.read-only .form-switch input:checked + .form-switch-track::before { background: var(--text-dim); }

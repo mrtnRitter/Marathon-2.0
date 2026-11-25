@@ -37,7 +37,7 @@ Bereits erledigte Schritte werden übersprungen. `build.py` erneut ausführen na
 
 ### Mailversand einrichten
 
-*Gilt ab Release Zugang & Nutzer.* Marathon verschickt die Anmelde-Mails (6-stelliger Code) über einen vorhandenen Mailserver per SMTP. Ohne Mailversand ist nur der Notfallzugang `python run.py admin-code <mail>` auf dem Server-Rechner möglich.
+Marathon verschickt die Anmelde-Mails (6-stelliger Code) über einen vorhandenen Mailserver per SMTP. Ohne Mailversand ist nur der Notfallzugang `python run.py admin-code <mail>` auf dem Server-Rechner möglich.
 
 1. Abschnitt `[smtp]` in `config/marathon.toml` ausfüllen (Beispiele unten).
 2. Verlangt der Mailserver eine Anmeldung: Passwort als Umgebungsvariable `MARATHON_SMTP_PASSWORD` setzen oder in die Datei `.data/smtp.pass` schreiben – nie in `marathon.toml`.
@@ -100,6 +100,27 @@ Danach den Browser neu starten.
 
 **Rettungszugang:** Auf dem Server-Rechner selbst bleibt http://127.0.0.1:8080 direkt erreichbar, z. B. wenn eine falsche öffentliche Adresse eingetragen wurde.
 
+### Anmeldung
+
+Auf „Bei Marathon anmelden“ die „E-Mail-Adresse“ eingeben und „Code senden“ wählen. Den per E-Mail erhaltenen sechsstelligen Code in „Code“ eintragen und „Anmelden“ wählen. Ist der Mailversand nicht eingerichtet, erscheint: „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“
+
+### Nutzer und Rollen
+
+Admins verwalten Marathon vollständig. Normale Nutzer sehen weder „Einstellungen“ noch die Seite „Nutzer“ und sehen nur eigene oder freigegebene Workflows. Sie können Worker ansehen, aber nicht steuern oder bearbeiten.
+
+Auf der Seite „Nutzer“ kann ein Admin die Rolle „Nutzer“ oder „Admin“ ändern. Die Zahl unter „Sitzungen“ öffnet die angemeldeten Geräte; „Alle abmelden“ widerruft die Sitzungen. Bei einer gesperrten Adresse lässt sich „Sperre aufheben“ wählen. „Löschen“ entfernt das Nutzerkonto; geschützte Konten tragen den Hinweis „In Konfiguration festgelegt“. Workflows eines gelöschten Nutzers bleiben ohne Eigentümer und sind nur für Admins sichtbar.
+
+### Workflows teilen
+
+Eigentümer und Admins öffnen im Workflow den Dialog „Teilen“. Für jeden Nutzer gibt es diese Stufen:
+
+- „Privat (kein Zugriff)“: kein Zugriff auf den Workflow.
+- „Teilen zur Ansicht“: Workflow, Module, Assets, Logs und Status ansehen; nicht bearbeiten oder speichern, nicht starten oder stoppen, keinen Zeitplan ändern und nicht erneut verarbeiten.
+- „Teilen zur Ausführung“: alles aus der Ansicht, zusätzlich starten, stoppen und erneut verarbeiten; nicht bearbeiten oder speichern und keinen Zeitplan ändern.
+- „Teilen zur Bearbeitung und Ausführung“: zusätzlich bearbeiten, speichern und den Zeitplan ändern.
+
+Nur Admins können im Teilen-Dialog den „Eigentümer“ setzen. Nach dem Löschen eines Eigentümers sind dessen Workflows ohne Eigentümer und nur für Admins sichtbar.
+
 ### Entwicklungsmodus (Live-Vorschau)
 
 Änderungen unter `ui/src` erscheinen sofort im Browser, ohne neu zu bauen. Datenbank und Server laufen mit.
@@ -118,6 +139,7 @@ Oberfläche öffnen: http://127.0.0.1:5173
 | `python run.py` | Datenbank und Server starten |
 | `python run.py --dev` | Datenbank, Server und Live-Vorschau starten |
 | `python run.py --trust` | Stammzertifikat des mitgelieferten Proxys für den angemeldeten Benutzer importieren (Windows); unter Linux Pfad und Vorgehen anzeigen |
+| `restart` + Enter (während `python run.py` läuft) | Server sauber neu starten; die Datenbank läuft weiter |
 | `python run.py mail-test <adresse>` | Testmail über den eingerichteten Mailversand senden |
 | `python run.py admin-code <mail>` | Notfall-Anmeldecode für einen Admin ausgeben (nur bei laufendem Server, ohne Mailversand) |
 | `python build.py --help` / `python run.py --help` | Hilfe anzeigen |
@@ -178,7 +200,7 @@ Marathon selbst spricht nur HTTP auf `host`/`port` und liegt immer hinter einem 
 - **Zeitgesteuert:** Ein gestarteter zeitgesteuerter Workflow bleibt „aktiv“. Er wartet auf den nächsten Termin, läuft dann, bis kein Asset mehr aussteht oder in Arbeit ist, und wartet wieder. In der Wartezeit entstehen keine Jobs und der Watchfolder scannt nicht. Ein Lauf endet erst, wenn jeder Watchfolder seit Laufbeginn gescannt hat und keine Datei mehr auf Stabilität wartet.
 - **Ausfälle:** Meldet sich ein Worker 30 s nicht, gilt er als offline; startet er neu oder fällt er aus, wird sein Job erneut vergeben. Nach 3 unterbrochenen Versuchen am selben Modul ist das Asset fehlgeschlagen.
 - **Workflow ändern:** jederzeit speichern. Betrifft die Änderung laufende Assets (z. B. gelöschtes Modul), zeigt die Workflow-Ansicht vorher eine Warnung und speichert erst nach Bestätigung. Die Warnung nennt, wie viele Assets ab dem vorherigen Modul neu verteilt, als erledigt abgeschlossen oder als fehlgeschlagen markiert werden und wie viele Jobs abgebrochen werden.
-- **Überwachen:** Die Zähler in den Modulen aktualisieren sich bei Datenänderungen live. Ein Klick auf ein Modul zeigt Jobs, Assets, Worker, Logs und im Reiter „Einstellungen“ die Moduleinstellungen (ausgegraut, nur lesen). Der Reiter „Logs“ zeigt jede Aktivität des Moduls (die neuesten 500 Einträge) mit Zeit, Stufe, Asset, Worker und Text, z. B. „Zugeteilt an …“ und „Ergebnis: Erfolg“. „erledigt“ zählt Assets, die das Modul ohne Fehler verlassen haben. Ein Doppelklick wechselt zu „Bearbeiten“, das Modul ist markiert und seine Einstellungen sind offen.
+- **Überwachen:** Die Zähler in den Modulen aktualisieren sich bei Datenänderungen live. Ein Klick auf ein Modul zeigt Jobs, Assets, Worker und Logs. Im Reiter „Einstellungen“ sind die Moduleinstellungen nur lesend. Der Reiter „Logs“ zeigt die neuesten 500 Warnungen und Fehler mit Zeit, Stufe, Asset, Worker und Text; ohne Einträge steht dort „Keine Vorkommnisse“. Ein Doppelklick wechselt zu „Bearbeiten“, das Modul ist markiert und seine Einstellungen sind offen.
 - **Verbinden (Bearbeiten):** Verbindungen von einem Ausgang („Erfolg“, „Fehler“ …) ziehen und über dem Ziel-Modul loslassen; die Linie rastet am Eingang ein. Anfang und Ende der Linie liegen am Rand der Kreise. Ziehen am verbundenen Eingang löst die zuletzt angelegte Verbindung: auf einem anderen Eingang loslassen verbindet neu, sonst wird sie entfernt.
 - **Erneut verarbeiten:** Das Asset beginnt am Anfang des Workflows, hinter Watchfolder bzw. am Modul ohne eingehende Verbindung. Es gibt keine Obergrenze für die Zahl der gewählten Assets.
 
@@ -194,7 +216,7 @@ Die Seite „Einstellungen“ speichert in die Datenbank („Speichern“).
 | Proxy & HTTPS: Proxy | IP-Adressen externer Proxys, durch Komma getrennt | aus `[proxy] trusted_proxies` |
 | Anmeldung: Erlaubte E-Mail-Domains | Domains für die Selbstregistrierung, exakt (Subdomains einzeln eintragen), durch Komma getrennt | aus `[auth] allowed_domains` |
 
-Änderungen unter „Proxy & HTTPS“ gelten nach einem Neustart des Servers.
+Änderungen unter „Proxy & HTTPS“ gelten nach einem Neustart des Servers. Unter „Einstellungen“ → „Server“ startet die Schaltfläche „Server neu starten“ den Server neu.
 
 ## Workflows mit fehlerhaften Einstellungen
 

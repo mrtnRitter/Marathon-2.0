@@ -24,6 +24,10 @@
 .sidebar-link:hover { background: var(--bg-hover); color: var(--text); }
 .sidebar-link.active { background: var(--accent-soft); color: var(--accent); border-left-color: var(--accent); }
 .sidebar-footer { margin-top: auto; padding: var(--space-2); }
+.sidebar-account { margin-bottom: var(--space-2); }
+.sidebar-email { display: block; overflow: hidden; padding: 0 var(--space-2) var(--space-1); color: var(--text-dim); font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-sign-out { width: 100%; background: none; border: 0; border-left: 2px solid transparent; font: inherit; text-align: left; cursor: pointer; }
+.sidebar-sign-out:disabled { opacity: 0.5; cursor: default; }
 .sidebar-bug-container { position: relative; }
 .sidebar-cat-bubble {
   position: absolute; bottom: calc(100% + 6px); left: 50%; z-index: 51;

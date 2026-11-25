@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+
+from auth_helpers import sign_in
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -19,7 +21,9 @@ def api_client(db_engine, tmp_path):
     """Insert baseline records and provide an API client."""
     insert_records(db_engine, fixed_now)
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         yield client
 
 

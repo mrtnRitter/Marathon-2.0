@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { DataTable, type Column } from '../../components/DataTable'
 import { LogView } from '../../components/LogView'
 import { SlidePanel } from '../../components/SlidePanel'
+import { Spinner } from '../../components/Spinner'
 import { StatusBadge } from '../../components/StatusBadge'
 import { ProgressBar } from '../../components/StatusBar'
 import { Tabs } from '../../components/Tabs'
@@ -36,7 +37,7 @@ export function ModuleActivityPanel({ workflow_id, data, on_close }: { workflow_
   const navigate = useNavigate()
   const [tab, set_tab] = useState('jobs')
   const connected = use_server_connected()
-  const { data: activity } = use_data(() => get_module_activity(workflow_id, data.module.id), [workflow_id, data.module.id], { live: ['jobs', 'job_assets', 'assets', 'workers', 'log_lines'] })
+  const { data: activity, loading } = use_data(() => get_module_activity(workflow_id, data.module.id), [workflow_id, data.module.id], { live: ['jobs', 'job_assets', 'assets', 'workers', 'log_lines'] })
   const worker_columns = useMemo<Column<Worker>[]>(() => [
     { key: 'name', label: 'Name' },
     { key: 'status', label: 'Status', render: row => <StatusBadge meta={worker_status_meta[shown_worker_status(row, connected)]} /> },
@@ -44,7 +45,7 @@ export function ModuleActivityPanel({ workflow_id, data, on_close }: { workflow_
     { key: 'client_version', label: 'Version' },
   ], [connected])
   return (
-    <SlidePanel open title={data.module.name} icon={data.module_type.icon} on_close={on_close} width={760} click_through>
+    <SlidePanel open title={data.module.name} icon={data.module_type.icon} on_close={on_close} width={760} click_through body_class_name="module-activity-panel-body">
       <Tabs active={tab} on_change={set_tab} items={[
         { id: 'jobs', label: 'Jobs', icon: 'activity', count: activity?.jobs.length },
         { id: 'assets', label: 'Assets', icon: 'files', count: activity?.assets.length },
@@ -52,12 +53,12 @@ export function ModuleActivityPanel({ workflow_id, data, on_close }: { workflow_
         { id: 'logs', label: 'Logs', icon: 'cpu' },
         { id: 'settings', label: 'Einstellungen', icon: 'settings' },
       ]} />
-      <div className="module-activity-body">
-        {tab === 'settings' ? <ModuleSettingsForm data={data} read_only /> : !activity ? <div className="loading">Lade</div> : {
+      <div className={`module-activity-body${tab === 'logs' ? ' logs-active' : ''}`}>
+        {tab === 'settings' ? <ModuleSettingsForm data={data} read_only /> : !activity ? (loading ? <div className="module-activity-loading"><Spinner active={loading} /></div> : <div className="loading">Lade</div>) : {
           jobs: <DataTable columns={job_columns} rows={activity.jobs} row_key={row => row.id} empty_text="Keine Jobs an diesem Modul" />,
           assets: <DataTable columns={asset_columns} rows={activity.assets} row_key={row => row.id} on_row_open={row => navigate(`/assets/${row.id}`)} empty_text="Keine Assets an diesem Modul" />,
           workers: <DataTable columns={worker_columns} rows={activity.workers} row_key={row => row.id} empty_text="Keine Worker beteiligt" />,
-          logs: <LogView lines={activity.logs} live={data.module.counters.running > 0} />,
+          logs: <LogView lines={activity.logs} live={data.module.counters.running > 0} module_log />,
         }[tab]}
       </div>
     </SlidePanel>

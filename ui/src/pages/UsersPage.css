@@ -1,0 +1,17 @@
+.users-table-wrap { position: relative; overflow: auto; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.users-table, .users-sessions-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.users-table th, .users-sessions-table th { padding: var(--space-2) var(--space-3); background: var(--bg-panel-raised); border-bottom: 1px solid var(--border-strong); color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 500; text-align: left; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap; }
+.users-table td, .users-sessions-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); vertical-align: top; }
+.users-table tbody tr:nth-child(even) { background: var(--bg-zebra); }
+.users-table tbody tr:hover { background: var(--bg-hover); }
+.users-role-select { min-width: 100px; padding: 3px 6px; }
+.users-protected-note { display: block; margin-top: 3px; color: var(--text-dim); font-size: var(--font-size-xs); }
+.users-count-button { min-width: 28px; padding: 2px 6px; background: none; border: 0; color: var(--accent); text-align: left; cursor: pointer; }
+.users-actions { min-width: 220px; }
+.users-actions .button { margin: 0 4px 4px 0; }
+.users-sessions-row > td { padding: 0 var(--space-3) var(--space-3); background: var(--bg-panel-raised); }
+.users-sessions-table { margin-top: var(--space-2); }
+.users-sessions-empty, .users-empty { padding: var(--space-4); color: var(--text-dim); text-align: center; }
+.users-error { margin: 0; color: var(--status-failed); }
+.users-table-wrap.is-loading { min-height: 100px; opacity: 0.7; }
+@media (max-width: 900px) { .users-table { min-width: 850px; } .users-sessions-table { min-width: 700px; } }

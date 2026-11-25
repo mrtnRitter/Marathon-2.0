@@ -46,51 +46,52 @@ Vertrag: `docs/spec.md` §3.1–3.3 (ohne `[worker_client]`); offene Punkte und 
 
 #### Mailversand (Grundlage für die Anmeldung)
 
-- [ ] Zentraler `[smtp]`-Konfigurationsblock in `config/marathon.toml` (Passwort nur per Umgebungsvariable oder `.data/smtp.pass`), nutzbar für den Anmeldecode und den späteren Bug-Report
+- [x] Zentraler `[smtp]`-Konfigurationsblock in `config/marathon.toml` (Passwort nur per Umgebungsvariable oder `.data/smtp.pass`), nutzbar für den Anmeldecode und den späteren Bug-Report
   - Entschieden: Kein eigener Mailserver. Marathon versendet per SMTP über den vorhandenen Mailserver (bei LOOKS Microsoft 365), mit der Python-Standardbibliothek, ohne neue Abhängigkeit; Zeitlimit 10 s je Versand; `username` leer = ohne Anmeldung (z. B. Microsoft 365 Direct Send)
   - Entschieden: Mailversand gehört zur Einrichtung (README „Mailversand einrichten“); Prüfbefehl `python run.py mail-test <adresse>`; geführte Einrichtung später, nicht in diesem Release
 
 #### Anmeldung und Session
 
-- [ ] Anmeldung per E-Mail mit 6-stelligem Einmalcode (kein Link); ein Feld für Login und Selbstregistrierung (Konto wird erst bei Bestätigung angelegt)
+- [x] Anmeldung per E-Mail mit 6-stelligem Einmalcode (kein Link); ein Feld für Login und Selbstregistrierung (Konto wird erst bei Bestätigung angelegt)
   - Entschieden: Nur Code, kein Magic-Link – funktioniert auf jedem Gerät und in jedem Browser, Mail-Scanner spielen keine Rolle
   - Entschieden: 3 falsche Codes je Adresse in 24 Stunden sperren die Adresse für 24 Stunden; Admins heben eine Sperre in der Nutzerverwaltung auf, der CLI-Notfallbefehl hebt sie für Admins selbst auf
   - Entschieden: Nach außen immer neutral. „Code senden“ antwortet für jede Adresse gleich, auch bei nicht freigegebener Domain: „Falls die Adresse für Marathon freigegeben ist, ist eine E-Mail mit Code unterwegs. Keine E-Mail erhalten? Adresse prüfen oder an den Administrator wenden.“ Die Mail geht im Hintergrund raus, damit auch die Antwortzeit nichts verrät. Falscher, abgelaufener oder verbrauchter Code: „Code ungültig oder abgelaufen“
   - Entschieden: „Konto deaktiviert“ entfällt, weil es kein Deaktivieren gibt (siehe Nutzerverwaltung)
   - Entschieden: Ohne eingerichteten Mailversand zeigt die Anmeldeseite vor der Eingabe „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“ (verrät nichts über Konten); Admins nutzen den CLI-Notfallbefehl `python run.py admin-code <mail>`
-- [ ] Langlebige serverseitige Session (`HttpOnly`-Cookie mit Sliding Expiration, z. B. 180 Tage, einzeln widerrufbar); Andockstelle (`AuthProvider`, `external_subject`) für späteres Ökosystem bleibt erhalten
+- [x] Langlebige serverseitige Session (`HttpOnly`-Cookie mit Sliding Expiration, z. B. 180 Tage, einzeln widerrufbar); Andockstelle (`AuthProvider`, `external_subject`) für späteres Ökosystem bleibt erhalten
   - Entschieden: Nur der Admin widerruft Sessions, in der Nutzerverwaltung (einzeln und „Alle abmelden“ je Nutzer); Nutzer melden sich selbst nur ab
-- [ ] Oberfläche in zwei Ausprägungen: Admin-Ansicht mit allem (wird zuerst gebaut) und Nutzer-Ansicht mit reduziertem Menü (ohne Einstellungen, ohne Nutzer)
-- [ ] Erlaubte E-Mail-Domains für die Selbstregistrierung in den Serversettings pflegbar (Startwert aus `config/marathon.toml` analog zu `folder_dialog.server_address`)
+- [x] Oberfläche in zwei Ausprägungen: Admin-Ansicht mit allem (wird zuerst gebaut) und Nutzer-Ansicht mit reduziertem Menü (ohne Einstellungen, ohne Nutzer)
+- [x] Erlaubte E-Mail-Domains für die Selbstregistrierung in den Serversettings pflegbar (Startwert aus `config/marathon.toml` analog zu `folder_dialog.server_address`)
   - Entschieden: Form `"auth": { "allowed_domains": ["looks.film"] }` in `GET/PUT /api/v1/settings`; Feld „Erlaubte E-Mail-Domains“ (durch Komma getrennt) in den Einstellungen; Einträge getrimmt, Kleinbuchstaben, führendes `@` entfernt, Doppelte entfernt
   - Entschieden: Die Liste gilt nur für neue Konten; bestehende Konten melden sich weiter an, auch wenn ihre Domain später entfernt wird
   - Entschieden: Nur exakte Domains; Subdomains werden bei der Einrichtung einzeln eingetragen
 
 #### Rollen, Nutzer und Freigaben
 
-- [ ] Rollen `user` und `admin`; Break-Glass über `[auth] admin_emails` in `config/marathon.toml` (immer Admin, in UI nicht herabstufbar/löschbar, Schutz letzter Admin) plus lokaler Server-CLI-Notfallbefehl (`python run.py admin-code <mail>`) ohne SMTP
-- [ ] Nutzerverwaltung (nur Admin): Liste, Rolle ändern, Sessions widerrufen, Sperre aufheben, Nutzer löschen
+- [x] Rollen `user` und `admin`; Break-Glass über `[auth] admin_emails` in `config/marathon.toml` (immer Admin, in UI nicht herabstufbar/löschbar, Schutz letzter Admin) plus lokaler Server-CLI-Notfallbefehl (`python run.py admin-code <mail>`) ohne SMTP
+- [x] Nutzerverwaltung (nur Admin): Liste, Rolle ändern, Sessions widerrufen, Sperre aufheben, Nutzer löschen
   - Entschieden: Admin kann Nutzer löschen; Deaktivieren gibt es nicht (`users.active` entfällt). Nutzer können weder sich selbst noch andere löschen; geschützte Admins, der eigene Account und der letzte Admin sind nicht löschbar
   - Entschieden: Löschen beendet alle Sessions des Nutzers; ist seine Domain freigegeben, kann sich die Adresse neu registrieren (neues, leeres Konto)
   - Entschieden: Workflows eines gelöschten Nutzers sind ohne Eigentümer und nur für Admins sichtbar
-- [ ] Workflow-Freigaben je Nutzer in vier Stufen: privat (kein Eintrag), `view` teilen zur Ansicht (kein Bearbeiten, kein Starten/Stoppen/erneutes Verarbeiten), `run` teilen zur Ausführung (starten, stoppen, erneut verarbeiten, aber nicht verändern), `edit` teilen zur Bearbeitung und Ausführung
+- [x] Workflow-Freigaben je Nutzer in vier Stufen: privat (kein Eintrag), `view` teilen zur Ansicht (kein Bearbeiten, kein Starten/Stoppen/erneutes Verarbeiten), `run` teilen zur Ausführung (starten, stoppen, erneut verarbeiten, aber nicht verändern), `edit` teilen zur Bearbeitung und Ausführung
   - Entschieden: Jeder Nutzer legt Workflows an, der Ersteller wird Eigentümer
   - Entschieden: Teilen dürfen Eigentümer und Admin
   - Entschieden: Bestehende Workflows haben nach dem Update keinen Eigentümer und sind nur für Admins sichtbar; Admins dürfen für jeden Workflow den Eigentümer setzen
 - Entschieden: Modulsperren je Nutzer und der Konsistenzschutz Modul-/Workflow-Freigabe entfallen; Module sind bis zum Modul-Builder immer für alle geteilt
-- [ ] Normale Nutzer sehen keine Servereinstellungen und keine Nutzerverwaltung; alle API-Routen und der Live-Kanal (SSE) prüfen Rechte serverseitig
+- [x] Normale Nutzer sehen keine Servereinstellungen und keine Nutzerverwaltung; alle API-Routen und der Live-Kanal (SSE) prüfen Rechte serverseitig
   - Entschieden: Normale Nutzer sehen alle Worker, aber nur lesend (keine Steuerung, kein Bearbeiten)
   - Entschieden: Der Live-Kanal verlangt eine Anmeldung und meldet weiter nur Tabellennamen ohne Inhalte; gefiltert wird beim Nachladen über die API
 
 #### Aus „Feedback Martin“
 
-- [ ] Verbindungs-Overlay: Das Icon bekommt unten rechts ein rotes, blinkendes X
-- [ ] Überwachen → Einstellungen: Werte ausgegraut (nur lesen) – laut Spec §2.7 vorgesehen, in der Oberfläche noch nicht wirksam
-- [ ] Modul Warten: Klick auf „Assets“ zeigt eine komplett leere Seite (beobachtet mit über 5.000 Assets)
-- [ ] Spinner erscheint nicht oder zu spät, obwohl Ladezeiten über 0,5 s auftreten
-- [ ] Modul-Log so hoch wie das Seitenpanel; zeigt nur Warnungen und Fehler (alles außer Info); ohne solche Einträge steht dort „Keine Vorkommnisse“
-- [ ] Proxy-Einstellungen: Schalter „Proxy verwenden“ (aus = mitgelieferter Proxy Caddy, an = externer Proxy; `[proxy] builtin` bleibt, die Oberfläche zeigt den umgekehrten Wert), Feld „Proxy“ (Adresse des externen Proxys, nur bei eingeschaltetem Schalter bearbeitbar, Platzhalter `0.0.0.0`); Hilfetexte unter Schalter und Feld entfallen
-- [ ] Server neu starten (nur Admins): Konsolenbefehl `restart` in `python run.py` und Schaltfläche „Server neu starten“ in den Einstellungen; die Datenbank läuft weiter, die Oberfläche zeigt während des Neustarts das Verbindungs-Overlay
+- [x] Verbindungs-Overlay: Das Icon bekommt unten rechts ein rotes, blinkendes X
+- [x] Überwachen → Einstellungen: Werte ausgegraut (nur lesen)
+- [ ] Warten-Modul: leere Asset-Seite bei 5.000+ Assets; nicht reproduzierbar – wartet auf Browser-Konsolenfehler und Klickweg
+  - Offener Nebenbefund: Workflow-Reiter „Assets“ startet mit Filter `pending`; Assets im Warten-Modul (`in_progress`) erscheinen erst nach Filterwechsel.
+- [x] Spinner erscheint nicht oder zu spät, obwohl Ladezeiten über 0,5 s auftreten
+- [x] Modul-Log so hoch wie das Seitenpanel; zeigt nur Warnungen und Fehler (alles außer Info); ohne solche Einträge steht dort „Keine Vorkommnisse“
+- [x] Proxy-Einstellungen: Schalter „Proxy verwenden“ (aus = mitgelieferter Proxy Caddy, an = externer Proxy; `[proxy] builtin` bleibt, die Oberfläche zeigt den umgekehrten Wert), Feld „Proxy“ (Adresse des externen Proxys, nur bei eingeschaltetem Schalter bearbeitbar, Platzhalter `0.0.0.0`); Hilfetexte unter Schalter und Feld entfallen
+- [x] Server neu starten (nur Admins): Konsolenbefehl `restart` in `python run.py` und Schaltfläche „Server neu starten“ in den Einstellungen; die Datenbank läuft weiter, die Oberfläche zeigt während des Neustarts das Verbindungs-Overlay
 
 ### Release Worker-Client & Steuerung
 

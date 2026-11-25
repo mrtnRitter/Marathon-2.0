@@ -35,6 +35,7 @@ def test_job_status_csv_endpoint(db_engine, tmp_path):
     from datetime import datetime, timedelta, timezone
 
     from fastapi.testclient import TestClient
+    from auth_helpers import sign_in
     from sqlalchemy import text
 
     from marathon.server.app import create_app
@@ -54,7 +55,9 @@ def test_job_status_csv_endpoint(db_engine, tmp_path):
         )
 
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(app)
+    with TestClient(app) as client:
         params = {
             "start": (fixed_time - timedelta(hours=1)).isoformat(),
             "end": (fixed_time + timedelta(hours=1)).isoformat(),

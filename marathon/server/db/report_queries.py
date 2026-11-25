@@ -6,6 +6,9 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from marathon.server.auth.sessions import AuthUser
+from marathon.server.db.workflow_access import workflow_access_filter
+
 
 _job_statuses = ("open", "assigned", "running", "cancelling", "succeeded", "failed", "cancelled", "interrupted")
 
@@ -15,13 +18,15 @@ def job_status_report(
     start: datetime,
     end: datetime,
     workflow_id: str | None = None,
+    user: AuthUser | None = None,
 ) -> dict[str, Any] | None:
-    """Return current job-status counts by workflow for a half-open time range."""
+    """Return visible job-status counts by workflow for a half-open time range."""
     counts_by_workflow: dict[str, dict[str, Any]] = {}
-    parameters: dict[str, Any] = {"start": start, "end": end}
-    workflow_filter = ""
+    access_filter, parameters = workflow_access_filter(user)
+    parameters = {**parameters, "start": start, "end": end}
+    filters = [access_filter]
     if workflow_id is not None:
-        workflow_filter = "WHERE workflow.id = :workflow_id"
+        filters.append("workflow.id = :workflow_id")
         parameters["workflow_id"] = workflow_id
     rows = connection.execute(
         text(
@@ -30,7 +35,7 @@ def job_status_report(
             "FROM workflows AS workflow "
             "LEFT JOIN jobs AS job ON job.workflow_id = workflow.id "
             "AND job.created_at >= :start AND job.created_at < :end "
-            f"{workflow_filter} "
+            f"WHERE {' AND '.join(filters)} "
             "GROUP BY workflow.id, workflow.name, job.status "
             "ORDER BY lower(workflow.name), workflow.id"
         ),

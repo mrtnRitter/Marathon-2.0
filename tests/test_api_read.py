@@ -6,6 +6,8 @@ from time import monotonic
 
 import pytest
 from fastapi.testclient import TestClient
+
+from auth_helpers import sign_in
 from sqlalchemy import text
 
 from marathon.server.app import create_app
@@ -23,7 +25,9 @@ def api_client(db_engine, tmp_path):
     """Insert test records and provide a client with a UI fallback."""
     insert_records(db_engine, fixed_now)
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         yield client
 
 
@@ -121,7 +125,9 @@ def test_unavailable_database_returns_fast_503_and_health_stays_available():
         port = sock.getsockname()[1]
     engine = create_db_engine(DatabaseConfig(port=port), password="x")
     try:
-        with TestClient(create_app(engine=engine)) as client:
+        _test_app = create_app(engine=engine)
+        sign_in(_test_app)
+        with TestClient(_test_app) as client:
             started = monotonic()
             response = client.get("/api/v1/workflows")
             elapsed = monotonic() - started

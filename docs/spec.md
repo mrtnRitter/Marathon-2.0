@@ -596,12 +596,13 @@ Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freig
    - Treffer: Existiert kein `users`-Eintrag, wird er jetzt angelegt (`role = 'admin'` wenn in `admin_emails`, sonst `'user'`); `last_login_at = now()`; `auth_failures` der Adresse werden gelöscht.
    - Erstellt Session in `sessions` (Token `secrets.token_urlsafe(32)`, gespeichert als SHA-256), setzt Cookie `marathon_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure`, `Max-Age = session_days * 86400`); Antwort wie `GET /api/v1/auth/me`.
 4. **Sliding Expiration:** Bei authentifizierten Anfragen wird `sessions.expires_at` auf `now() + session_days` verlängert und das Cookie aufgefrischt, sobald weniger als 80 % der Laufzeit übrig sind; `last_seen_at` wird dabei mit aktualisiert.
-5. **`POST /api/v1/auth/logout`** (`204`, Session gelöscht, Cookie entfernt), **`GET /api/v1/auth/me`** → `{ "id", "email", "display_name", "role" }`, ohne gültige Session `401`.
+5. **`POST /api/v1/auth/logout`** antwortet immer mit `204` und entfernt das Cookie, auch ohne gültige Session. **`GET /api/v1/auth/me`** → `{ "id", "email", "display_name", "role" }`, ohne gültige Session `401`.
 
 ### Zugriffsschutz der API
 
 - Ohne gültige Session antworten alle Routen unter `/api/v1` mit `401` „Nicht angemeldet“, außer `GET /health`, `GET /auth/status`, `POST /auth/request-code`, `POST /auth/confirm` und der Worker-Schnittstelle `/worker/…` (Worker-Token). Der Live-Kanal `GET /events` verlangt ebenfalls eine Session.
 - Admin-Routen antworten normalen Nutzern mit `403` „Nur für Admins“.
+- Unbekannte API-Pfade unter `/api/` verlangen ebenfalls eine gültige Session.
 - Die Oberfläche (statische Dateien) ist ohne Anmeldung erreichbar; sie leitet bei `401` auf `/login` um.
 
 ### Break-Glass-Admin
@@ -624,7 +625,7 @@ Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freig
 
 ### Erlaubte E-Mail-Domains (Einstellungen)
 
-- `GET/PUT /api/v1/settings` erhält den Abschnitt `"auth": { "allowed_domains": ["looks.film"] }`; `PUT` verlangt alle Abschnitte.
+- `GET /api/v1/settings` ist für alle angemeldeten Nutzer lesbar; `PUT /api/v1/settings` ist Admins vorbehalten und verlangt alle Abschnitte. Die Antwort enthält `"auth": { "allowed_domains": ["looks.film"] }`.
 - Prüfregel: Einträge getrimmt, `casefold()`, führendes `@` entfernt, Doppelte entfernt (Reihenfolge bleibt), jede Domain mit mindestens einem Punkt aus Labels `a–z 0–9 -` (1–63 Zeichen, nicht mit `-` beginnend oder endend), insgesamt höchstens 253 Zeichen. Fehler `422` „E-Mail-Domains: nur Domains ohne Adresse, z. B. looks.film“.
 - Vergleich exakt: `looks.film` erlaubt `max@looks.film`, nicht `max@berlin.looks.film`.
 - Die Liste gilt nur für neue Konten; bestehende Konten melden sich weiter an.
@@ -641,8 +642,9 @@ Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freig
   - `edit` = **Teilen zur Bearbeitung und Ausführung**: zusätzlich Bearbeiten, Speichern und Zeitplan.
 - Eigentümer hat implizit `edit` und darf zusätzlich löschen und teilen. Admins haben immer Vollzugriff, sehen auch Workflows ohne Eigentümer und setzen Eigentümer.
 - Wirksame Stufe je Workflow `access`: `admin` | `owner` | `edit` | `run` | `view`; Workflows ohne Zugriff erscheinen nirgends (Listen, Dashboard, Assets, Reports) und antworten mit `404` „Workflow nicht gefunden“. Unzureichende Stufe → `403` „Keine Berechtigung für diesen Workflow“. Erneut verarbeiten in einen anderen Workflow verlangt dort ebenfalls mindestens `run`.
-- `GET /api/v1/workflows/{id}/shares` und `PUT /api/v1/workflows/{id}/shares` mit `{ "shares": [{ "user_id": "…", "access": "view" | "run" | "edit" }] }` (ersetzt alle Freigaben; nur Eigentümer und Admins; der Eigentümer selbst steht nicht in der Liste).
-- `PUT /api/v1/workflows/{id}/owner` mit `{ "user_id": "…" }` (nur Admins).
+- `GET /api/v1/workflows/{id}/shares` liefert je Freigabe `user_id`, `access`, `email` und `display_name`. `PUT /api/v1/workflows/{id}/shares` mit `{ "shares": [{ "user_id": "…", "access": "view" | "run" | "edit" }] }` ersetzt alle Freigaben; nur Eigentümer und Admins dürfen teilen, der Eigentümer selbst steht nicht in der Liste.
+- `PUT /api/v1/workflows/{id}/shares` antwortet mit `422` und „Unbekannter Nutzer: <id>“, „Der Eigentümer kann nicht freigegeben werden“ oder „Nutzer doppelt: <id>“, wenn Nutzer fehlen, der Eigentümer eingetragen oder ein Nutzer doppelt aufgeführt wird.
+- `PUT /api/v1/workflows/{id}/owner` mit `{ "user_id": "…" }` (nur Admins); eine Freigabe für den neuen Eigentümer wird entfernt. Duplizieren übernimmt keine Freigaben. `POST /api/v1/workflows/{id}/graph/impact` verlangt die Stufe `edit`.
 - Workflow-Datensätze enthalten `owner` (`{ id, email, display_name }` oder `null`) und `access`.
 
 ### Rollen-Abgrenzung in Oberfläche, API & Live-Kanal
@@ -651,7 +653,7 @@ Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freig
 - **Normaler Nutzer (eingeloggt):**
   - Menü ohne „Einstellungen“ und „Nutzer“; die Admin-Routen liefern `403`.
   - Sieht in Workflows, Dashboard, Assets und Reports ausschließlich eigene und für ihn freigegebene Workflows.
-  - Sieht alle Worker nur lesend (keine Steuerung, kein Bearbeiten).
+  - Sieht alle Worker nur lesend (keine Steuerung, kein Bearbeiten); `PUT /api/v1/workers/{id}`, `POST /api/v1/workers/{id}/start` und `POST /api/v1/workers/{id}/stop` sind Admins vorbehalten.
   - Ordner-Dialog und Modul-Palette stehen ihm zur Verfügung.
 - **Live-Kanal:** Ereignisse enthalten nur die Namen geänderter Tabellen, keine Inhalte; die Oberfläche lädt daraufhin über die API, die nach Rechten filtert.
 - **Person vor einem Worker OHNE Marathon-Login** *(Release Worker-Client & Steuerung)*:
@@ -662,7 +664,7 @@ Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freig
 ### Server-Neustart (nur Admins)
 
 - Konsole von `python run.py` (auch `--dev`): `restart` und Enter beendet den Server sauber und startet ihn neu; Datenbank und Live-Vorschau laufen weiter. Ausgabe „Server wird neu gestartet …“.
-- `POST /api/v1/server/restart` → `202` `{ "detail": "Server wird neu gestartet" }`; der Server beendet sich sauber mit Exit-Code `75`, `run.py` startet ihn daraufhin neu. Jeder andere Exit-Code beendet `run.py` wie bisher.
+- `POST /api/v1/server/restart` → `202` `{ "detail": "Server wird neu gestartet" }`; ohne registrierte Neustart-Möglichkeit (z. B. bei einem Start ohne `run.py`) antwortet der Endpunkt mit `503` „Neustart nicht verfügbar“. Der Neustart wird erst nach dem Senden der `202`-Antwort angestoßen; der Server beendet sich sauber mit Exit-Code `75`, `run.py` startet ihn daraufhin neu. Jeder andere Exit-Code beendet `run.py` wie bisher.
 - Einstellungen: Schaltfläche „Server neu starten“ mit Bestätigung „Server jetzt neu starten? Laufende Jobs werden unterbrochen und neu verteilt.“; während des Neustarts zeigt die Oberfläche das Verbindungs-Overlay.
 
 ## 3.4 Worker-Client (Windows-Tray), Entkopplung & Verfügbarkeitsregeln

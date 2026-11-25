@@ -18,6 +18,9 @@ export function AssetDetailPage() {
   const { data: asset, loading, reload } = use_data(() => get_asset_detail(asset_id), [asset_id], { live: ['assets', 'asset_history', 'jobs', 'job_assets', 'log_lines'] })
   const [reprocess_open, set_reprocess_open] = useState(false)
   const { data: workflow } = use_data(() => (asset ? get_workflow(asset.workflow_id) : Promise.resolve(null)), [asset?.workflow_id], { live: ['workflows'] })
+  const can_reprocess = Boolean(workflow && ['admin', 'owner', 'edit', 'run'].includes(workflow.access))
+  const can_edit = Boolean(workflow && ['admin', 'owner', 'edit'].includes(workflow.access))
+  const can_manage = Boolean(workflow && ['admin', 'owner'].includes(workflow.access))
 
   if (!asset) {
     return (
@@ -34,14 +37,16 @@ export function AssetDetailPage() {
         title={<>{asset.name}<StatusBadge meta={asset_status_meta[asset.status]} /></>}
         actions={[
           { label: 'Zurück', icon: 'arrow-left', on_click: () => navigate(-1) },
-          { label: 'Nach oben', icon: 'arrow-up' },
-          { label: 'Erneut verarbeiten', icon: 'reprocess', disabled: asset.status === 'in_progress', on_click: () => set_reprocess_open(true) },
-          { label: 'Abbrechen', icon: 'cancel' },
-          { label: asset.status === 'on_hold' ? 'Freigeben' : 'Anhalten', icon: asset.status === 'on_hold' ? 'play' : 'pause' },
-          { label: 'Entfernen', icon: 'trash' },
+          ...(can_edit ? [{ label: 'Nach oben', icon: 'arrow-up' }] : []),
+          ...(can_reprocess ? [
+            { label: 'Erneut verarbeiten', icon: 'reprocess', disabled: asset.status === 'in_progress', on_click: () => set_reprocess_open(true) },
+            { label: 'Abbrechen', icon: 'cancel' },
+            { label: asset.status === 'on_hold' ? 'Freigeben' : 'Anhalten', icon: asset.status === 'on_hold' ? 'play' : 'pause' },
+          ] : []),
+          ...(can_manage ? [{ label: 'Entfernen', icon: 'trash' }] : []),
         ]}
       />
-      <ReprocessPanel open={reprocess_open} asset_ids={[asset.id]} current_workflow_id={asset.workflow_id}
+      <ReprocessPanel open={reprocess_open && can_reprocess} asset_ids={[asset.id]} current_workflow_ids={[asset.workflow_id]}
         on_close={() => set_reprocess_open(false)} on_done={ids => {
           set_reprocess_open(false)
           if (ids[0] !== asset.id) navigate(`/assets/${ids[0]}`)

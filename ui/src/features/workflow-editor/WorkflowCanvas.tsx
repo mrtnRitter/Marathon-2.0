@@ -73,20 +73,21 @@ function read_settings_width(): number {
 const minimap_color = (node: ModuleFlowNode) =>
   node.data.module.counters.failed > 0 ? 'var(--status-failed)' : node.data.module.counters.running > 0 ? 'var(--status-in-progress)' : 'var(--border-strong)'
 
-export function WorkflowCanvas({ workflow_id, initial_mode, on_saved }: { workflow_id: string; initial_mode?: EditorMode; on_saved?: () => void }) {
-  const [mode, set_mode] = useState<EditorMode>(initial_mode ?? 'monitor')
+export function WorkflowCanvas({ workflow_id, initial_mode, can_edit, on_saved }: { workflow_id: string; initial_mode?: EditorMode; can_edit: boolean; on_saved?: () => void }) {
+  const [mode, set_mode] = useState<EditorMode>(can_edit ? initial_mode ?? 'monitor' : 'monitor')
+  useEffect(() => { if (!can_edit) set_mode('monitor') }, [can_edit])
   const { data, reload } = use_data(() => Promise.all([get_workflow_graph(workflow_id), get_module_types()]), [workflow_id])
   if (!data) return <div className="loading">Lade Workflow</div>
   const [graph, module_types] = data
   if (!graph) return <div className="loading">Kein Graph für diesen Workflow</div>
   return (
     <ReactFlowProvider>
-      <Editor key={`${workflow_id}-${graph.version}`} graph={graph} module_types={module_types} mode={mode} on_mode_change={set_mode} on_saved={() => { reload(); on_saved?.() }} on_stale={reload} />
+      <Editor key={`${workflow_id}-${graph.version}`} graph={graph} module_types={module_types} mode={mode} can_edit={can_edit} on_mode_change={set_mode} on_saved={() => { reload(); on_saved?.() }} on_stale={reload} />
     </ReactFlowProvider>
   )
 }
 
-function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale }: { graph: WorkflowGraph; module_types: ModuleType[]; mode: EditorMode; on_mode_change: (mode: EditorMode) => void; on_saved: () => void; on_stale: () => void }) {
+function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved, on_stale }: { graph: WorkflowGraph; module_types: ModuleType[]; mode: EditorMode; can_edit: boolean; on_mode_change: (mode: EditorMode) => void; on_saved: () => void; on_stale: () => void }) {
   const [settings_width, set_settings_width] = useState(read_settings_width)
   useEffect(() => {
     try { localStorage.setItem(settings_width_key, String(settings_width)) } catch {}
@@ -106,7 +107,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale 
   const store = useStoreApi<ModuleFlowNode, Edge>()
   const selection_rect = useStore(state => state.userSelectionRect)
   const transform = useStore(state => state.transform)
-  const editing = mode === 'edit'
+  const editing = can_edit && mode === 'edit'
 
   useEffect(() => {
     if (mode !== 'monitor') return
@@ -317,7 +318,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale 
   }
 
   const on_node_double_click: NodeMouseHandler<ModuleFlowNode> = (_, node) => {
-    if (editing) return
+    if (editing || !can_edit) return
     set_activity_node(null)
     on_mode_change('edit')
     if (node.data.module.locked) {
@@ -335,7 +336,7 @@ function Editor({ graph, module_types, mode, on_mode_change, on_saved, on_stale 
         <div className="workflow-editor">
           <div className="workflow-editor-bar">
             <div className="mode-switch" role="tablist">
-              {(['monitor', 'edit'] as const).map(item => (
+              {(can_edit ? ['monitor', 'edit'] as const : ['monitor'] as const).map(item => (
                 <button key={item} type="button" role="tab" aria-selected={mode === item} className={mode === item ? 'active' : undefined} onClick={() => { on_mode_change(item); set_inspected_id(null); set_activity_node(null) }}>
                   {item === 'monitor' ? 'Überwachen' : 'Bearbeiten'}
                 </button>

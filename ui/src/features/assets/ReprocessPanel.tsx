@@ -2,19 +2,19 @@ import { useEffect, useState } from 'react'
 import { SlidePanel } from '../../components/SlidePanel'
 import { notify } from '../../components/Toast'
 import { get_workflows, reprocess_assets } from '../../data/api'
-import type { Workflow } from '../../data/types'
 import { use_data } from '../../data/use_data'
 
 interface Props {
   open: boolean
   asset_ids: string[]
-  current_workflow_id?: string
+  current_workflow_ids: string[]
   on_close: () => void
   on_done: (result_ids: string[]) => void
 }
 
-export function ReprocessPanel({ open, asset_ids, current_workflow_id, on_close, on_done }: Props) {
+export function ReprocessPanel({ open, asset_ids, current_workflow_ids, on_close, on_done }: Props) {
   const { data: workflows = [] } = use_data(() => (open ? get_workflows() : Promise.resolve([])), [open], { live: ['workflows'] })
+  const current_workflow_id_set = new Set(current_workflow_ids)
   const [target, set_target] = useState('')
   const [sending, set_sending] = useState(false)
 
@@ -51,9 +51,9 @@ export function ReprocessPanel({ open, asset_ids, current_workflow_id, on_close,
         <div className="form-field-control">
           <select id="reprocess-target-workflow" className="input" value={target} onChange={event => set_target(event.target.value)}>
             <option value="">Gleicher Workflow (von vorn)</option>
-            {workflows.filter((workflow: Workflow) => workflow.id !== current_workflow_id).map(workflow => (
-              <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
-            ))}
+            {workflows
+              .filter(workflow => !current_workflow_id_set.has(workflow.id) && ['admin', 'owner', 'edit', 'run'].includes(workflow.access))
+              .map(workflow => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}
           </select>
           <div className="form-field-help">{help}</div>
         </div>

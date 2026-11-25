@@ -13,6 +13,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+
+from auth_helpers import sign_in
 from sqlalchemy import text
 
 from marathon.server import app as server_app
@@ -38,6 +40,7 @@ def _save_proxy(db_engine, *, builtin: bool, public_url: str = PUBLIC_URL) -> No
 
 
 def _request_from(app, peer: str, headers: dict[str, str] | None = None):
+    sign_in(app)
     path = "/api/v1/settings"
     request_headers = {
         key.lower().encode("latin-1"): value.encode("latin-1")
@@ -272,6 +275,7 @@ def test_caddy_end_to_end(monkeypatch, db_engine, tmp_path):
         load_proxy=True,
         listen=("127.0.0.1", server_port),
     )
+    sign_in(app)
 
     import uvicorn
     from threading import Thread

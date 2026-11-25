@@ -6,7 +6,7 @@ import { StatusTabs } from '../../components/StatusTabs'
 import { Toolbar } from '../../components/Toolbar'
 import { ReprocessPanel } from './ReprocessPanel'
 import { get_assets } from '../../data/api'
-import type { Asset, Workflow } from '../../data/types'
+import type { Asset, Workflow, WorkflowAccess } from '../../data/types'
 import { use_data } from '../../data/use_data'
 import { filter_assets, type AssetFilter } from '../../lib/asset_filter'
 import { format_datetime, format_relative } from '../../lib/format'
@@ -15,6 +15,7 @@ import './AssetList.css'
 
 interface Props {
   workflow_id?: string
+  workflow_access?: WorkflowAccess
   /** Status tab shown first; defaults to pending. */
   initial_status?: AssetFilter
   /** When given, a workflow column is shown (global asset view). */
@@ -22,7 +23,7 @@ interface Props {
 }
 
 /** Asset list with status tiles and actions; shared by the global view and the workflow tab. */
-export function AssetList({ workflow_id, workflows, initial_status }: Props) {
+export function AssetList({ workflow_id, workflows, initial_status, workflow_access }: Props) {
   const navigate = useNavigate()
   const { data: assets = [], loading, reload } = use_data(() => get_assets({ workflow_id }), [workflow_id], { live: ['assets', 'jobs'] })
   const [status, set_status] = useState<AssetFilter>(initial_status ?? 'pending')
@@ -43,7 +44,38 @@ export function AssetList({ workflow_id, workflows, initial_status }: Props) {
     { key: 'updated_at', label: 'Letzte Änderung', render: row => <span title={format_datetime(row.updated_at)}>{format_relative(row.updated_at)}</span>, sort_value: row => row.updated_at },
   ]
   const none = selected.length === 0
+  const run_access: WorkflowAccess[] = ['admin', 'owner', 'edit', 'run']
+  const edit_access: WorkflowAccess[] = ['admin', 'owner', 'edit']
+  const manage_access: WorkflowAccess[] = ['admin', 'owner']
+  const has_access = (access: WorkflowAccess | undefined, required: WorkflowAccess[]) => access !== undefined && required.includes(access)
+  const context_has_access = (required: WorkflowAccess[]) => workflows
+    ? workflows.some(workflow => required.includes(workflow.access))
+    : has_access(workflow_access, required)
   const selected_in_progress = assets.some(asset => selected.includes(asset.id) && asset.status === 'in_progress')
+  const selected_assets = assets.filter(asset => selected.includes(asset.id))
+  const selection_has_access = (required: WorkflowAccess[]) => selected.length > 0
+    && selected_assets.length === selected.length
+    && selected_assets.every(asset => {
+      const access = workflows
+        ? workflows.find(workflow => workflow.id === asset.workflow_id)?.access
+        : workflow_access
+      return has_access(access, required)
+    })
+  const selected_can_run = selection_has_access(run_access)
+  const selected_can_edit = selection_has_access(edit_access)
+  const selected_can_manage = selection_has_access(manage_access)
+  const actions = [
+    { label: 'Ansehen', icon: 'eye', disabled: selected.length !== 1, on_click: () => open(selected[0]) },
+    ...(context_has_access(edit_access) ? [{ label: 'Nach oben', icon: 'arrow-up', disabled: none || !selected_can_edit }] : []),
+    ...(context_has_access(run_access) ? [
+      { label: 'Erneut verarbeiten', icon: 'reprocess', disabled: none || selected_in_progress || !selected_can_run, on_click: () => set_reprocess_open(true) },
+      { label: 'Abbrechen', icon: 'cancel', disabled: none || !selected_can_run },
+      { label: status === 'on_hold' ? 'Freigeben' : 'Anhalten', icon: status === 'on_hold' ? 'play' : 'pause', disabled: none || !selected_can_run },
+    ] : []),
+    ...(context_has_access(manage_access) ? [{ label: 'Entfernen', icon: 'trash', disabled: none || !selected_can_manage }] : []),
+    { label: 'Hinzufügen', icon: 'plus' },
+    { label: 'Import', icon: 'upload' },
+  ]
 
   return (
     <div className="asset-list">
@@ -53,23 +85,19 @@ export function AssetList({ workflow_id, workflows, initial_status }: Props) {
           ...asset_statuses.map(item => ({ id: item, ...asset_status_meta[item], count: assets.filter(asset => asset.status === item).length })),
         ]} />
       <div className="asset-list-bar">
-        <Toolbar actions={[
-          { label: 'Ansehen', icon: 'eye', disabled: selected.length !== 1, on_click: () => open(selected[0]) },
-          { label: 'Nach oben', icon: 'arrow-up', disabled: none },
-          { label: 'Erneut verarbeiten', icon: 'reprocess', disabled: none || selected_in_progress, on_click: () => set_reprocess_open(true) },
-          { label: 'Abbrechen', icon: 'cancel', disabled: none },
-          { label: status === 'on_hold' ? 'Freigeben' : 'Anhalten', icon: status === 'on_hold' ? 'play' : 'pause', disabled: none },
-          { label: 'Entfernen', icon: 'trash', disabled: none },
-          { label: 'Hinzufügen', icon: 'plus' },
-          { label: 'Import', icon: 'upload' },
-        ]} />
+        <Toolbar actions={actions} />
         <input className="input asset-list-search" placeholder="Suchen …" value={search} onChange={event => set_search(event.target.value)} />
       </div>
       <DataTable columns={columns} rows={visible} row_key={row => row.id} selected={selected} loading={loading}
         on_selection_change={set_selected} on_row_open={row => open(row.id)}
         empty_text={status === 'all' ? 'Keine Assets' : `Keine Assets mit Status „${asset_status_meta[status].label}“`} />
-      <ReprocessPanel open={reprocess_open} asset_ids={selected} current_workflow_id={workflow_id}
-        on_close={() => set_reprocess_open(false)} on_done={() => { set_reprocess_open(false); set_selected([]); reload() }} />
+      <ReprocessPanel
+        open={reprocess_open && selected_can_run}
+        asset_ids={selected}
+        current_workflow_ids={workflow_id ? [workflow_id] : selected_assets.map(asset => asset.workflow_id)}
+        on_close={() => set_reprocess_open(false)}
+        on_done={() => { set_reprocess_open(false); set_selected([]); reload() }}
+      />
     </div>
   )
 }

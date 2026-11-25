@@ -7,6 +7,54 @@ export type JobStatus = 'open' | 'assigned' | 'running' | 'cancelling' | 'succee
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export interface PrioEntry { name: string; metadata: Record<string, unknown> }
 
+export type UserRole = 'user' | 'admin'
+
+export type WorkflowAccess = 'admin' | 'owner' | 'edit' | 'run' | 'view'
+export type WorkflowShareAccess = 'view' | 'run' | 'edit'
+
+export interface WorkflowOwner {
+  id: string
+  email: string
+  display_name: string
+}
+
+export interface UserDirectoryEntry {
+  id: string
+  email: string
+  display_name: string
+}
+
+export interface WorkflowShare {
+  user_id: string
+  email: string
+  display_name: string
+  access: WorkflowShareAccess
+}
+
+export interface AuthUser {
+  id: string
+  email: string
+  display_name: string
+  role: UserRole
+}
+
+export interface UserRecord extends AuthUser {
+  protected: boolean
+  created_at: string
+  last_login_at: string | null
+  session_count: number
+  locked_until: string | null
+}
+
+export interface UserSession {
+  id: string
+  user_agent: string | null
+  created_at: string
+  last_seen_at: string
+  expires_at: string
+  current: boolean
+}
+
 export type FieldValue = string | number | boolean | PrioEntry[]
 
 export interface DirEntry {
@@ -101,6 +149,8 @@ export interface WorkflowSchedule extends ScheduleInput {
 
 export interface Workflow {
   id: string
+  owner: WorkflowOwner | null
+  access: WorkflowAccess
   name: string
   description: string
   active: boolean

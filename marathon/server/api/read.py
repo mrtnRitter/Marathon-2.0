@@ -5,7 +5,8 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.engine import Engine
 
-from marathon.server.api.deps import get_engine
+from marathon.server.api.deps import current_user, get_engine
+from marathon.server.auth.sessions import AuthUser
 from marathon.server.db.queries import (
     asset_totals,
     get_workflow,
@@ -21,28 +22,38 @@ AssetStatus = Literal["pending", "in_progress", "done", "failed", "on_hold"]
 
 
 @router.get("/dashboard")
-def get_dashboard(engine: Engine = Depends(get_engine)) -> dict[str, Any]:
-    """Return workflows, asset totals, and workers for the dashboard."""
+def get_dashboard(
+    user: AuthUser = Depends(current_user),
+    engine: Engine = Depends(get_engine),
+) -> dict[str, Any]:
+    """Return accessible workflows, visible asset totals, and workers."""
     with engine.connect() as connection:
         return {
-            "workflows": list_workflows(connection),
-            "totals": asset_totals(connection),
+            "workflows": list_workflows(connection, user),
+            "totals": asset_totals(connection, user),
             "workers": list_workers(connection),
         }
 
 
 @router.get("/workflows")
-def get_workflows(engine: Engine = Depends(get_engine)) -> list[dict[str, Any]]:
-    """Return all workflows and their asset counts."""
+def get_workflows(
+    user: AuthUser = Depends(current_user),
+    engine: Engine = Depends(get_engine),
+) -> list[dict[str, Any]]:
+    """Return visible workflows and their asset counts."""
     with engine.connect() as connection:
-        return list_workflows(connection)
+        return list_workflows(connection, user)
 
 
 @router.get("/workflows/{workflow_id}")
-def get_workflow_by_id(workflow_id: str, engine: Engine = Depends(get_engine)) -> dict[str, Any]:
-    """Return one workflow or a not-found response."""
+def get_workflow_by_id(
+    workflow_id: str,
+    user: AuthUser = Depends(current_user),
+    engine: Engine = Depends(get_engine),
+) -> dict[str, Any]:
+    """Return a visible workflow or a not-found response."""
     with engine.connect() as connection:
-        workflow = get_workflow(connection, workflow_id)
+        workflow = get_workflow(connection, workflow_id, user)
     if workflow is None:
         raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
     return workflow
@@ -59,11 +70,12 @@ def get_module_types(engine: Engine = Depends(get_engine)) -> list[dict[str, Any
 def get_assets(
     workflow_id: str | None = None,
     status: AssetStatus | None = None,
+    user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> list[dict[str, Any]]:
-    """Return assets with optional workflow and status filters."""
+    """Return assets from accessible workflows with optional filters."""
     with engine.connect() as connection:
-        return list_assets(connection, workflow_id=workflow_id, status=status)
+        return list_assets(connection, workflow_id=workflow_id, status=status, user=user)
 
 
 @router.get("/workers")

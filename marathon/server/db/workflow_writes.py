@@ -167,6 +167,7 @@ def create_workflow(
     description: str,
     schedule: dict[str, Any] | None = None,
     now: datetime | None = None,
+    owner_user_id: str | None = None,
 ) -> str:
     """Create a workflow and its initial empty version, returning its ID."""
     workflow_id = f"wf-{uuid4().hex[:12]}"
@@ -176,14 +177,15 @@ def create_workflow(
         text(
             "INSERT INTO workflows "
             "(id, name, description, active, current_version, schedule_every, schedule_unit, "
-            "schedule_start, next_run_at) "
+            "schedule_start, next_run_at, owner_user_id) "
             "VALUES (:id, :name, :description, false, 1, :schedule_every, :schedule_unit, "
-            ":schedule_start, :next_run_at)"
+            ":schedule_start, :next_run_at, :owner_user_id)"
         ),
         {
             "id": workflow_id,
             "name": normalized_name,
             "description": description.strip(),
+            "owner_user_id": owner_user_id,
             **schedule_fields,
         },
     )
@@ -198,6 +200,7 @@ def duplicate_workflow(
     connection: Connection,
     workflow_id: str,
     now: datetime | None = None,
+    owner_user_id: str | None = None,
 ) -> str | None:
     """Duplicate a workflow's current metadata and graph, or return None if missing."""
     connection.execute(text("SET LOCAL lock_timeout = '10s'"))
@@ -238,14 +241,15 @@ def duplicate_workflow(
         text(
             "INSERT INTO workflows "
             "(id, name, description, active, current_version, schedule_every, schedule_unit, "
-            "schedule_start, next_run_at) "
+            "schedule_start, next_run_at, owner_user_id) "
             "VALUES (:id, :name, :description, false, 1, :schedule_every, :schedule_unit, "
-            ":schedule_start, :next_run_at)"
+            ":schedule_start, :next_run_at, :owner_user_id)"
         ),
         {
             "id": duplicate_id,
             "name": candidate,
             "description": source["description"],
+            "owner_user_id": owner_user_id,
             **schedule_fields,
         },
     )

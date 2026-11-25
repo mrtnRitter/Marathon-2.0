@@ -8,6 +8,8 @@ from time import monotonic, sleep
 
 import pytest
 from fastapi.testclient import TestClient
+
+from auth_helpers import sign_in
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
@@ -67,7 +69,11 @@ def _module(module_id: str, type_id: str = "step", name: str = "Modul") -> dict:
 def api_client(db_engine, tmp_path):
     """Provide a client backed by the isolated test database."""
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('test-admin', 'admin@test.local', 'Test Admin', 'admin')"))
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         yield client
 
 

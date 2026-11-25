@@ -3,6 +3,8 @@
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
+
+from auth_helpers import sign_in
 from sqlalchemy import text
 
 from marathon.server.app import create_app
@@ -33,7 +35,9 @@ def test_graph_returns_current_workflow_modules_and_counters(db_engine, tmp_path
             "('wf-a', 'm1', '/two.mov', 20, 2, :stable_since, NULL)"
         ), {"stable_since": fixed_now})
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         response = client.get("/api/v1/workflows/wf-a/graph")
         assert response.status_code == 200
         graph = response.json()
@@ -68,7 +72,9 @@ def test_graph_returns_current_workflow_modules_and_counters(db_engine, tmp_path
 def test_module_activity_contains_related_assets_workers_and_logs(db_engine, tmp_path):
     insert_records(db_engine, fixed_now)
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         response = client.get("/api/v1/workflows/wf-a/modules/m2/activity")
         assert response.status_code == 200
         activity = response.json()
@@ -99,7 +105,9 @@ def test_asset_detail_timeline_messages_logs_and_legacy_asset_list(db_engine, tm
             "WHERE asset_id IN ('a-done', 'a-failed')"
         ))
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         done_assets = client.get("/api/v1/assets", params={"status": "done"}).json()
         done = client.get(f"/api/v1/assets/{done_assets[0]['id']}")
         assert done.status_code == 200
@@ -158,7 +166,9 @@ def test_graph_done_counter_counts_asset_results_not_jobs(db_engine, tmp_path):
             "('j-batch', 'a-batch-3', 'result', 'error')"
         ))
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         graph = client.get("/api/v1/workflows/wf-a/graph").json()
         batch = next(module for module in graph["modules"] if module["id"] == "m-batch")
         assert batch["counters"]["done"] == 2
@@ -181,14 +191,14 @@ def test_module_activity_logs_include_job_context_and_nulls(db_engine, tmp_path)
             "null_worker_ts": fixed_now + timedelta(seconds=3),
         })
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         response = client.get("/api/v1/workflows/wf-a/modules/m2/activity")
         assert response.status_code == 200
         logs = response.json()["logs"]
         assert [(line["text"], line["asset"], line["worker"]) for line in logs] == [
-            ("job log", "a-running", "WORKER-01"),
             ("module log", None, None),
-            ("null worker log", "a-waiting", None),
         ]
 
 
@@ -197,7 +207,7 @@ def test_module_activity_returns_latest_500_logs_in_ascending_order(db_engine, t
     with db_engine.begin() as connection:
         connection.execute(text(
             "INSERT INTO log_lines (workflow_id, module_id, job_id, ts, level, text) "
-            "VALUES (:workflow_id, :module_id, NULL, :ts, 'info', :text)"
+            "VALUES (:workflow_id, :module_id, NULL, :ts, 'warn', :text)"
         ), [
             {
                 "workflow_id": "wf-a", "module_id": "m2",
@@ -206,7 +216,9 @@ def test_module_activity_returns_latest_500_logs_in_ascending_order(db_engine, t
             for index in range(505)
         ])
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         response = client.get("/api/v1/workflows/wf-a/modules/m2/activity")
         assert response.status_code == 200
         logs = response.json()["logs"]
@@ -227,7 +239,9 @@ def test_asset_timeline_uses_each_job_asset_output(db_engine, tmp_path):
             "('j-multi-output', 'a-waiting', 'result', 'failure')"
         ))
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    _test_app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         outputs_by_asset = {}
         for asset_id in ("a-running", "a-waiting"):
             response = client.get(f"/api/v1/assets/{asset_id}")

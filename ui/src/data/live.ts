@@ -1,4 +1,4 @@
-export const live_tables = ['module_types', 'workflows', 'workflow_versions', 'workflow_modules', 'workflow_connections', 'workers', 'assets', 'jobs', 'job_assets', 'asset_history', 'log_lines'] as const
+export const live_tables = ['module_types', 'workflows', 'workflow_versions', 'workflow_modules', 'workflow_connections', 'workers', 'assets', 'jobs', 'job_assets', 'asset_history', 'log_lines', 'users'] as const
 export type LiveTable = typeof live_tables[number]
 export const live_url = '/api/v1/events'
 

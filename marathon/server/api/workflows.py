@@ -9,10 +9,19 @@ from sqlalchemy import text
 from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy.engine import Engine
 
-from marathon.server.api.deps import get_engine
+from marathon.server.api.deps import current_user, get_engine
+from marathon.server.auth.sessions import AuthUser
 from marathon.server.db.detail_queries import get_graph
 from marathon.server.engine.jobs import graph_impact
 from marathon.server.db.queries import get_workflow
+from marathon.server.db.workflow_access import (
+    list_workflow_shares,
+    replace_workflow_shares,
+    require_workflow_access,
+    set_workflow_owner,
+    user_exists,
+    workflow_owner_id,
+)
 from marathon.server.db.workflow_writes import (
     WorkflowConflict,
     WorkflowNotStartable,
@@ -48,6 +57,25 @@ class ActiveInput(BaseModel):
     """Strict boolean payload for changing a workflow active state."""
 
     active: StrictBool
+
+
+class ShareInput(BaseModel):
+    """One user and access level in a workflow share replacement."""
+
+    user_id: str
+    access: str
+
+
+class SharesInput(BaseModel):
+    """Complete workflow share list replacement."""
+
+    shares: list[ShareInput]
+
+
+class OwnerInput(BaseModel):
+    """New workflow owner identifier."""
+
+    user_id: str
 
 
 class PositionInput(BaseModel):
@@ -92,6 +120,7 @@ router = APIRouter(tags=["workflows"])
 @router.post("/workflows", status_code=status.HTTP_201_CREATED)
 def post_workflow(
     payload: WorkflowInput,
+    user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
     """Create a workflow and return its initial metadata in the same transaction."""
@@ -103,8 +132,9 @@ def post_workflow(
                 payload.description,
                 payload.schedule.model_dump() if payload.schedule else None,
                 datetime.now(timezone.utc),
+                owner_user_id=user.id,
             )
-            workflow = get_workflow(connection, workflow_id)
+            workflow = get_workflow(connection, workflow_id, user)
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return workflow
@@ -113,15 +143,19 @@ def post_workflow(
 @router.post("/workflows/{workflow_id}/duplicate", status_code=status.HTTP_201_CREATED)
 def post_duplicate_workflow(
     workflow_id: str,
+    user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
     """Duplicate a workflow and return its metadata in the same transaction."""
     try:
         with engine.begin() as connection:
-            duplicate_id = duplicate_workflow(connection, workflow_id, datetime.now(timezone.utc))
+            require_workflow_access(connection, user, workflow_id, "view")
+            duplicate_id = duplicate_workflow(
+                connection, workflow_id, datetime.now(timezone.utc), owner_user_id=user.id
+            )
             if duplicate_id is None:
                 raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
-            workflow = get_workflow(connection, duplicate_id)
+            workflow = get_workflow(connection, duplicate_id, user)
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return workflow
@@ -131,11 +165,13 @@ def post_duplicate_workflow(
 def put_workflow(
     workflow_id: str,
     payload: WorkflowInput,
+    user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
     """Update workflow metadata and return it within the write transaction."""
     try:
         with engine.begin() as connection:
+            require_workflow_access(connection, user, workflow_id, "edit")
             updated = update_workflow(
                 connection,
                 workflow_id,
@@ -146,7 +182,7 @@ def put_workflow(
             )
             if not updated:
                 raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
-            workflow = get_workflow(connection, workflow_id)
+            workflow = get_workflow(connection, workflow_id, user)
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return workflow
@@ -156,15 +192,17 @@ def put_workflow(
 def put_workflow_active(
     workflow_id: str,
     payload: ActiveInput,
+    user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
     """Set a workflow's active state and return its metadata."""
     try:
         with engine.begin() as connection:
+            require_workflow_access(connection, user, workflow_id, "run")
             updated = set_workflow_active(connection, workflow_id, payload.active)
             if not updated:
                 raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
-            workflow = get_workflow(connection, workflow_id)
+            workflow = get_workflow(connection, workflow_id, user)
     except WorkflowNotStartable as exc:
         raise HTTPException(
             status_code=409,
@@ -176,9 +214,14 @@ def put_workflow_active(
 
 
 @router.delete("/workflows/{workflow_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_workflow_by_id(workflow_id: str, engine: Engine = Depends(get_engine)) -> Response:
+def delete_workflow_by_id(
+    workflow_id: str,
+    user: AuthUser = Depends(current_user),
+    engine: Engine = Depends(get_engine),
+) -> Response:
     """Delete a workflow and its dependent data, returning an empty 204 response."""
     with engine.begin() as connection:
+        require_workflow_access(connection, user, workflow_id, "owner")
         deleted = delete_workflow(connection, workflow_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
@@ -189,11 +232,13 @@ def delete_workflow_by_id(workflow_id: str, engine: Engine = Depends(get_engine)
 def put_workflow_graph(
     workflow_id: str,
     payload: GraphInput,
+    user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
     """Save a new graph version and return it from the same transaction."""
     try:
         with engine.begin() as connection:
+            require_workflow_access(connection, user, workflow_id, "edit")
             new_version = save_graph(
                 connection,
                 workflow_id,
@@ -218,18 +263,77 @@ def put_workflow_graph(
 def post_workflow_graph_impact(
     workflow_id: str,
     payload: GraphInput,
+    user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
     """Return the impact of removing modules in a proposed graph."""
     with engine.begin() as connection:
+        require_workflow_access(connection, user, workflow_id, "edit")
         exists = connection.execute(
             text("SELECT id FROM workflows WHERE id = :id FOR SHARE"), {"id": workflow_id}
         ).scalar_one_or_none()
-        if exists is None:
-            raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
         return graph_impact(
             connection,
             workflow_id,
             [module.id for module in payload.modules],
             [(item.source_module_id, item.source_output_id, item.target_module_id) for item in payload.connections],
         )
+
+
+@router.get("/workflows/{workflow_id}/shares")
+def get_workflow_shares(
+    workflow_id: str,
+    user: AuthUser = Depends(current_user),
+    engine: Engine = Depends(get_engine),
+) -> dict[str, Any]:
+    """Return shares for a workflow owned by the current user or an admin."""
+    with engine.connect() as connection:
+        require_workflow_access(connection, user, workflow_id, "owner")
+        return {"shares": list_workflow_shares(connection, workflow_id)}
+
+
+@router.put("/workflows/{workflow_id}/shares")
+def put_workflow_shares(
+    workflow_id: str,
+    payload: SharesInput,
+    user: AuthUser = Depends(current_user),
+    engine: Engine = Depends(get_engine),
+) -> dict[str, Any]:
+    """Replace all workflow shares and return the resulting list."""
+    with engine.begin() as connection:
+        require_workflow_access(connection, user, workflow_id, "owner")
+        owner_id = workflow_owner_id(connection, workflow_id)
+        seen: set[str] = set()
+        shares = []
+        for share in payload.shares:
+            if share.user_id in seen:
+                raise HTTPException(status_code=422, detail=f"Nutzer doppelt: {share.user_id}")
+            seen.add(share.user_id)
+            if share.user_id == owner_id:
+                raise HTTPException(status_code=422, detail="Der Eigentümer kann nicht freigegeben werden")
+            if not user_exists(connection, share.user_id):
+                raise HTTPException(status_code=422, detail=f"Unbekannter Nutzer: {share.user_id}")
+            if share.access not in ("view", "run", "edit"):
+                raise HTTPException(status_code=422, detail=f"Ungültige Freigabestufe: {share.access}")
+            shares.append({"user_id": share.user_id, "access": share.access})
+        replace_workflow_shares(connection, workflow_id, shares)
+        return {"shares": list_workflow_shares(connection, workflow_id)}
+
+
+@router.put("/workflows/{workflow_id}/owner")
+def put_workflow_owner(
+    workflow_id: str,
+    payload: OwnerInput,
+    user: AuthUser = Depends(current_user),
+    engine: Engine = Depends(get_engine),
+) -> dict[str, Any]:
+    """Set a workflow owner; this route is restricted to administrators."""
+    if not user.is_admin:
+        raise HTTPException(status_code=403, detail="Nur für Admins")
+    with engine.begin() as connection:
+        if not user_exists(connection, payload.user_id):
+            raise HTTPException(status_code=422, detail=f"Unbekannter Nutzer: {payload.user_id}")
+        require_workflow_access(connection, user, workflow_id, "owner")
+        set_workflow_owner(connection, workflow_id, payload.user_id)
+        workflow = get_workflow(connection, workflow_id, user)
+    return workflow

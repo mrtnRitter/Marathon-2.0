@@ -31,3 +31,17 @@
   margin: 0;
   color: var(--text-muted);
 }
+
+.connection-overlay-status {
+  position: absolute;
+  right: max(var(--space-4), env(safe-area-inset-right));
+  bottom: max(var(--space-4), env(safe-area-inset-bottom));
+  display: grid;
+  place-items: center;
+  color: var(--status-failed);
+  animation: connection-overlay-blink 1s steps(2, end) infinite;
+}
+
+@keyframes connection-overlay-blink {
+  50% { opacity: 0.2; }
+}

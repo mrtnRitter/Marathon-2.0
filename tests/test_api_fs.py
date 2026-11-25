@@ -9,6 +9,8 @@ from time import monotonic
 import pytest
 from fastapi.testclient import TestClient
 
+from auth_helpers import sign_in
+
 from marathon.server.api import fs
 from marathon.server.app import create_app
 
@@ -17,7 +19,9 @@ from marathon.server.app import create_app
 @pytest.fixture
 def api_client():
     """Provide an API client without opening a database connection."""
-    with TestClient(create_app()) as client:
+    _test_app = create_app()
+    sign_in(_test_app)
+    with TestClient(_test_app) as client:
         yield client
 
 

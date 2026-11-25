@@ -7,11 +7,7 @@
   justify-content: center;
   gap: 6px;
   background: var(--bg-overlay);
-  visibility: hidden;
-  opacity: 0;
-  animation: spinner-show 0s linear 0.5s forwards;
 }
-@keyframes spinner-show { to { visibility: visible; opacity: 1; } }
 .spinner-dot {
   width: 8px;
   height: 8px;

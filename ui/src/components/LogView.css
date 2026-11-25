@@ -16,3 +16,35 @@
 .log-ts { color: var(--text-dim); }
 .log-level { font-weight: 700; }
 .log-cursor { color: var(--accent); animation: blink 1s steps(2) infinite; }
+.log-view-module {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  background: var(--bg-canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  line-height: 1.7;
+}
+.log-module-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.log-module-table th, .log-module-table td { padding: 6px var(--space-2); border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.log-module-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-panel-raised);
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.log-module-table th:nth-child(1) { width: 18%; }
+.log-module-table th:nth-child(2) { width: 10%; }
+.log-module-table th:nth-child(3), .log-module-table th:nth-child(4) { width: 16%; }
+.log-module-table td:nth-child(1) { color: var(--text-dim); white-space: nowrap; }
+.log-module-table td:nth-child(2) { font-weight: 700; white-space: nowrap; }
+.log-module-table .log-context-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-module-table .log-module-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+.log-module-empty { padding: var(--space-5); color: var(--text-dim); text-align: center; }

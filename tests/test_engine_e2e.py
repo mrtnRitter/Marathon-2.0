@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from marathon.modules._job import JobStopped
 from marathon.server.app import create_app
+from auth_helpers import sign_in
 from marathon.server.config import EngineConfig
 from marathon.worker.runtime import WorkerRuntime, worker_capabilities
 
@@ -105,6 +106,8 @@ def _running_server_and_worker(db_engine, tmp_path, resolve_module=None):
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
     url = f"http://127.0.0.1:{port}"
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('test-admin', 'admin@test.local', 'Test Admin', 'admin')"))
     app = create_app(
         static_dir=tmp_path,
         engine=db_engine,
@@ -113,6 +116,7 @@ def _running_server_and_worker(db_engine, tmp_path, resolve_module=None):
         run_engine=True,
         sync_catalog=True,
     )
+    sign_in(app)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
     server_thread = Thread(target=server.run, name="test-uvicorn-server", daemon=True)
     worker_stop = Event()

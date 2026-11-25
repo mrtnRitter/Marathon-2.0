@@ -4,7 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, StrictBool
 from sqlalchemy.engine import Connection, Engine
 
-from marathon.server.api.deps import get_engine
+from marathon.server.api.deps import get_engine, require_admin
+from marathon.server.auth.sessions import AuthUser
 from marathon.server.db.settings_writes import (
     SettingsValidationError,
     get_settings,
@@ -51,7 +52,11 @@ def read_settings(engine: Engine = Depends(get_engine)) -> dict:
 
 
 @router.put("/settings")
-def put_settings(payload: SettingsInput, engine: Engine = Depends(get_engine)) -> dict:
+def put_settings(
+    payload: SettingsInput,
+    _admin: AuthUser = Depends(require_admin),
+    engine: Engine = Depends(get_engine),
+) -> dict:
     """Validate and save application settings."""
     try:
         with engine.begin() as connection:

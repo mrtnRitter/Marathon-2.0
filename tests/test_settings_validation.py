@@ -5,6 +5,8 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+
+from auth_helpers import sign_in
 from sqlalchemy import text
 
 from marathon.modules import load_catalog
@@ -20,8 +22,11 @@ def api_client(db_engine, tmp_path):
     """Provide a client with the current module catalog installed."""
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
     with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('test-admin', 'admin@test.local', 'Test Admin', 'admin')"))
         sync_module_types(connection, load_catalog())
-    with TestClient(create_app(static_dir=tmp_path, engine=db_engine)) as client:
+    app = create_app(static_dir=tmp_path, engine=db_engine)
+    sign_in(app)
+    with TestClient(app) as client:
         yield client
 
 
