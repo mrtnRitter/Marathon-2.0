@@ -37,7 +37,7 @@ async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PU
 
   if (response.status === 404 && allow_404) return null
   const should_redirect_to_login = response.status === 401
-    && !['/auth/status', '/auth/request-code', '/auth/confirm'].includes(path.split('?')[0])
+    && !['/auth/admin-code', '/auth/request-code', '/auth/confirm'].includes(path.split('?')[0])
     && window.location.pathname !== '/login'
   if (should_redirect_to_login && !login_redirect_started) {
     login_redirect_started = true
@@ -57,14 +57,14 @@ async function request<T>(path: string, options: { method?: 'GET' | 'POST' | 'PU
   return await response.json() as T
 }
 
-export const get_auth_status = (): Promise<{ mail_configured: boolean }> =>
-  request<{ mail_configured: boolean }>('/auth/status', { quiet: true }).then(data => data!)
-
 export const request_auth_code = (email: string): Promise<{ detail: string }> =>
   request<{ detail: string }>('/auth/request-code', { method: 'POST', body: { email }, quiet: true }).then(data => data!)
 
 export const confirm_auth_code = (email: string, code: string): Promise<AuthUser> =>
   request<AuthUser>('/auth/confirm', { method: 'POST', body: { email, code }, quiet: true }).then(data => data!)
+
+export const confirm_admin_code = (code: string): Promise<AuthUser> =>
+  request<AuthUser>('/auth/admin-code', { method: 'POST', body: { code }, quiet: true }).then(data => data!)
 
 export const get_auth_me = (): Promise<AuthUser> =>
   request<AuthUser>('/auth/me', { quiet: true }).then(data => data!)
@@ -168,6 +168,9 @@ export const get_smtp_settings = (): Promise<SmtpSettings> =>
 
 export const save_smtp_settings = (input: SmtpSettingsInput): Promise<SmtpSettings> =>
   request<SmtpSettings>('/settings/smtp', { method: 'PUT', body: input }).then(data => data!)
+
+export const send_smtp_test = (address: string): Promise<{ detail: string }> =>
+  request<{ detail: string }>('/settings/smtp/test', { method: 'POST', body: { address } }).then(data => data!)
 
 export const get_dashboard = (): Promise<DashboardData> => request<DashboardData>('/dashboard').then(data => data!)
 

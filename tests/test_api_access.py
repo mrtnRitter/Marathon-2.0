@@ -12,9 +12,9 @@ from marathon.server.auth.sessions import AuthUser
 
 _EXCEPTIONS = {
     ("GET", "/api/v1/health"),
-    ("GET", "/api/v1/auth/status"),
     ("POST", "/api/v1/auth/request-code"),
     ("POST", "/api/v1/auth/confirm"),
+    ("POST", "/api/v1/auth/admin-code"),
     ("POST", "/api/v1/auth/logout"),
 }
 
@@ -72,9 +72,9 @@ def test_public_exceptions_do_not_require_a_session(db_engine):
     app = create_app(engine=db_engine)
     with TestClient(app) as client:
         assert client.get("/api/v1/health").status_code != 401
-        assert client.get("/api/v1/auth/status").status_code != 401
         assert client.post("/api/v1/auth/request-code", json={"email": "test@example.com"}).status_code != 401
         assert client.post("/api/v1/auth/confirm", json={"email": "test@example.com", "code": "000000"}).status_code != 401
+        assert client.post("/api/v1/auth/admin-code", json={"code": "000000"}).status_code != 401
         assert client.post("/api/v1/auth/logout").status_code != 401
 
 

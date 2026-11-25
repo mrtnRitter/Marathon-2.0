@@ -20,7 +20,6 @@ from marathon.server.config import (
     ConfigError,
     EngineConfig,
     ServerWorkerConfig,
-    SmtpConfig,
     caddy_exe,
     caddy_log_file,
     caddy_root_cert,
@@ -196,7 +195,6 @@ def create_app(
     load_proxy: bool = False,
     listen: tuple[str, int] | None = None,
     auth_config: AuthConfig | None = None,
-    smtp_config: SmtpConfig | None = None,
     mail_sender: MailSender | None = None,
 ) -> FastAPI:
     """Build the versioned API and UI without opening a database connection."""
@@ -226,7 +224,6 @@ def create_app(
     app.state.proxy_settings = None
     app.state.proxy_builtin = False
     app.state.auth_config = auth_config if auth_config is not None else AuthConfig()
-    app.state.smtp_config = smtp_config if smtp_config is not None else SmtpConfig()
     app.state.mail_sender = mail_sender if mail_sender is not None else MailSender()
     if not hasattr(app.state, "request_restart"):
         app.state.request_restart = None

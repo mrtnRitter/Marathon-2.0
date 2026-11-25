@@ -5,6 +5,7 @@ from pydantic import BaseModel, StrictBool, StrictInt
 from sqlalchemy.engine import Connection, Engine
 
 from marathon.server.api.deps import get_engine, require_admin
+from marathon.server.config import email_error, normalize_email
 from marathon.server import mail
 from marathon.server.auth.sessions import AuthUser
 from marathon.server.db.settings_writes import (
@@ -50,10 +51,16 @@ class SmtpInput(BaseModel):
     host: str
     port: StrictInt
     username: str
-    use_tls: StrictBool
+    encryption: str
     from_address: str
     from_name: str
     password: str | None = None
+
+
+class SmtpTestInput(BaseModel):
+    """Recipient address for an administrator's test email."""
+
+    address: str
 
 
 router = APIRouter(tags=["settings"])
@@ -99,7 +106,7 @@ def read_smtp_settings(
         "host": config.host,
         "port": config.port,
         "username": config.username,
-        "use_tls": config.use_tls,
+        "encryption": config.encryption,
         "from_address": config.from_address,
         "from_name": config.from_name,
         "password_set": mail.smtp_password_is_set(),
@@ -120,10 +127,14 @@ def put_smtp_settings(
                 host=payload.host,
                 port=payload.port,
                 username=payload.username,
-                use_tls=payload.use_tls,
+                encryption=payload.encryption,
                 from_address=payload.from_address,
                 from_name=payload.from_name,
             )
+            if payload.username.strip() and not payload.password and not mail.smtp_password_is_set():
+                raise SettingsValidationError(
+                    "Mailversand: Passwort fehlt für den Benutzernamen"
+                )
             if payload.password:
                 if "\n" in payload.password or "\r" in payload.password:
                     raise SettingsValidationError(
@@ -147,8 +158,32 @@ def put_smtp_settings(
         "host": config.host,
         "port": config.port,
         "username": config.username,
-        "use_tls": config.use_tls,
+        "encryption": config.encryption,
         "from_address": config.from_address,
         "from_name": config.from_name,
         "password_set": mail.smtp_password_is_set(),
     }
+
+
+@router.post("/settings/smtp/test")
+def send_smtp_test_mail(
+    payload: SmtpTestInput,
+    _admin: AuthUser = Depends(require_admin),
+    engine: Engine = Depends(get_engine),
+) -> dict:
+    """Send a test email using the saved SMTP settings."""
+    try:
+        address = normalize_email(payload.address)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=email_error) from error
+
+    with engine.connect() as connection:
+        config = get_smtp_config(connection)
+    if not config.configured:
+        raise HTTPException(status_code=409, detail=mail.not_configured_error)
+
+    try:
+        mail.send_mail(config, address, mail.test_mail_subject, mail.test_mail_body)
+    except mail.MailError as error:
+        raise HTTPException(status_code=502, detail=f"Testmail nicht gesendet: {error}") from error
+    return {"detail": f"Testmail an {address} gesendet"}

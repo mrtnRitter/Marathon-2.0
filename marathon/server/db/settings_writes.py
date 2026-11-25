@@ -11,6 +11,7 @@ from sqlalchemy.engine import Connection
 from marathon.server.config import (
     ProxyConfig,
     SmtpConfig,
+    smtp_encryptions,
     check_proxy,
     normalize_email,
     normalize_domains,
@@ -147,11 +148,20 @@ def get_smtp_config(connection: Connection) -> SmtpConfig:
         return defaults
     if not isinstance(value, dict):
         raise ValueError("Einstellung smtp ist ungültig")
+    if "encryption" in value:
+        encryption = value["encryption"]
+        if not isinstance(encryption, str) or encryption not in smtp_encryptions:
+            raise ValueError("Einstellung smtp ist ungültig")
+    else:
+        use_tls = value.get("use_tls", True)
+        if type(use_tls) is not bool:
+            raise ValueError("Einstellung smtp ist ungültig")
+        encryption = "starttls" if use_tls else "none"
     config = SmtpConfig(
         host=value.get("host", defaults.host),
         port=value.get("port", defaults.port),
         username=value.get("username", defaults.username),
-        use_tls=value.get("use_tls", defaults.use_tls),
+        encryption=encryption,
         from_address=value.get("from_address", defaults.from_address),
         from_name=value.get("from_name", defaults.from_name),
     )
@@ -159,7 +169,6 @@ def get_smtp_config(connection: Connection) -> SmtpConfig:
         not isinstance(config.host, str)
         or type(config.port) is not int
         or not isinstance(config.username, str)
-        or type(config.use_tls) is not bool
         or not isinstance(config.from_address, str)
         or not isinstance(config.from_name, str)
     ):
@@ -173,7 +182,7 @@ def save_smtp_config(
     host: str,
     port: int,
     username: str,
-    use_tls: bool,
+    encryption: str,
     from_address: str,
     from_name: str,
 ) -> SmtpConfig:
@@ -182,6 +191,8 @@ def save_smtp_config(
     username = username.strip()
     from_address = from_address.strip()
     from_name = from_name.strip()
+    if encryption not in smtp_encryptions:
+        raise SettingsValidationError("Mailversand: Verschlüsselung muss none, starttls oder tls sein")
     if host and not _smtp_host_pattern.fullmatch(host):
         raise SettingsValidationError(
             "Mailversand: Server nur als Rechnername oder IP-Adresse, z. B. smtp.office365.com"
@@ -197,7 +208,7 @@ def save_smtp_config(
             raise SettingsValidationError("Mailversand: Absenderadresse ungültig") from error
     if len(from_name) > 100:
         raise SettingsValidationError("Mailversand: Absendername ist zu lang (max. 100 Zeichen)")
-    config = SmtpConfig(host, port, username, use_tls, from_address, from_name)
+    config = SmtpConfig(host, port, username, encryption, from_address, from_name)
     statement = text(
         "INSERT INTO settings (key, value) VALUES (:key, :value) "
         "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"
@@ -210,7 +221,7 @@ def save_smtp_config(
                 "host": config.host,
                 "port": config.port,
                 "username": config.username,
-                "use_tls": config.use_tls,
+                "encryption": config.encryption,
                 "from_address": config.from_address,
                 "from_name": config.from_name,
             },

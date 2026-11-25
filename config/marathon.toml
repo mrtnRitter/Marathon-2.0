@@ -27,17 +27,3 @@ public_url = "https://laptop-martin-r"  # Adresse, unter der Marathon erreichbar
 builtin = true                          # Mitgelieferten Proxy (Caddy) starten; false = externer Reverse-Proxy
 trusted_proxies = []                    # IP-Adressen externer Reverse-Proxys; bei builtin = true gilt 127.0.0.1 automatisch
 
-[auth]
-admin_emails = []      # Break-Glass-Admins: immer Admin, in der Oberfläche nicht herabstufbar oder löschbar
-allowed_domains = []   # Startwert für erlaubte E-Mail-Domains der Selbstregistrierung (exakt, Subdomains einzeln); danach gilt der Wert aus der Oberfläche
-session_days = 180     # Gültigkeit einer Anmeldung in Tagen, verlängert sich bei Nutzung (1–365)
-code_ttl_minutes = 15  # Gültigkeit des Anmeldecodes in Minuten (1–60)
-
-# Startwert beim ersten Start; danach Einstellungen → Mailversand (Datenbank)
-[smtp]
-host = ""              # SMTP-Server; leer = Mailversand nicht eingerichtet
-port = 587             # Port (1–65535)
-username = ""          # Anmeldename; leer = ohne Anmeldung. Passwort nur per MARATHON_SMTP_PASSWORD oder .data/smtp.pass
-use_tls = true         # STARTTLS verwenden
-from_address = ""      # Absenderadresse, z. B. marathon@looks.film
-from_name = "Marathon" # Anzeigename des Absenders

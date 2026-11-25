@@ -489,8 +489,8 @@ Gilt für jede HTTP-Anfrage an Marathon, sobald der Server seine Proxy-Einstellu
 
 ## 2a.6 Folgen für Teil 3
 
-- `public_url` steht in `[proxy]` (nicht in `[auth]`) und kommt aus den Einstellungen.
-- `[auth] cookie_secure` entfällt; Session-Cookies sind immer `Secure`.
+- `public_url` steht in `[proxy]`, nicht in den Anmeldeeinstellungen, und kommt aus den Einstellungen.
+- Session-Cookies sind immer `Secure`; diese Einstellung ist fest.
 
 ---
 
@@ -501,36 +501,23 @@ Verbindlicher Architektur- und Umsetzungsvertrag (v2: User und Worker strikt get
 ## 3.1 Konfiguration `config/marathon.toml` und Geheimnisse
 
 ```toml
-[auth]
-admin_emails = []                      # Break-Glass-Admins (immer Admin, in UI nicht herabstufbar/löschbar)
-allowed_domains = []                   # Startwert für erlaubte Mail-Domains (danach gilt DB-Einstellung)
-session_days = 180                     # Sliding-Expiration-Dauer einer Nutzer-Session in Tagen (1–365)
-code_ttl_minutes = 15                  # Gültigkeit des Anmeldecodes in Minuten (1–60)
-
-[smtp]
-host = ""                              # Startwert; danach Einstellungen → Mailversand (Datenbank); leer = Mailversand nicht eingerichtet
-port = 587                             # 1–65535
-username = ""                          # Anmeldename; leer = ohne Anmeldung (z. B. Microsoft 365 Direct Send)
-use_tls = true                         # STARTTLS aktivieren
-from_address = ""                      # Absenderadresse, z. B. marathon@looks.film
-from_name = "Marathon"                 # Anzeigename des Absenders
-
 [worker_client]
 require_admin_approval = false         # true = neue Worker müssen vor dem ersten Start einmalig vom Admin zugelassen werden
 local_bridge_port = 47291              # Loopback-Port (127.0.0.1) des Tray-Clients zur lokalen Rechner-Erkennung im Browser
 control_session_hours = 12             # Gültigkeit der lokalen Worker-Steuerungs-Session im Browser (1–168)
 ```
 
+`config/marathon.toml` enthält keine Abschnitte `[auth]` oder `[smtp]`; ältere Abschnitte werden ignoriert.
+
 Regeln:
-- **Keine Zugangsdaten in `marathon.toml` oder im Code:** Das SMTP-Passwort wird ausschließlich aus der Umgebungsvariable `MARATHON_SMTP_PASSWORD` oder (Fallback) aus `.data/smtp.pass` (Dateirechte `0600` unter Linux) gelesen.
-- **Validierung beim Start:**
-  - `admin_emails` und `allowed_domains` werden getrimmt, mit `casefold()` normalisiert, auf gültige Syntax geprüft und ohne Doppelte übernommen (Reihenfolge bleibt); ungültige Einträge liefern `ConfigError`. Bei `allowed_domains` wird ein führendes `@` entfernt.
-  - `session_days` (1–365), `code_ttl_minutes` (1–60), `smtp.port` (1–65535), `smtp.use_tls` Wahrheitswert, `smtp.from_address` leer oder gültige Adresse; `host` gesetzt, aber `from_address` leer → `ConfigError`. `[worker_client]` (Release Worker-Client): `local_bridge_port` (1024–65535), `control_session_hours` (1–168).
+- **Keine Zugangsdaten in `marathon.toml` oder im Code:** Das SMTP-Passwort wird ausschließlich in `.data/smtp.pass` (Dateirechte `0600` unter Linux) gespeichert.
+- **Validierung unter Einstellungen:**
+  - `allowed_domains` werden getrimmt, mit `casefold()` normalisiert, auf gültige Syntax geprüft und ohne Doppelte übernommen (Reihenfolge bleibt); ungültige Einträge werden abgewiesen. Bei `allowed_domains` wird ein führendes `@` entfernt.
+  - Sitzungsdauer und Code-Gültigkeit sind fest auf 180 Tage beziehungsweise 15 Minuten gesetzt. `smtp.port` muss zwischen 1 und 65535 liegen; `smtp.encryption` ist `none`, `starttls` oder `tls`; `smtp.from_address` ist leer oder eine gültige Adresse. Ist `host` gesetzt, muss auch `from_address` gesetzt sein. `[worker_client]` (Release Worker-Client): `local_bridge_port` (1024–65535), `control_session_hours` (1–168).
 - **Mailversand eingerichtet** heißt: `smtp.host` und `smtp.from_address` sind gesetzt.
-- **Seed (`marathon/server/db/seed.py`):**
-  - `settings`: Schlüssel `auth.allowed_domains` wird beim Start mit `config.auth.allowed_domains` angelegt, sofern noch kein Eintrag existiert; danach gilt die Datenbank.
-  - `settings`: Schlüssel `smtp` wird beim Start mit den Werten aus `[smtp]` in `config/marathon.toml` angelegt, aber nur, wenn der Eintrag noch fehlt; danach gilt die Datenbank und Änderungen erfolgen unter Einstellungen → Mailversand.
-  - `users`: Jede Adresse aus `config.auth.admin_emails` wird beim Start angelegt oder auf `role = 'admin'` synchronisiert.
+- **Datenbankwerte:**
+  - `settings.auth.allowed_domains` startet leer und wird nur unter Einstellungen → Anmeldung geändert.
+  - `settings.smtp` enthält die gespeicherten Mailversand-Einstellungen; solange kein Eintrag gespeichert ist, gelten die Standardwerte (leerer Host, Port 587, leerer Benutzername und Absender, STARTTLS, Absendername „Marathon“).
 
 ## 3.2 Datenbank
 
@@ -571,12 +558,14 @@ Die neuen Tabellen erhalten dieselben Live-Kanal-Trigger wie die bestehenden Tab
 
 ### Mailversand (`marathon/server/mail.py`)
 
-- SMTP über die Python-Standardbibliothek (`smtplib`, `email.message`), keine neue Abhängigkeit; Zeitlimit 10 s je Versand (Verbindung, STARTTLS, Anmeldung, Senden).
-- SMTP-Einstellungen werden in `settings` unter dem Schlüssel `smtp` gespeichert. Die Werte aus `[smtp]` in `config/marathon.toml` sind nur Startwerte beim ersten Start; danach gelten die Datenbankwerte. Ein leerer `host` bedeutet, dass der Mailversand nicht eingerichtet ist. Einstellungsänderungen gelten ohne Neustart.
-- Nur Admins dürfen `GET /api/v1/settings/smtp` und `PUT /api/v1/settings/smtp` verwenden. GET und erfolgreiche PUT antworten mit `{host, port, username, use_tls, from_address, from_name, password_set}`; das Passwort selbst wird nie zurückgegeben.
-- PUT akzeptiert `{host, port, username, use_tls, from_address, from_name, password}`. `password: null` lässt das gespeicherte Passwort unverändert; ein nichtleeres Passwort wird atomar nach `.data/smtp.pass` geschrieben (Dateirechte `0600` unter Linux). Die UI sendet bei leerem Passwortfeld `null`. `MARATHON_SMTP_PASSWORD` hat Vorrang vor der Datei. Ein gesetztes SMTP-Passwort wird nur verwendet, wenn `username` gesetzt ist.
-- SMTP-Validierungsfehler antworten mit `422` und exakt einem dieser Texte: „Mailversand: Server nur als Rechnername oder IP-Adresse, z. B. smtp.office365.com“, „Mailversand: Port muss zwischen 1 und 65535 liegen“, „Mailversand: Absenderadresse fehlt“, „Mailversand: Absenderadresse ungültig“, „Mailversand: Absendername ist zu lang (max. 100 Zeichen)“, „Mailversand: Passwort darf keinen Zeilenumbruch enthalten“ oder „Mailversand: Passwort ist zu lang (max. 1024 Zeichen)“.
-- Passwort und Code erscheinen nie in Logs oder Fehlermeldungen. Fehlt das Passwort bei gesetztem `username`: Fehler „SMTP-Passwort fehlt (MARATHON_SMTP_PASSWORD oder .data/smtp.pass)“.
+- SMTP über die Python-Standardbibliothek (`smtplib`, `email.message`), keine neue Abhängigkeit; Zeitlimit 10 s für den gesamten Versand (Verbindung, Verschlüsselung, Anmeldung, Senden); bei Überschreitung „Zeitlimit von 10 s überschritten“.
+- SMTP-Einstellungen werden in `settings` unter dem Schlüssel `smtp` gespeichert; danach gelten die Datenbankwerte. Ein leerer `host` bedeutet, dass der Mailversand nicht eingerichtet ist. Einstellungsänderungen gelten ohne Neustart.
+- Nur Admins dürfen `GET /api/v1/settings/smtp` und `PUT /api/v1/settings/smtp` verwenden. GET und erfolgreiche PUT antworten mit `{host, port, username, encryption, from_address, from_name, password_set}`; das Passwort selbst wird nie zurückgegeben. `encryption` ist `"none"`, `"starttls"` oder `"tls"`. Gespeicherte Altwerte ohne `encryption` werden aus `use_tls` übernommen: `true` → `starttls`, `false` → `none`.
+- PUT akzeptiert `{host, port, username, encryption, from_address, from_name, password}`. `password: null` lässt das gespeicherte Passwort unverändert; ein nichtleeres Passwort wird atomar nach `.data/smtp.pass` geschrieben (Dateirechte `0600` unter Linux). Die UI sendet bei leerem Passwortfeld `null`. Das Passwort wird nur in `.data/smtp.pass` gespeichert. Ein gesetztes SMTP-Passwort wird nur verwendet, wenn `username` gesetzt ist.
+- SMTP-Validierungsfehler antworten mit `422` und exakt einem dieser Texte: „Mailversand: Server nur als Rechnername oder IP-Adresse, z. B. smtp.office365.com“, „Mailversand: Port muss zwischen 1 und 65535 liegen“, „Mailversand: Absenderadresse fehlt“, „Mailversand: Absenderadresse ungültig“, „Mailversand: Absendername ist zu lang (max. 100 Zeichen)“, „Mailversand: Passwort darf keinen Zeilenumbruch enthalten“ oder „Mailversand: Passwort ist zu lang (max. 1024 Zeichen)“; zusätzlich „Mailversand: Verschlüsselung muss none, starttls oder tls sein“ und „Mailversand: Passwort fehlt für den Benutzernamen“.
+- Passwort und Code erscheinen nie in Logs oder Fehlermeldungen. Fehlt das Passwort bei gesetztem `username`: Fehler „SMTP-Passwort fehlt (Einstellungen → Mailversand)“.
+- Die Oberfläche bietet „SMTP-Server“, „Port“, „Benutzername“, „Verschlüsselung“ (Keine / STARTTLS / SSL/TLS), „Absenderadresse“, „Absendername“ und „Passwort“. Standardwerte: Port 587, STARTTLS und Absendername Marathon; SSL/TLS üblicherweise Port 465. Mit Benutzername kann nur gespeichert werden, wenn ein Passwort eingegeben oder bereits gespeichert ist.
+- `POST /api/v1/settings/smtp/test` (nur Admin) akzeptiert `{address}` und verwendet die gespeicherten Einstellungen. Erfolg `200` „Testmail an <adresse> gesendet“; ungültige Adresse `422` „Bitte eine gültige E-Mail-Adresse eingeben“; Mailversand nicht eingerichtet `409` „Mailversand ist nicht eingerichtet (Einstellungen → Mailversand)“; Versandfehler `502` „Testmail nicht gesendet: <Grund>“. Die Oberfläche zeigt „Testmail an“, „Testmail senden“ und „Verwendet die gespeicherten Einstellungen“.
 - Prüfbefehl `python run.py mail-test <adresse>`: sendet Betreff „Marathon: Testmail“, Text „Der Mailversand von Marathon funktioniert.“; Erfolg „Testmail an <adresse> gesendet“ (Exit-Code 0), sonst „Fehler: Testmail nicht gesendet: <Grund>“ (Exit-Code 1). Als Einzelbefehl startet er die Datenbank bei Bedarf und stoppt sie wieder, wenn er sie selbst gestartet hat. Ohne eingerichteten Mailversand: „Fehler: Mailversand ist nicht eingerichtet (Einstellungen → Mailversand)“.
 - Anmelde-Mail: Betreff „<code> ist Dein Marathon-Code“, Text „Dein Anmeldecode für Marathon: <code>\n\nDer Code gilt <code_ttl_minutes> Minuten. Falls Du keine Anmeldung angefordert hast, ignoriere diese E-Mail.“
 
@@ -584,50 +573,58 @@ Die neuen Tabellen erhalten dieselben Live-Kanal-Trigger wie die bestehenden Tab
 
 Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freigegeben ist.
 
-1. **`GET /api/v1/auth/status`** (ohne Anmeldung) → `{ "mail_configured": bool }`. Ist der Mailversand nicht eingerichtet, zeigt die Anmeldeseite statt des Formulars „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“
+Öffentliche Routen: `GET /health`, `POST /api/v1/auth/request-code`, `POST /api/v1/auth/confirm`, `POST /api/v1/auth/admin-code` und `POST /api/v1/auth/logout`.
+
+1. Die Anmeldeseite ist immer verfügbar. Ist der Mailversand nicht eingerichtet, meldet erst „Code senden“: „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“
 2. **`POST /api/v1/auth/request-code`** mit `{ "email": "…" }`:
-   - E-Mail trimmen & `casefold()`; ungültige Syntax → `422` „Bitte eine gültige E-Mail-Adresse eingeben“.
    - Mailversand nicht eingerichtet → `503` mit dem Text aus Schritt 1.
+   - E-Mail trimmen & `casefold()`; ungültige Syntax → `422` „Bitte eine gültige E-Mail-Adresse eingeben“.
    - Adresse gesperrt (`auth_locks.locked_until > now()`) → `429` „Zu viele falsche Codes. Die Anmeldung für diese Adresse ist vorübergehend gesperrt.“
    - Mehr als 5 Einträge in `auth_codes` für diese Adresse in den letzten 15 Minuten → `429` „Zu viele Anfragen. Bitte in ein paar Minuten erneut versuchen.“
-   - Berechtigt ist die Adresse, wenn ein Konto existiert, die Domain **exakt** in `settings['auth.allowed_domains']` steht (Subdomains werden einzeln eingetragen) oder die Adresse in `config.auth.admin_emails` steht.
-   - Ältere, unverbrauchte Codes der Adresse werden ungültig (`consumed_at = now()`). Neuer 6-stelliger Zifferncode (`secrets.randbelow`), gespeichert nur als SHA-256 von `<email>:<code>` in `auth_codes`, gültig `code_ttl_minutes`. Für nicht berechtigte Adressen wird ebenfalls ein Eintrag angelegt, aber keine Mail gesendet (gleiches Verhalten bei Rate-Limit und Antwortzeit).
+   - Berechtigt ist die Adresse, wenn ein Konto existiert, die Domain **exakt** in `settings['auth.allowed_domains']` steht (Subdomains werden einzeln eingetragen).
+   - Ältere, unverbrauchte Codes der Adresse werden ungültig (`consumed_at = now()`). Neuer 6-stelliger Zifferncode (`secrets.randbelow`), gespeichert nur als SHA-256 von `<email>:<code>` in `auth_codes`, gültig 15 Minuten. Für nicht berechtigte Adressen wird ebenfalls ein Eintrag angelegt, aber keine Mail gesendet (gleiches Verhalten bei Rate-Limit und Antwortzeit).
    - Die Mail geht im Hintergrund raus (begrenzter Thread-Pool, Zeitlimit 10 s); die Antwort wartet nie auf den Versand. Fehler landen nur im Server-Log.
    - Antwort immer `200` `{ "detail": "Falls die Adresse für Marathon freigegeben ist, ist eine E-Mail mit Code unterwegs. Keine E-Mail erhalten? Adresse prüfen oder an den Administrator wenden." }`.
 3. **`POST /api/v1/auth/confirm`** mit `{ "email": "…", "code": "123456" }`:
    - Adresse gesperrt → `429` wie oben.
    - Verbraucht den passenden Eintrag atomar (`UPDATE auth_codes SET consumed_at = now() WHERE email = … AND code_hash = … AND consumed_at IS NULL AND expires_at > now()`).
    - Kein Treffer → Eintrag in `auth_failures`; liegen damit für die Adresse in den letzten 24 Stunden 3 Fehlversuche vor, wird sie für 24 Stunden gesperrt (`auth_locks.locked_until = now() + 24 h`, ihre `auth_failures` werden gelöscht) und die Antwort ist `429` wie oben; sonst `400` „Code ungültig oder abgelaufen“. Fehlversuche zählen für jede Adresse gleich, auch ohne Konto.
-   - Treffer: Existiert kein `users`-Eintrag, wird er jetzt angelegt (`role = 'admin'` wenn in `admin_emails`, sonst `'user'`); `last_login_at = now()`; `auth_failures` der Adresse werden gelöscht.
-   - Erstellt Session in `sessions` (Token `secrets.token_urlsafe(32)`, gespeichert als SHA-256), setzt Cookie `marathon_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure`, `Max-Age = session_days * 86400`); Antwort wie `GET /api/v1/auth/me`.
-4. **Sliding Expiration:** Bei authentifizierten Anfragen wird `sessions.expires_at` auf `now() + session_days` verlängert und das Cookie aufgefrischt, sobald weniger als 80 % der Laufzeit übrig sind; `last_seen_at` wird dabei mit aktualisiert.
+   - Treffer: Existiert kein `users`-Eintrag, wird er jetzt angelegt (`role = 'user'`); `last_login_at = now()`; `auth_failures` der Adresse werden gelöscht.
+   - Erstellt Session in `sessions` (Token `secrets.token_urlsafe(32)`, gespeichert als SHA-256), setzt Cookie `marathon_session` (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Secure`, `Max-Age = 180 * 86400`); Antwort wie `GET /api/v1/auth/me`.
+4. **Sliding Expiration:** Bei authentifizierten Anfragen wird `sessions.expires_at` auf `now() + 180 Tage` verlängert und das Cookie aufgefrischt, sobald weniger als 80 % der Laufzeit übrig sind; `last_seen_at` wird dabei mit aktualisiert.
 5. **`POST /api/v1/auth/logout`** antwortet immer mit `204` und entfernt das Cookie, auch ohne gültige Session. **`GET /api/v1/auth/me`** → `{ "id", "email", "display_name", "role" }`, ohne gültige Session `401`.
 
 ### Zugriffsschutz der API
 
-- Ohne gültige Session antworten alle Routen unter `/api/v1` mit `401` „Nicht angemeldet“, außer `GET /health`, `GET /auth/status`, `POST /auth/request-code`, `POST /auth/confirm` und der Worker-Schnittstelle `/worker/…` (Worker-Token). Der Live-Kanal `GET /events` verlangt ebenfalls eine Session.
+- Ohne gültige Session antworten alle Routen unter `/api/v1` mit `401` „Nicht angemeldet“, außer `GET /health`, `POST /auth/request-code`, `POST /auth/confirm`, `POST /auth/admin-code`, `POST /auth/logout` und der Worker-Schnittstelle `/worker/…` (Worker-Token). Der Live-Kanal `GET /events` verlangt ebenfalls eine Session.
 - Admin-Routen antworten normalen Nutzern mit `403` „Nur für Admins“.
 - Unbekannte API-Pfade unter `/api/` verlangen ebenfalls eine gültige Session.
 - Die Oberfläche (statische Dateien) ist ohne Anmeldung erreichbar; sie leitet bei `401` auf `/login` um.
 
-### Break-Glass-Admin
+### Notfallzugang
 
-- Alle Adressen aus `config.auth.admin_emails` sind geschützte Bootstrap-Admins:
-  - In der UI ist ihre Rolle gesperrt und sie sind nicht löschbar (Hinweis *„In Konfiguration festgelegt“*).
-  - Die API lehnt Herabstufen oder Löschen geschützter Admins und des letzten Admins mit `409` ab: „In Konfiguration festgelegt“ bzw. „Der letzte Admin kann nicht herabgestuft oder gelöscht werden“.
+- Der feste Notfallzugang funktioniert immer, unabhängig vom Mailversand und davon, ob weitere Admins existieren.
 - **Lokaler CLI-Notfallzugang (ohne SMTP):**
-  - Während `python run.py` läuft, in dessen Konsole `admin-code <adresse>` und Enter eingeben. Alternativ `python run.py admin-code <adresse>` ohne laufenden Server ausführen.
+  - Während `python run.py` läuft, in dessen Konsole `admin-code` und Enter eingeben. Alternativ `python run.py admin-code` ohne laufenden Server ausführen; eine Adresse wird nicht erwartet.
+  - Mit Adresse: in der Konsole „Fehler: admin-code erwartet keine Adresse“, der Einzelbefehl bricht mit „admin-code erwartet keine Adresse“ ab (Exit-Code 2).
   - Der Einzelbefehl startet die Datenbank bei Bedarf selbst, führt bei eigenem Datenbankstart das Upgrade aus und stoppt die Datenbank danach wieder; eine bereits laufende Datenbank lässt er weiterlaufen.
-  - Nur für bestehende Admins oder Adressen aus `admin_emails`, sonst „Fehler: <adresse> ist kein Admin“ (Exit-Code 1). Hebt eine Sperre der Adresse auf, erzeugt einen Code (Gültigkeit `code_ttl_minutes`) und gibt ausschließlich lokal aus: „Anmeldecode für <adresse>: <code> (gültig <n> Minuten)“.
+  - Der Code hebt eine Sperre des Notfallkontos auf und gibt ausschließlich lokal aus: „Admin-Code: <code> (gültig 15 Minuten) – auf der Anmeldeseite unter „Mit Admin-Code anmelden“ eingeben“.
+- Auf der Anmeldeseite führt „Mit Admin-Code anmelden“ zum Feld „Admin-Code“ und zur Schaltfläche „Anmelden“; „Zurück zur Anmeldung per E-Mail“ führt zurück. `POST /api/v1/auth/admin-code` akzeptiert `{ "code": "…" }`.
+- Das feste Konto hat `id = "emergency"`, leere E-Mail-Adresse, Anzeigename „Notfallzugang“ und Rolle `admin`. 3 falsche Codes innerhalb von 24 Stunden sperren das Notfallkonto für 24 Stunden.
+- Erste Einrichtung: per Admin-Code anmelden, Mailversand und erlaubte E-Mail-Domains einrichten, das eigene Konto per E-Mail registrieren und auf der Seite „Nutzer“ zum Admin machen.
 
 ### Nutzerverwaltung (nur Admins, Seite „Nutzer“)
 
 - `GET /api/v1/users` → Liste `{ id, email, display_name, role, protected, created_at, last_login_at, session_count, locked_until }` (`locked_until` nur bei aktiver Sperre, sonst `null`).
+  `protected` ist beim Notfallkonto `true`.
 - `PUT /api/v1/users/{id}` mit `{ "role": "user" | "admin" }`.
-- `DELETE /api/v1/users/{id}`: löscht Konto und Sessions; Workflows des Nutzers sind danach ohne Eigentümer (nur für Admins sichtbar). Nicht möglich für den eigenen Account (`409` „Du kannst Dein eigenes Konto nicht löschen“), geschützte Admins und den letzten Admin. Mit freigegebener Domain kann sich die Adresse neu registrieren (neues, leeres Konto). Ein Deaktivieren gibt es nicht.
+  Das Notfallkonto kann nicht herabgestuft werden (`409` „Notfallzugang kann nicht geändert oder gelöscht werden“); der letzte echte Admin kann nicht herabgestuft werden (`409` „Der letzte Admin kann nicht herabgestuft oder gelöscht werden“).
+- `DELETE /api/v1/users/{id}`: löscht Konto und Sessions; Workflows des Nutzers sind danach ohne Eigentümer (nur für Admins sichtbar). Nicht möglich für den eigenen Account (`409` „Du kannst Dein eigenes Konto nicht löschen“), das Notfallkonto (`409` „Notfallzugang kann nicht geändert oder gelöscht werden“) und den letzten echten Admin (`409` „Der letzte Admin kann nicht herabgestuft oder gelöscht werden“). Mit freigegebener Domain kann sich die Adresse neu registrieren (neues, leeres Konto). Ein Deaktivieren gibt es nicht. Das Notfallkonto zählt nicht als letzter Admin und erscheint nicht im Teilen-Dialog.
 - `GET /api/v1/users/{id}/sessions` → `{ id, user_agent, created_at, last_seen_at, expires_at, current }`; `DELETE /api/v1/users/{id}/sessions/{session_id}` und `DELETE /api/v1/users/{id}/sessions` (alle) widerrufen Sessions. Nur Admins widerrufen Sessions; Nutzer melden sich selbst nur ab.
+  Das gilt auch beim Notfallkonto.
 - `DELETE /api/v1/users/{id}/lock` hebt eine Sperre wegen falscher Codes auf.
-- `GET /api/v1/users/directory` (jeder angemeldete Nutzer) → `{ id, email, display_name }` aller Nutzer, für den Teilen-Dialog.
+  Auch beim Notfallkonto.
+- `GET /api/v1/users/directory` (jeder angemeldete Nutzer) → `{ id, email, display_name }` aller Nutzer außer dem Notfallkonto, für den Teilen-Dialog.
 
 ### Erlaubte E-Mail-Domains (Einstellungen)
 
@@ -839,7 +836,7 @@ Ausbau des bestehenden `ui/src/components/FolderDialog.tsx` zu einer wiederverwe
 ## 3.7 Abnahmekriterien (Releases Zugang & Nutzer bis Lokale Watchfolder & Rechnerwechsel)
 
 - Login per 6-stelligem Code funktioniert; 3 falsche Codes in 24 h sperren die Adresse für 24 h; Antworten verraten nicht, ob ein Konto existiert; Session überlebt Browser-Neustart und verlängert sich bei Aktivität.
-- Selbstregistrierung akzeptiert nur exakt konfigurierte Domains; Break-Glass-Admin aus `marathon.toml` und CLI-Notfallcode funktionieren auch ohne SMTP.
+- Selbstregistrierung akzeptiert nur exakt konfigurierte Domains; bestehende Konten können sich ebenfalls anmelden, neue Konten erhalten immer `role = 'user'`. Der feste Notfallzugang per Admin-Code funktioniert ohne Mailversand und ohne vorhandene Admin-Konten.
 - Workflow-Freigaben (privat, `view`, `run`, `edit`) greifen in UI und API; Workflows ohne Zugriff erscheinen nirgends; Admins verwalten Nutzer, Sessions, Eigentümer und Freigaben.
 - Nutzerkonten und Worker sind vollständig entkoppelt: Eine Person vor einem Worker kann diesen über das Tray-Icon im Browser steuern (Starten, Stoppen/Drain, Sofort stoppen, Positiv-Verfügbarkeit) – ganz ohne Marathon-Nutzerkonto und ohne Zugriff auf fremde Worker.
 - Ein eingeloggter Nutzer kann einen Workflow mit lokalen Pfaden an Rechner 1 anlegen, zu Rechner 2 wechseln, per 1-Klick-Umschaltung dort aktivieren (inkl. Pfadprüfung) und laufen lassen; fremde Workstations lassen sich ohne lokalen Presence-Nachweis nicht browsen oder kapern.

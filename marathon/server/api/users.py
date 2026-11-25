@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy.engine import Engine
 
@@ -18,17 +18,13 @@ class UserRoleInput(BaseModel):
     role: Literal["user", "admin"]
 
 
-def _protected_emails(request: Request) -> tuple[str, ...]:
-    return tuple(request.app.state.auth_config.admin_emails)
-
-
 def _raise_user_error(error: Exception) -> None:
     if isinstance(error, user_writes.UserNotFound):
         raise HTTPException(status_code=404, detail="Nutzer nicht gefunden") from error
     if isinstance(error, user_writes.SessionNotFound):
         raise HTTPException(status_code=404, detail="Sitzung nicht gefunden") from error
     if isinstance(error, user_writes.UserProtected):
-        raise HTTPException(status_code=409, detail="In Konfiguration festgelegt") from error
+        raise HTTPException(status_code=409, detail="Notfallzugang kann nicht geändert oder gelöscht werden") from error
     if isinstance(error, user_writes.LastAdmin):
         raise HTTPException(status_code=409, detail="Der letzte Admin kann nicht herabgestuft oder gelöscht werden") from error
     raise error
@@ -36,13 +32,12 @@ def _raise_user_error(error: Exception) -> None:
 
 @router.get("/users")
 def get_users(
-    request: Request,
     _admin: AuthUser = Depends(require_admin),
     engine: Engine = Depends(get_engine),
 ) -> list[dict]:
     """Return all users with administrative metadata."""
     with engine.connect() as connection:
-        return user_writes.list_users(connection, _protected_emails(request))
+        return user_writes.list_users(connection)
 
 
 @router.get("/users/directory")
@@ -59,14 +54,13 @@ def get_user_directory(
 def put_user(
     user_id: str,
     payload: UserRoleInput,
-    request: Request,
     _admin: AuthUser = Depends(require_admin),
     engine: Engine = Depends(get_engine),
 ) -> dict:
     """Change a user role and return the updated record."""
     try:
         with engine.begin() as connection:
-            return user_writes.set_user_role(connection, user_id, payload.role, _protected_emails(request))
+            return user_writes.set_user_role(connection, user_id, payload.role)
     except (user_writes.UserNotFound, user_writes.UserProtected, user_writes.LastAdmin) as error:
         _raise_user_error(error)
 
@@ -74,7 +68,6 @@ def put_user(
 @router.delete("/users/{user_id}", status_code=204)
 def delete_user(
     user_id: str,
-    request: Request,
     _admin: AuthUser = Depends(require_admin),
     engine: Engine = Depends(get_engine),
 ) -> Response:
@@ -83,7 +76,7 @@ def delete_user(
         raise HTTPException(status_code=409, detail="Du kannst Dein eigenes Konto nicht löschen")
     try:
         with engine.begin() as connection:
-            user_writes.delete_user(connection, user_id, _protected_emails(request))
+            user_writes.delete_user(connection, user_id)
     except (user_writes.UserNotFound, user_writes.UserProtected, user_writes.LastAdmin) as error:
         _raise_user_error(error)
     return Response(status_code=204)

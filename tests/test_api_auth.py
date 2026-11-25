@@ -61,7 +61,7 @@ def app_factory(db_engine, tmp_path):
                 host=smtp.host,
                 port=smtp.port,
                 username=smtp.username,
-                use_tls=smtp.use_tls,
+                encryption=smtp.encryption,
                 from_address=smtp.from_address,
                 from_name=smtp.from_name,
             )
@@ -69,7 +69,6 @@ def app_factory(db_engine, tmp_path):
             static_dir=tmp_path,
             engine=db_engine,
             auth_config=auth or AuthConfig(),
-            smtp_config=smtp,
             mail_sender=mail_sender,
         )
         return app, mail_sender
@@ -99,17 +98,6 @@ def _login(client, sender, email):
     assert match is not None
     confirmed = client.post("/api/v1/auth/confirm", json={"email": email, "code": match.group(1)})
     return confirmed
-
-
-def test_auth_status_reports_mail_configuration(app_factory):
-    configured_app, _ = app_factory(smtp=SmtpConfig(host="smtp.test", from_address="auth@test.invalid"))
-
-    with TestClient(configured_app, base_url="https://testserver") as client:
-        assert client.get("/api/v1/auth/status").json() == {"mail_configured": True}
-
-    unconfigured_app, _ = app_factory()
-    with TestClient(unconfigured_app, base_url="https://testserver") as client:
-        assert client.get("/api/v1/auth/status").json() == {"mail_configured": False}
 
 
 def test_request_code_requires_configured_mail(app_factory):
@@ -153,7 +141,7 @@ def test_request_code_uses_latest_database_smtp_settings(db_engine, app_factory)
             host=new_smtp.host,
             port=new_smtp.port,
             username=new_smtp.username,
-            use_tls=new_smtp.use_tls,
+            encryption=new_smtp.encryption,
             from_address=new_smtp.from_address,
             from_name=new_smtp.from_name,
         )

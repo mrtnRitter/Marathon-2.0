@@ -1,9 +1,7 @@
 import pytest
 
 from marathon.server.config import (
-    AuthConfig,
     ConfigError,
-    SmtpConfig,
     EngineConfig,
     ProxyConfig,
     ServerWorkerConfig,
@@ -13,7 +11,6 @@ from marathon.server.config import (
     normalize_email,
     normalize_public_url,
     normalize_trusted_proxies,
-    domains_error,
     email_error,
     public_url_error,
     trusted_proxies_error,
@@ -235,106 +232,13 @@ def test_proxy_section_normalized(tmp_path):
     assert load_server_config(config_file).proxy == ProxyConfig("https://host", False, ("10.0.0.1",))
 
 
-def test_auth_smtp_defaults(tmp_path):
+def test_auth_smtp_sections_ignored(tmp_path):
     config_file = tmp_path / "marathon.toml"
-    config_file.write_text('host = "localhost"\nport = 9000\n', encoding="utf-8")
+    config_file.write_text('[auth]\nadmin_emails = ["kein-mail"]\n[smtp]\nhost = "x"\n', encoding="utf-8")
 
     config = load_server_config(config_file)
 
-    assert config.auth == AuthConfig()
-    assert config.smtp == SmtpConfig()
-    assert config.smtp.configured is False
-
-
-def test_auth_normalizes_lists(tmp_path):
-    config_file = tmp_path / "marathon.toml"
-    config_file.write_text(
-        '[auth]\nadmin_emails = [" Ritter@Looks.Film ", "ritter@looks.film"]\n'
-        'allowed_domains = ["@Looks.Film", "looks.film", "berlin.looks.film"]\n',
-        encoding="utf-8",
-    )
-
-    config = load_server_config(config_file).auth
-
-    assert config.admin_emails == ("ritter@looks.film",)
-    assert config.allowed_domains == ("looks.film", "berlin.looks.film")
-
-
-def test_auth_rejects_invalid_email(tmp_path):
-    config_file = tmp_path / "marathon.toml"
-    config_file.write_text('[auth]\nadmin_emails = ["kein-mail"]\n', encoding="utf-8")
-
-    with pytest.raises(ConfigError) as error:
-        load_server_config(config_file)
-
-    assert "[auth] admin_emails" in str(error.value)
-
-
-def test_auth_rejects_invalid_domain(tmp_path):
-    config_file = tmp_path / "marathon.toml"
-    config_file.write_text('[auth]\nallowed_domains = ["looks"]\n', encoding="utf-8")
-
-    with pytest.raises(ConfigError) as error:
-        load_server_config(config_file)
-
-    assert "[auth] allowed_domains" in str(error.value)
-    assert domains_error in str(error.value)
-
-
-def test_auth_number_ranges(tmp_path):
-    config_file = tmp_path / "marathon.toml"
-    config_file.write_text('[auth]\nsession_days = 0\n', encoding="utf-8")
-
-    with pytest.raises(ConfigError) as error:
-        load_server_config(config_file)
-
-    assert "muss eine ganze Zahl zwischen 1 und 365 sein" in str(error.value)
-
-    config_file.write_text('[auth]\ncode_ttl_minutes = 61\n', encoding="utf-8")
-
-    with pytest.raises(ConfigError) as error:
-        load_server_config(config_file)
-
-    assert "zwischen 1 und 60" in str(error.value)
-
-
-def test_smtp_requires_from_address(tmp_path):
-    config_file = tmp_path / "marathon.toml"
-    config_file.write_text('[smtp]\nhost = "smtp.office365.com"\n', encoding="utf-8")
-
-    with pytest.raises(ConfigError) as error:
-        load_server_config(config_file)
-
-    assert "[smtp] from_address" in str(error.value)
-
-
-def test_smtp_invalid_values(tmp_path):
-    config_file = tmp_path / "marathon.toml"
-    config_file.write_text('[smtp]\nuse_tls = "yes"\n', encoding="utf-8")
-
-    with pytest.raises(ConfigError) as error:
-        load_server_config(config_file)
-
-    assert "[smtp] use_tls" in str(error.value)
-
-    config_file.write_text('[smtp]\nport = 70000\n', encoding="utf-8")
-
-    with pytest.raises(ConfigError):
-        load_server_config(config_file)
-
-
-def test_smtp_configured(tmp_path):
-    config_file = tmp_path / "marathon.toml"
-    config_file.write_text(
-        '[smtp]\nhost = " smtp.office365.com "\nfrom_address = "Marathon@Looks.Film"\n',
-        encoding="utf-8",
-    )
-
-    config = load_server_config(config_file).smtp
-
-    assert config.host == "smtp.office365.com"
-    assert config.from_address == "marathon@looks.film"
-    assert config.configured is True
+    assert not hasattr(config, "auth") and not hasattr(config, "smtp")
 
 
 def test_normalize_helpers():

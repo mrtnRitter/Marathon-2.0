@@ -8,12 +8,12 @@ from pathlib import Path
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
 
-from marathon.server.auth.codes import AuthError, create_admin_code
+from marathon.server.auth.codes import create_admin_code
 from marathon.server.config import (
+    AuthConfig,
     ConfigError,
     default_config_file,
     load_server_config,
-    normalize_email,
     pg_password_file,
 )
 from marathon.server.db.engine import create_db_engine, read_password
@@ -36,8 +36,7 @@ def main(
     """Create and print a one-time admin code; return the process exit code."""
     parser = argparse.ArgumentParser(prog="python -m marathon.server.auth")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    admin_code_parser = subparsers.add_parser("admin-code", help="Notfall-Anmeldecode für einen Admin ausgeben")
-    admin_code_parser.add_argument("email")
+    admin_code_parser = subparsers.add_parser("admin-code", help="Admin-Code für den Notfallzugang ausgeben")
     arguments = parser.parse_args(argv)
 
     owned_engine = None
@@ -48,11 +47,7 @@ def main(
             active_engine = create_db_engine(server_config.database, read_password(pg_password_file))
             owned_engine = active_engine
         with active_engine.begin() as connection:
-            code = create_admin_code(connection, arguments.email, server_config.auth)
-    except AuthError as error:
-        message = "Bitte eine gültige E-Mail-Adresse eingeben" if error.status_code == 422 else error.detail
-        print(f"Fehler: {message}", file=sys.stderr)
-        return 2 if error.status_code == 422 else 1
+            code = create_admin_code(connection, AuthConfig())
     except ConfigError as error:
         print(f"Fehler: {error}", file=sys.stderr)
         return 1
@@ -63,8 +58,10 @@ def main(
         if owned_engine is not None:
             owned_engine.dispose()
 
-    email = normalize_email(arguments.email)
-    print(f"Anmeldecode für {email}: {code} (gültig {server_config.auth.code_ttl_minutes} Minuten)")
+    print(
+        f"Admin-Code: {code} (gültig {AuthConfig().code_ttl_minutes} Minuten) "
+        "– auf der Anmeldeseite unter „Mit Admin-Code anmelden“ eingeben"
+    )
     return 0
 
 

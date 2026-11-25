@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ApiError, confirm_auth_code, get_auth_status, request_auth_code } from '../data/api'
+import { ApiError, confirm_admin_code, confirm_auth_code, request_auth_code } from '../data/api'
 import { use_auth_actions } from '../data/auth'
+import type { AuthUser } from '../data/types'
 import './LoginPage.css'
 
 function get_error_detail(error: unknown): string {
@@ -22,20 +23,12 @@ export function LoginPage() {
   const location = useLocation()
   const navigate = useNavigate()
   const { set_authenticated_user } = use_auth_actions()
-  const [mail_configured, set_mail_configured] = useState<boolean | null>(null)
+  const [view, set_view] = useState<'email' | 'admin'>('email')
   const [email, set_email] = useState('')
   const [code, set_code] = useState('')
   const [sent_detail, set_sent_detail] = useState('')
   const [error, set_error] = useState('')
   const [submitting, set_submitting] = useState(false)
-
-  useEffect(() => {
-    let active = true
-    void get_auth_status()
-      .then(status => { if (active) set_mail_configured(status.mail_configured) })
-      .catch(reason => { if (active) set_error(get_error_detail(reason)) })
-    return () => { active = false }
-  }, [])
 
   const send_code = async (event?: FormEvent) => {
     event?.preventDefault()
@@ -52,15 +45,18 @@ export function LoginPage() {
     }
   }
 
-  const sign_in = async (event: FormEvent) => {
+  const complete_sign_in = (user: AuthUser) => {
+    set_authenticated_user(user)
+    navigate(login_destination(location.search), { replace: true })
+  }
+
+  const sign_in = async (event: FormEvent, confirm: () => Promise<AuthUser>) => {
     event.preventDefault()
     if (!/^\d{6}$/.test(code)) return
     set_error('')
     set_submitting(true)
     try {
-      const user = await confirm_auth_code(email, code)
-      set_authenticated_user(user)
-      navigate(login_destination(location.search), { replace: true })
+      complete_sign_in(await confirm())
     } catch (reason) {
       set_error(get_error_detail(reason))
     } finally {
@@ -68,15 +64,17 @@ export function LoginPage() {
     }
   }
 
+  const switch_view = (next_view: 'email' | 'admin') => {
+    set_view(next_view)
+    set_error('')
+    set_code('')
+  }
+
   return (
     <main className="login-page">
       <section className="login-card panel">
         <h1>Bei Marathon anmelden</h1>
-        {mail_configured === false ? (
-          <p>Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.</p>
-        ) : mail_configured === null ? (
-          error ? <p className="login-error" role="alert">{error}</p> : <div className="loading" role="status">Lädt</div>
-        ) : (
+        {view === 'email' ? (
           <>
             {!sent_detail ? (
               <form className="login-form" onSubmit={event => { void send_code(event) }}>
@@ -96,7 +94,7 @@ export function LoginPage() {
             ) : (
               <>
                 <p className="login-detail">{sent_detail}</p>
-                <form className="login-form" onSubmit={event => { void sign_in(event) }}>
+                <form className="login-form" onSubmit={event => { void sign_in(event, () => confirm_auth_code(email, code)) }}>
                   <label htmlFor="login-code">Code</label>
                   <input
                     id="login-code"
@@ -119,6 +117,32 @@ export function LoginPage() {
               </>
             )}
             {error && <p className="login-error" role="alert">{error}</p>}
+            <div className="login-links">
+              <button type="button" className="login-link" disabled={submitting} onClick={() => switch_view('admin')}>Mit Admin-Code anmelden</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <form className="login-form" onSubmit={event => { void sign_in(event, () => confirm_admin_code(code)) }}>
+              <label htmlFor="login-admin-code">Admin-Code</label>
+              <input
+                id="login-admin-code"
+                className="input login-code-input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                placeholder="123456"
+                value={code}
+                disabled={submitting}
+                onChange={event => set_code(event.target.value.replace(/\D/g, '').slice(0, 6))}
+              />
+              <button className="button button-primary" type="submit" disabled={submitting || !/^\d{6}$/.test(code)}>Anmelden</button>
+            </form>
+            {error && <p className="login-error" role="alert">{error}</p>}
+            <div className="login-links">
+              <button type="button" className="login-link" disabled={submitting} onClick={() => switch_view('email')}>Zurück zur Anmeldung per E-Mail</button>
+            </div>
           </>
         )}
       </section>

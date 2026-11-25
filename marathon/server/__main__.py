@@ -82,8 +82,6 @@ def main() -> int:
         server_worker=config.server_worker,
         load_proxy=True,
         listen=(config.host, config.port),
-        auth_config=getattr(config, "auth", None),
-        smtp_config=getattr(config, "smtp", None),
     )
     app.state.restart_requested = False
     serve(app, config.host, config.port)

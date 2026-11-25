@@ -5,7 +5,13 @@ from typing import Protocol
 
 from sqlalchemy.engine import Connection
 
-from marathon.server.auth.codes import CodeRequest, ConfirmOutcome, confirm_code, request_code
+from marathon.server.auth.codes import (
+    CodeRequest,
+    ConfirmOutcome,
+    confirm_admin_code,
+    confirm_code,
+    request_code,
+)
 from marathon.server.auth.sessions import AuthUser, create_session, resolve_session
 from marathon.server.config import AuthConfig
 
@@ -41,6 +47,15 @@ class EmailCodeProvider:
         self, connection: Connection, email: str, code: str, user_agent: str
     ) -> tuple[ConfirmOutcome, str | None]:
         outcome = confirm_code(connection, email, code, self.auth)
+        if outcome.user is None:
+            return outcome, None
+        token = create_session(connection, outcome.user["id"], user_agent, self.auth.session_days)
+        return outcome, token
+
+    def complete_admin_login(
+        self, connection: Connection, code: str, user_agent: str
+    ) -> tuple[ConfirmOutcome, str | None]:
+        outcome = confirm_admin_code(connection, code, self.auth)
         if outcome.user is None:
             return outcome, None
         token = create_session(connection, outcome.user["id"], user_agent, self.auth.session_days)

@@ -1,15 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FormSection } from '../components/FormField'
 import { PageHeader } from '../components/PageHeader'
 import { notify } from '../components/Toast'
-import { get_settings, get_smtp_settings, restart_server, save_settings, save_smtp_settings } from '../data/api'
-import type { Settings, SmtpSettingsInput } from '../data/types'
+import { get_settings, get_smtp_settings, restart_server, save_settings, save_smtp_settings, send_smtp_test } from '../data/api'
+import type { Settings, SmtpEncryption, SmtpSettingsInput } from '../data/types'
 import { format_proxy_addresses, parse_proxy_addresses } from '../lib/proxy_settings'
+import { use_auth_user } from '../data/auth'
 import './SettingsPage.css'
 
 const server_address_help = String.raw`Rechnername oder IP-Adresse; „Server“ im Ordner-Dialog zeigt die Freigaben von \\<Adresse>`
 
 export function SettingsPage() {
+  const user = use_auth_user()
   const [server_address, set_server_address] = useState('')
   const [public_url, set_public_url] = useState('')
   const [builtin, set_builtin] = useState(true)
@@ -18,11 +20,14 @@ export function SettingsPage() {
   const [smtp_host, set_smtp_host] = useState('')
   const [smtp_port, set_smtp_port] = useState(587)
   const [smtp_username, set_smtp_username] = useState('')
-  const [smtp_use_tls, set_smtp_use_tls] = useState(true)
+  const [smtp_encryption, set_smtp_encryption] = useState<SmtpEncryption>('starttls')
   const [smtp_from_address, set_smtp_from_address] = useState('')
   const [smtp_from_name, set_smtp_from_name] = useState('')
   const [smtp_password, set_smtp_password] = useState('')
   const [smtp_password_set, set_smtp_password_set] = useState(false)
+  const [test_address, set_test_address] = useState('')
+  const [sending_test, set_sending_test] = useState(false)
+  const test_address_initialized = useRef(false)
   const [loading, set_loading] = useState(true)
   const [saving, set_saving] = useState(false)
   const disabled = loading || saving
@@ -41,7 +46,7 @@ export function SettingsPage() {
           set_smtp_host(smtp_settings.host)
           set_smtp_port(smtp_settings.port)
           set_smtp_username(smtp_settings.username)
-          set_smtp_use_tls(smtp_settings.use_tls)
+          set_smtp_encryption(smtp_settings.encryption)
           set_smtp_from_address(smtp_settings.from_address)
           set_smtp_from_name(smtp_settings.from_name)
           set_smtp_password_set(smtp_settings.password_set)
@@ -49,12 +54,30 @@ export function SettingsPage() {
       } catch {
         // The request already reports errors.
       } finally {
-        if (active) set_loading(false)
+        if (active) {
+          if (!test_address_initialized.current) {
+            set_test_address(user?.email ?? '')
+            test_address_initialized.current = true
+          }
+          set_loading(false)
+        }
       }
     }
     void load_settings()
     return () => { active = false }
   }, [])
+
+  const send_test_mail = async () => {
+    set_sending_test(true)
+    try {
+      const response = await send_smtp_test(test_address.trim())
+      notify(response.detail)
+    } catch {
+      // The API client already reports the error.
+    } finally {
+      set_sending_test(false)
+    }
+  }
 
   const restart = async () => {
     if (!window.confirm('Server jetzt neu starten? Laufende Jobs werden unterbrochen und neu verteilt.')) return
@@ -77,7 +100,7 @@ export function SettingsPage() {
         host: smtp_host,
         port: smtp_port,
         username: smtp_username,
-        use_tls: smtp_use_tls,
+        encryption: smtp_encryption,
         from_address: smtp_from_address,
         from_name: smtp_from_name,
         password: smtp_password === '' ? null : smtp_password,
@@ -90,7 +113,7 @@ export function SettingsPage() {
       set_smtp_host(smtp_settings.host)
       set_smtp_port(smtp_settings.port)
       set_smtp_username(smtp_settings.username)
-      set_smtp_use_tls(smtp_settings.use_tls)
+      set_smtp_encryption(smtp_settings.encryption)
       set_smtp_from_address(smtp_settings.from_address)
       set_smtp_from_name(smtp_settings.from_name)
       set_smtp_password('')
@@ -232,18 +255,19 @@ export function SettingsPage() {
                 </div>
               </div>
               <div className="form-field">
-                <label htmlFor="settings-smtp-use-tls" className="form-field-label">STARTTLS verwenden</label>
+                <label htmlFor="settings-smtp-encryption" className="form-field-label">Verschlüsselung</label>
                 <div className="form-field-control">
-                  <label className="form-switch">
-                    <input
-                      id="settings-smtp-use-tls"
-                      type="checkbox"
-                      checked={smtp_use_tls}
-                      disabled={disabled}
-                      onChange={event => set_smtp_use_tls(event.target.checked)}
-                    />
-                    <span className="form-switch-track" />
-                  </label>
+                  <select
+                    id="settings-smtp-encryption"
+                    className="input"
+                    value={smtp_encryption}
+                    disabled={disabled}
+                    onChange={event => set_smtp_encryption(event.target.value as SmtpEncryption)}
+                  >
+                    <option value="none">Keine</option>
+                    <option value="starttls">STARTTLS</option>
+                    <option value="tls">SSL/TLS</option>
+                  </select>
                 </div>
               </div>
               <div className="form-field">
@@ -286,6 +310,30 @@ export function SettingsPage() {
                     disabled={disabled}
                     onChange={event => set_smtp_password(event.target.value)}
                   />
+                </div>
+              </div>
+              <div className="form-field">
+                <label htmlFor="settings-smtp-test-address" className="form-field-label">Testmail an</label>
+                <div className="form-field-control">
+                  <input
+                    id="settings-smtp-test-address"
+                    className="input"
+                    type="email"
+                    value={test_address}
+                    disabled={disabled}
+                    onChange={event => set_test_address(event.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="form-field">
+                <div className="form-field-control">
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={disabled || sending_test || !test_address.trim()}
+                    onClick={() => { void send_test_mail() }}
+                  >Testmail senden</button>
+                  <p className="form-field-help">Verwendet die gespeicherten Einstellungen</p>
                 </div>
               </div>
             </FormSection>

@@ -18,6 +18,7 @@ export function pick_cat_sound(random: () => number = Math.random): string {
 
 export function Sidebar({ collapsed, on_toggle }: { collapsed: boolean; on_toggle: () => void }) {
   const user = use_auth_user()
+  const user_name = user?.email || user?.display_name || ''
   const { clear_authenticated_user } = use_auth_actions()
   const navigate = useNavigate()
   const [logging_out, set_logging_out] = useState(false)
@@ -82,8 +83,8 @@ export function Sidebar({ collapsed, on_toggle }: { collapsed: boolean; on_toggl
       ))}
       <div className="sidebar-footer">
         <div className="sidebar-account">
-          {!collapsed && <span className="sidebar-email" title={user?.email}>{user?.email}</span>}
-          <button type="button" className="sidebar-link sidebar-sign-out" onClick={() => { void sign_out() }} disabled={logging_out} title={collapsed ? `${user?.email ?? ''} · Abmelden` : undefined} aria-label="Abmelden">
+          {!collapsed && <span className="sidebar-email" title={user_name}>{user_name}</span>}
+          <button type="button" className="sidebar-link sidebar-sign-out" onClick={() => { void sign_out() }} disabled={logging_out} title={collapsed ? `${user_name} · Abmelden` : undefined} aria-label="Abmelden">
             <Icon name="log-out" size={17} />
             {!collapsed && <span>Abmelden</span>}
           </button>

@@ -2,7 +2,6 @@
 
 # IMPORTS
 import json
-from uuid import uuid4
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -18,15 +17,6 @@ def seed_defaults(connection: Connection, config: ServerConfig) -> None:
         "proxy.public_url": config.proxy.public_url,
         "proxy.builtin": config.proxy.builtin,
         "proxy.trusted_proxies": list(config.proxy.trusted_proxies),
-        "auth.allowed_domains": list(config.auth.allowed_domains),
-        "smtp": {
-            "host": config.smtp.host,
-            "port": config.smtp.port,
-            "username": config.smtp.username,
-            "use_tls": config.smtp.use_tls,
-            "from_address": config.smtp.from_address,
-            "from_name": config.smtp.from_name,
-        },
     }
     for key, value in defaults.items():
         connection.execute(
@@ -48,13 +38,3 @@ def seed_defaults(connection: Connection, config: ServerConfig) -> None:
             "skills": json.dumps(list(config.server_worker.skills)),
         },
     )
-
-    for email in config.auth.admin_emails:
-        connection.execute(
-            text(
-                "INSERT INTO users (id, email, display_name, role) "
-                "VALUES (:id, :email, '', 'admin') "
-                "ON CONFLICT (email) DO UPDATE SET role = 'admin'"
-            ),
-            {"id": uuid4().hex, "email": email},
-        )

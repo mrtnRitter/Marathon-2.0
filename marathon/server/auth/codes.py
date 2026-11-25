@@ -24,6 +24,9 @@ lock_failures = 3
 lock_hours = 24
 request_limit = 5
 request_window_minutes = 15
+emergency_user_id = "emergency"
+emergency_display_name = "Notfallzugang"
+emergency_key = ""
 _six_digit_code = re.compile(r"^\d{6}$")
 
 
@@ -116,10 +119,32 @@ def request_code(connection: Connection, email: str, auth: AuthConfig) -> CodeRe
         text("SELECT EXISTS (SELECT 1 FROM users WHERE email = :email)"), {"email": normalized_email}
     ).scalar_one()
     domain_allowed = domain in allowed_domains
-    admin_allowed = normalized_email in auth.admin_emails
-    allowed = bool(existing_user | domain_allowed | admin_allowed)
+    allowed = bool(existing_user | domain_allowed)
     code = _new_code(connection, normalized_email, auth)
     return CodeRequest(normalized_email, code if allowed else None)
+
+
+def _record_failure(connection: Connection, email: str) -> ConfirmOutcome:
+    connection.execute(text("INSERT INTO auth_failures (email) VALUES (:email)"), {"email": email})
+    failures = connection.execute(
+        text(
+            "SELECT count(*) FROM auth_failures WHERE email = :email "
+            "AND failed_at > now() - (:hours * interval '1 hour')"
+        ),
+        {"email": email, "hours": lock_hours},
+    ).scalar_one()
+    if failures >= lock_failures:
+        connection.execute(
+            text(
+                "INSERT INTO auth_locks (email, locked_until) "
+                "VALUES (:email, now() + (:hours * interval '1 hour')) "
+                "ON CONFLICT (email) DO UPDATE SET locked_until = EXCLUDED.locked_until"
+            ),
+            {"email": email, "hours": lock_hours},
+        )
+        connection.execute(text("DELETE FROM auth_failures WHERE email = :email"), {"email": email})
+        return ConfirmOutcome(None, 429, locked_text)
+    return ConfirmOutcome(None, 400, invalid_code_text)
 
 
 def confirm_code(connection: Connection, email: str, code: str, auth: AuthConfig) -> ConfirmOutcome:
@@ -144,29 +169,9 @@ def confirm_code(connection: Connection, email: str, code: str, auth: AuthConfig
         ).scalar_one_or_none()
 
     if matched is None:
-        connection.execute(text("INSERT INTO auth_failures (email) VALUES (:email)"), {"email": normalized_email})
-        failures = connection.execute(
-            text(
-                "SELECT count(*) FROM auth_failures WHERE email = :email "
-                "AND failed_at > now() - (:hours * interval '1 hour')"
-            ),
-            {"email": normalized_email, "hours": lock_hours},
-        ).scalar_one()
-        if failures >= lock_failures:
-            connection.execute(
-                text(
-                    "INSERT INTO auth_locks (email, locked_until) "
-                    "VALUES (:email, now() + (:hours * interval '1 hour')) "
-                    "ON CONFLICT (email) DO UPDATE SET locked_until = EXCLUDED.locked_until"
-                ),
-                {"email": normalized_email, "hours": lock_hours},
-            )
-            connection.execute(text("DELETE FROM auth_failures WHERE email = :email"), {"email": normalized_email})
-            return ConfirmOutcome(None, 429, locked_text)
-        return ConfirmOutcome(None, 400, invalid_code_text)
+        return _record_failure(connection, normalized_email)
 
     connection.execute(text("DELETE FROM auth_failures WHERE email = :email"), {"email": normalized_email})
-    is_admin = normalized_email in auth.admin_emails
     user = connection.execute(
         text(
             "INSERT INTO users (id, email, display_name, role, last_login_at) "
@@ -177,8 +182,40 @@ def confirm_code(connection: Connection, email: str, code: str, auth: AuthConfig
         {
             "id": uuid4().hex,
             "email": normalized_email,
-            "role": "admin" if is_admin else "user",
+            "role": "user",
         },
+    ).mappings().one()
+    return ConfirmOutcome(dict(user), 200, "")
+
+
+def confirm_admin_code(connection: Connection, code: str, auth: AuthConfig) -> ConfirmOutcome:
+    """Consume a one-time emergency code and restore the fixed admin account."""
+    if is_locked(connection, emergency_key):
+        return ConfirmOutcome(None, 429, locked_text)
+
+    matched = None
+    if isinstance(code, str) and _six_digit_code.fullmatch(code):
+        matched = connection.execute(
+            text(
+                "UPDATE auth_codes SET consumed_at = now() WHERE email = :email "
+                "AND code_hash = :code_hash AND consumed_at IS NULL AND expires_at > now() "
+                "RETURNING id"
+            ),
+            {"email": emergency_key, "code_hash": hash_code(emergency_key, code)},
+        ).scalar_one_or_none()
+
+    if matched is None:
+        return _record_failure(connection, emergency_key)
+
+    connection.execute(text("DELETE FROM auth_failures WHERE email = :email"), {"email": emergency_key})
+    user = connection.execute(
+        text(
+            "INSERT INTO users (id, email, display_name, role, last_login_at) "
+            "VALUES (:id, :email, :name, 'admin', now()) "
+            "ON CONFLICT (id) DO UPDATE SET role = 'admin', display_name = EXCLUDED.display_name, "
+            "last_login_at = now() RETURNING id, email, display_name, role"
+        ),
+        {"id": emergency_user_id, "email": emergency_key, "name": emergency_display_name},
     ).mappings().one()
     return ConfirmOutcome(dict(user), 200, "")
 
@@ -189,17 +226,7 @@ def unlock(connection: Connection, email: str) -> None:
     connection.execute(text("DELETE FROM auth_failures WHERE email = :email"), {"email": email})
 
 
-def create_admin_code(connection: Connection, email: str, auth: AuthConfig) -> str:
-    """Create a fresh code for an administrator, clearing their lock first."""
-    try:
-        normalized_email = normalize_email(email)
-    except ValueError as error:
-        raise AuthError(422, email_error) from error
-    is_admin = connection.execute(
-        text("SELECT EXISTS (SELECT 1 FROM users WHERE email = :email AND role = 'admin')"),
-        {"email": normalized_email},
-    ).scalar_one() or normalized_email in auth.admin_emails
-    if not is_admin:
-        raise AuthError(403, f"{normalized_email} ist kein Admin")
-    unlock(connection, normalized_email)
-    return _new_code(connection, normalized_email, auth)
+def create_admin_code(connection: Connection, auth: AuthConfig) -> str:
+    """Create a fresh one-time code for the fixed emergency administrator."""
+    unlock(connection, emergency_key)
+    return _new_code(connection, emergency_key, auth)

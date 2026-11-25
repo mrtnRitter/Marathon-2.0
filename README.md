@@ -37,19 +37,22 @@ Bereits erledigte Schritte werden übersprungen. `build.py` erneut ausführen na
 
 ### Mailversand einrichten
 
-Admins richten den SMTP-Versand für Anmelde-Mails unter **Einstellungen → Mailversand** ein. Dort stehen die Felder „SMTP-Server“, „Port“, „Benutzername“, „STARTTLS verwenden“, „Absenderadresse“, „Absendername“ und „Passwort“.
+Admins richten den Versand von Anmelde-Mails unter **Einstellungen → Mailversand** ein. Die Felder heißen „SMTP-Server“, „Port“, „Benutzername“, „Verschlüsselung“, „Absenderadresse“, „Absendername“ und „Passwort“.
 
-- Ein leerer „SMTP-Server“ schaltet den Mailversand aus.
-- Das Passwort ist nur beschreibbar: Ein leeres Passwortfeld lässt das gespeicherte Passwort unverändert. Ein eingegebenes Passwort wird lokal in `.data/smtp.pass` gespeichert, nie im Repo. Ist `MARATHON_SMTP_PASSWORD` gesetzt, hat diese Umgebungsvariable Vorrang vor der Datei.
-- Die Werte in `[smtp]` in `config/marathon.toml` sind nur Startwerte beim ersten Start; der Abschnitt darf leer bleiben. Danach gelten die Werte aus den Einstellungen.
-- Änderungen am Mailversand gelten ohne Neustart.
+- „Verschlüsselung“ bietet „Keine“, „STARTTLS“ und „SSL/TLS“. Standard ist STARTTLS mit Port 587; SSL/TLS wird üblicherweise mit Port 465 verwendet.
+- Ein leerer „SMTP-Server“ schaltet den Mailversand aus. Die SMTP-Einstellungen werden in der Datenbank gespeichert; das Passwort liegt ausschließlich in `.data/smtp.pass`, nicht im Repo. Ein leeres Passwortfeld lässt ein bereits gespeichertes Passwort unverändert.
+- Mit eingetragenem Benutzernamen lässt sich nur speichern, wenn ein Passwort eingegeben oder bereits gespeichert ist. Ohne Passwort erscheint „Mailversand: Passwort fehlt für den Benutzernamen“.
+- Änderungen gelten ohne Neustart. Das gesamte Senden hat ein Zeitlimit von 10 Sekunden („Zeitlimit von 10 s überschritten“).
+- „Testmail senden“ schickt mit den gespeicherten Einstellungen eine Testmail an die Adresse unter „Testmail an“.
+
+In `config/marathon.toml` gibt es keine Abschnitte `[auth]` oder `[smtp]`; ältere Abschnitte werden ignoriert. Erlaubte E-Mail-Domains starten leer und werden nur unter **Einstellungen → Anmeldung** gepflegt.
 
 **Microsoft 365 mit Dienstpostfach (Anmeldung mit Passwort):**
 
 - SMTP-Server: `smtp.office365.com`
 - Port: `587`
 - Benutzername: `marathon@looks.film`
-- STARTTLS verwenden: an
+- Verschlüsselung: `STARTTLS`
 - Absenderadresse: `marathon@looks.film`
 - Absendername: `Marathon`
 - Passwort: Passwort des Dienstpostfachs
@@ -61,15 +64,17 @@ Voraussetzung: Für das Postfach ist „Authentifiziertes SMTP“ eingeschaltet.
 - SMTP-Server: `looks-film.mail.protection.outlook.com`
 - Port: `25`
 - Benutzername: leer
-- STARTTLS verwenden: an
+- Verschlüsselung: `STARTTLS`
 - Absenderadresse: `marathon@looks.film`
 - Absendername: `Marathon`
 
 Voraussetzung: Der Server erreicht Port 25 nach außen, Direct Send ist im Tenant nicht gesperrt, und die öffentliche IP-Adresse des Standorts steht im SPF-Eintrag der Domain (sonst landen die Mails im Junk-Ordner).
 
-Testmail senden: `python run.py mail-test <adresse>`. Der Befehl startet die Datenbank bei Bedarf und stoppt sie danach wieder, wenn er sie selbst gestartet hat.
+Testmail per Konsole: `python run.py mail-test <adresse>`. Der Befehl startet die Datenbank bei Bedarf und stoppt sie danach wieder, wenn er sie selbst gestartet hat.
 
-Ohne Mailversand geht die erste Anmeldung lokal auf dem Server-Rechner per Notfallzugang: Während `python run.py` läuft, `admin-code <adresse>` und Enter eingeben. Alternativ `python run.py admin-code <adresse>` ausführen; auch dieser Einzelbefehl startet die Datenbank bei Bedarf und stoppt sie danach wieder.
+Während `python run.py` läuft, auf dem Server-Rechner `admin-code` und Enter eingeben oder `python run.py admin-code` ausführen (ohne Adresse; der Einzelbefehl startet die Datenbank bei Bedarf und stoppt sie danach wieder). Ausgegeben wird `Admin-Code: <code> (gültig 15 Minuten) – auf der Anmeldeseite unter „Mit Admin-Code anmelden“ eingeben`.
+
+Auf der Anmeldeseite „Mit Admin-Code anmelden“ wählen, den Code in „Admin-Code“ eingeben und „Anmelden“ wählen. Danach unter **Einstellungen → Mailversand** den Mailversand einrichten und unter **Einstellungen → Anmeldung** die erlaubten Domains eintragen. Anschließend das eigene Konto per E-Mail registrieren und auf der Seite „Nutzer“ zum Admin machen. Der Notfallzugang funktioniert auch ohne eingerichteten Mailversand.
 
 ## Starten
 
@@ -93,13 +98,15 @@ Danach den Browser neu starten.
 
 ### Anmeldung
 
-Auf „Bei Marathon anmelden“ die „E-Mail-Adresse“ eingeben und „Code senden“ wählen. Den per E-Mail erhaltenen sechsstelligen Code in „Code“ eintragen und „Anmelden“ wählen. Ist der Mailversand nicht eingerichtet, erscheint: „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“
+Die Anmeldeseite ist immer verfügbar. „Code senden“ verschickt einen sechsstelligen Code an eine berechtigte Adresse: ein bestehendes Konto oder eine Adresse aus einer erlaubten Domain. Der Code ist 15 Minuten gültig. Neue Konten erhalten immer die Rolle „Nutzer“; eine Anmeldung gilt bis zu 180 Tage und verlängert sich bei Aktivität.
+
+Ist der Mailversand nicht eingerichtet, meldet erst die Auswahl von „Code senden“: „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“ Für den Notfallzugang den Link „Mit Admin-Code anmelden“ verwenden; die erste Einrichtung ist unter [Mailversand einrichten](#mailversand-einrichten) beschrieben.
 
 ### Nutzer und Rollen
 
 Admins verwalten Marathon vollständig. Normale Nutzer sehen weder „Einstellungen“ noch die Seite „Nutzer“ und sehen nur eigene oder freigegebene Workflows. Sie können Worker ansehen, aber nicht steuern oder bearbeiten.
 
-Auf der Seite „Nutzer“ kann ein Admin die Rolle „Nutzer“ oder „Admin“ ändern. Die Zahl unter „Sitzungen“ öffnet die angemeldeten Geräte; „Alle abmelden“ widerruft die Sitzungen. Bei einer gesperrten Adresse lässt sich „Sperre aufheben“ wählen. „Löschen“ entfernt das Nutzerkonto; geschützte Konten tragen den Hinweis „In Konfiguration festgelegt“. Workflows eines gelöschten Nutzers bleiben ohne Eigentümer und sind nur für Admins sichtbar.
+Auf der Seite „Nutzer“ kann ein Admin die Rolle „Nutzer“ oder „Admin“ ändern. Die Zahl unter „Sitzungen“ öffnet die angemeldeten Geräte; „Alle abmelden“ widerruft die Sitzungen. Bei einer gesperrten Adresse lässt sich „Sperre aufheben“ wählen. Das gilt auch für den Notfallzugang. Dieser ist nicht herabstufbar oder löschbar, trägt den Hinweis „Notfallzugang“ und erscheint nicht im Teilen-Dialog. Geschützt bleibt sonst nur der letzte Admin: „Der letzte Admin kann nicht herabgestuft oder gelöscht werden“. Workflows eines gelöschten Nutzers bleiben ohne Eigentümer und sind nur für Admins sichtbar.
 
 ### Workflows teilen
 
@@ -131,9 +138,9 @@ Oberfläche öffnen: http://127.0.0.1:5173
 | `python run.py --dev` | Datenbank, Server und Live-Vorschau starten |
 | `python run.py --trust` | Stammzertifikat des mitgelieferten Proxys für den angemeldeten Benutzer importieren (Windows); unter Linux Pfad und Vorgehen anzeigen |
 | `restart` + Enter (während `python run.py` läuft) | Server sauber neu starten; die Datenbank läuft weiter |
-| `admin-code <adresse>` + Enter (während `python run.py` läuft) | Notfall-Anmeldecode für einen Admin ausgeben (ohne Mailversand) |
+| `admin-code` + Enter (während `python run.py` läuft) | Admin-Code für den festen Notfallzugang ausgeben; keine Adresse angeben |
+| `python run.py admin-code` | Admin-Code ausgeben; startet die Datenbank bei Bedarf und stoppt sie danach wieder, wenn dieser Befehl sie gestartet hat |
 | `python run.py mail-test <adresse>` | Testmail senden; startet die Datenbank bei Bedarf und stoppt sie danach wieder, wenn dieser Befehl sie gestartet hat |
-| `python run.py admin-code <adresse>` | Notfall-Anmeldecode für einen Admin ausgeben; startet die Datenbank bei Bedarf und stoppt sie danach wieder, wenn dieser Befehl sie gestartet hat (ohne Mailversand) |
 | `python build.py --help` / `python run.py --help` | Hilfe anzeigen |
 
 ### Datenbank zurücksetzen
@@ -206,14 +213,15 @@ Die Seite „Einstellungen“ speichert in die Datenbank („Speichern“).
 | Proxy & HTTPS: Öffentliche Adresse | Adresse, unter der Marathon erreichbar ist (nur `https://`, ohne Pfad) | aus `[proxy] public_url` |
 | Proxy & HTTPS: Proxy verwenden | An: Ein externer Reverse-Proxy übernimmt HTTPS; aus: mitgelieferter Proxy | aus `[proxy] builtin` (umgekehrt) |
 | Proxy & HTTPS: Proxy | IP-Adressen externer Proxys, durch Komma getrennt | aus `[proxy] trusted_proxies` |
-| Anmeldung: Erlaubte E-Mail-Domains | Domains für die Selbstregistrierung, exakt (Subdomains einzeln eintragen), durch Komma getrennt | aus `[auth] allowed_domains` |
-| Mailversand: SMTP-Server | SMTP-Rechnername oder IP-Adresse; leer = Mailversand aus | aus `[smtp] host` |
-| Mailversand: Port | SMTP-Port (1–65535) | aus `[smtp] port` |
-| Mailversand: Benutzername | Anmeldename; leer = ohne Anmeldung | aus `[smtp] username` |
-| Mailversand: STARTTLS verwenden | SMTP-Verbindung per STARTTLS verschlüsseln | aus `[smtp] use_tls` |
-| Mailversand: Absenderadresse | Adresse, die als Absender verwendet wird | aus `[smtp] from_address` |
-| Mailversand: Absendername | Anzeigename des Absenders | aus `[smtp] from_name` |
-| Mailversand: Passwort | SMTP-Passwort; wird lokal gespeichert, nicht im Repo | `.data/smtp.pass` |
+| Anmeldung: Erlaubte E-Mail-Domains | Domains für die Selbstregistrierung, exakt (Subdomains einzeln eintragen), durch Komma getrennt | leer; nur unter Einstellungen → Anmeldung gepflegt |
+| Mailversand: SMTP-Server | SMTP-Rechnername oder IP-Adresse; leer = Mailversand aus | leer |
+| Mailversand: Port | SMTP-Port (1–65535) | 587 |
+| Mailversand: Benutzername | Anmeldename; leer = ohne Anmeldung | leer |
+| Mailversand: Verschlüsselung | Keine, STARTTLS oder SSL/TLS | STARTTLS |
+| Mailversand: Absenderadresse | Adresse, die als Absender verwendet wird | leer |
+| Mailversand: Absendername | Anzeigename des Absenders | Marathon |
+| Mailversand: Passwort | SMTP-Passwort; nur lokal gespeichert, nicht im Repo | `.data/smtp.pass` |
+| Mailversand: Testmail an | Empfängeradresse für „Testmail senden“; verwendet die gespeicherten Einstellungen | kein Standard |
 
 Änderungen unter „Proxy & HTTPS“ gelten nach einem Neustart des Servers. Unter „Einstellungen“ → „Server“ startet die Schaltfläche „Server neu starten“ den Server neu.
 

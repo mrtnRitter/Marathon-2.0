@@ -7,9 +7,9 @@ from sqlalchemy import text
 from marathon.server.config import AuthConfig
 from marathon.server.auth.codes import (
     AuthError,
+    confirm_admin_code,
     confirm_code,
     create_admin_code,
-    get_allowed_domains,
     hash_code,
     is_locked,
     locked_text,
@@ -66,17 +66,15 @@ def test_request_code_subdomain_not_allowed(db_engine):
     assert result.code is None
 
 
-def test_request_code_existing_user_and_admin_email_allowed(db_engine):
+def test_request_code_existing_user_allowed(db_engine):
     with db_engine.begin() as connection:
         connection.execute(
             text("INSERT INTO users (id, email, display_name, role) VALUES (:id, :email, '', 'user')"),
             {"id": uuid4().hex, "email": "known@other.test"},
         )
         existing = request_code(connection, "known@other.test", AuthConfig())
-        admin = request_code(connection, "admin@other.test", AuthConfig(admin_emails=("admin@other.test",)))
 
     assert re.fullmatch(r"\d{6}", existing.code or "")
-    assert re.fullmatch(r"\d{6}", admin.code or "")
 
 
 def test_request_code_invalid_email(db_engine):
@@ -127,16 +125,6 @@ def test_confirm_creates_user(db_engine):
     assert outcome.user is not None and outcome.user["role"] == "user"
     assert user["last_login_at"] is not None
     assert repeated.status_code == 400
-
-
-def test_confirm_admin_email_creates_admin(db_engine):
-    auth = AuthConfig(admin_emails=("admin@other.test",))
-    with db_engine.begin() as connection:
-        requested = request_code(connection, "admin@other.test", auth)
-        outcome = confirm_code(connection, requested.email, requested.code or "", auth)
-
-    assert outcome.status_code == 200
-    assert outcome.user is not None and outcome.user["role"] == "admin"
 
 
 def test_confirm_expired_code(db_engine):
@@ -205,20 +193,54 @@ def test_unlock(db_engine):
     assert result.email == "max@looks.film"
 
 
-def test_create_admin_code(db_engine):
+def test_admin_code_without_users_logs_in_emergency_account(db_engine):
     with db_engine.begin() as connection:
-        try:
-            create_admin_code(connection, "not-admin@other.test", AuthConfig())
-        except AuthError as error:
-            assert error.status_code == 403
-            assert error.detail == "not-admin@other.test ist kein Admin"
-        else:
-            raise AssertionError("expected AuthError")
-        connection.execute(text("INSERT INTO auth_locks (email, locked_until) VALUES ('admin@other.test', now() + interval '1 day')"))
-        code = create_admin_code(connection, "admin@other.test", AuthConfig(admin_emails=("admin@other.test",)))
-        outcome = confirm_code(connection, "admin@other.test", code, AuthConfig(admin_emails=("admin@other.test",)))
-        locked = is_locked(connection, "admin@other.test")
+        connection.execute(
+            text("INSERT INTO auth_locks (email, locked_until) VALUES ('', now() + interval '1 hour')")
+        )
+        code = create_admin_code(connection, AuthConfig())
+        unlocked = not is_locked(connection, "")
+        outcome = confirm_admin_code(connection, code, AuthConfig())
+        repeated = confirm_admin_code(connection, code, AuthConfig())
 
     assert re.fullmatch(r"\d{6}", code)
+    assert unlocked
     assert outcome.status_code == 200
-    assert locked is False
+    assert outcome.user == {
+        "id": "emergency", "email": "", "display_name": "Notfallzugang", "role": "admin"
+    }
+    assert repeated.status_code == 400
+
+
+def test_admin_code_failures_lock_emergency_account(db_engine):
+    with db_engine.begin() as connection:
+        outcomes = [confirm_admin_code(connection, "wrong", AuthConfig()) for _ in range(3)]
+        locked = is_locked(connection, "")
+        create_admin_code(connection, AuthConfig())
+        unlocked = not is_locked(connection, "")
+
+    assert [outcome.status_code for outcome in outcomes] == [400, 400, 429]
+    assert locked
+    assert unlocked
+
+
+def test_admin_code_restores_admin_role(db_engine):
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO users (id, email, display_name, role) VALUES ('emergency', '', 'Old name', 'user')")
+        )
+        code = create_admin_code(connection, AuthConfig())
+        outcome = confirm_admin_code(connection, code, AuthConfig())
+
+    assert outcome.status_code == 200
+    assert outcome.user == {
+        "id": "emergency", "email": "", "display_name": "Notfallzugang", "role": "admin"
+    }
+
+
+def test_emergency_code_not_usable_via_email_login(db_engine):
+    with db_engine.begin() as connection:
+        code = create_admin_code(connection, AuthConfig())
+        outcome = confirm_code(connection, "", code, AuthConfig())
+
+    assert outcome.status_code == 400

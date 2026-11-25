@@ -18,7 +18,7 @@ PROTECTED_EMAIL = "protected@test.local"
 
 @pytest.fixture
 def admin_client(db_engine):
-    app = create_app(engine=db_engine, auth_config=AuthConfig(admin_emails=(PROTECTED_EMAIL,)))
+    app = create_app(engine=db_engine, auth_config=AuthConfig())
     admin = sign_in(app)
     with TestClient(app) as client:
         yield app, client, admin
@@ -72,7 +72,7 @@ def test_list_users_reports_active_sessions_locks_and_sorted_roles(admin_client,
     assert alpha_record["protected"] is False
     assert zeta_record["session_count"] == 0
     assert zeta_record["locked_until"] is None
-    assert protected_record["protected"] is True
+    assert protected_record["protected"] is False
     assert expired_record["locked_until"] is None
     assert alpha_record["created_at"].endswith("+00:00")
     assert alpha_record["last_login_at"] is None
@@ -84,21 +84,6 @@ def test_list_users_reports_active_sessions_locks_and_sorted_roles(admin_client,
     missing = client.put("/api/v1/users/not-found", json={"role": "admin"})
     assert missing.status_code == 404
     assert missing.json() == {"detail": "Nutzer nicht gefunden"}
-
-
-def test_protected_and_last_admin_conflicts_and_self_delete(admin_client, db_engine):
-    _, client, _ = admin_client
-    with db_engine.begin() as connection:
-        protected = create_test_user(connection, PROTECTED_EMAIL, "admin")
-        create_test_user(connection, "second-admin@test.local", "admin")
-
-    protected_demotion = client.put(f"/api/v1/users/{protected.id}", json={"role": "user"})
-    protected_delete = client.delete(f"/api/v1/users/{protected.id}")
-    assert protected_demotion.status_code == 409
-    assert protected_demotion.json() == {"detail": "In Konfiguration festgelegt"}
-    assert protected_delete.status_code == 409
-    assert protected_delete.json() == {"detail": "In Konfiguration festgelegt"}
-
 
 
 def test_last_admin_conflicts_and_self_delete(admin_client, db_engine):
@@ -215,3 +200,86 @@ def test_unlock_and_directory_for_signed_in_user(admin_client, db_engine):
 def create_test_user_for_directory(db_engine):
     with db_engine.begin() as connection:
         return create_test_user(connection, "directory-user@test.local")
+
+
+def test_emergency_account_is_protected(admin_client, db_engine):
+    _, client, _ = admin_client
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO users (id, email, display_name, role) VALUES ('emergency', '', 'Notfallzugang', 'admin')")
+        )
+        ordinary = create_test_user(connection, "ordinary@test.local")
+
+    users_response = client.get("/api/v1/users")
+
+    assert users_response.status_code == 200
+    users = users_response.json()
+    emergency = next(user for user in users if user["id"] == "emergency")
+    assert emergency["email"] == ""
+    assert emergency["display_name"] == "Notfallzugang"
+    assert emergency["role"] == "admin"
+    assert emergency["protected"] is True
+    assert all(user["protected"] is False for user in users if user["id"] != "emergency")
+
+    changed = client.put("/api/v1/users/emergency", json={"role": "user"})
+    assert changed.status_code == 409
+    assert changed.json() == {"detail": "Notfallzugang kann nicht geändert oder gelöscht werden"}
+    deleted = client.delete("/api/v1/users/emergency")
+    assert deleted.status_code == 409
+    assert deleted.json() == {"detail": "Notfallzugang kann nicht geändert oder gelöscht werden"}
+    assert any(user["id"] == ordinary.id for user in users)
+
+
+def test_emergency_admin_does_not_count_as_last_admin(admin_client, db_engine):
+    _, client, _ = admin_client
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO users (id, email, display_name, role) VALUES ('emergency', '', 'Notfallzugang', 'admin')")
+        )
+        only_real_admin = create_test_user(connection, "real-admin@test.local", "admin")
+
+    rejected = client.put(f"/api/v1/users/{only_real_admin.id}", json={"role": "user"})
+    assert rejected.status_code == 409
+    assert rejected.json() == {"detail": "Der letzte Admin kann nicht herabgestuft oder gelöscht werden"}
+
+    with db_engine.begin() as connection:
+        second_real_admin = create_test_user(connection, "second-admin@test.local", "admin")
+    accepted = client.put(f"/api/v1/users/{only_real_admin.id}", json={"role": "user"})
+    assert accepted.status_code == 200
+    assert accepted.json()["role"] == "user"
+    assert second_real_admin.id != only_real_admin.id
+
+
+def test_directory_excludes_emergency_account(admin_client, db_engine):
+    _, client, _ = admin_client
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO users (id, email, display_name, role) VALUES ('emergency', '', 'Notfallzugang', 'admin')")
+        )
+        ordinary = create_test_user(connection, "directory-visible@test.local")
+
+    response = client.get("/api/v1/users/directory")
+
+    assert response.status_code == 200
+    assert all(entry["id"] != "emergency" for entry in response.json())
+    assert any(entry["id"] == ordinary.id for entry in response.json())
+
+
+def test_emergency_lock_can_be_lifted(admin_client, db_engine):
+    _, client, _ = admin_client
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO users (id, email, display_name, role) VALUES ('emergency', '', 'Notfallzugang', 'admin')")
+        )
+        connection.execute(
+            text("INSERT INTO auth_locks (email, locked_until) VALUES ('', now() + interval '1 hour')")
+        )
+        connection.execute(text("INSERT INTO auth_failures (email) VALUES ('')"))
+
+    response = client.delete("/api/v1/users/emergency/lock")
+
+    assert response.status_code == 204
+    with db_engine.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM auth_locks WHERE email = ''")).scalar_one() == 0
+        assert connection.execute(text("SELECT count(*) FROM auth_failures WHERE email = ''")).scalar_one() == 0
+

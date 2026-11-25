@@ -34,6 +34,10 @@ class ConfirmRequest(BaseModel):
     code: str
 
 
+class AdminCodeRequest(BaseModel):
+    code: str
+
+
 # FUNC
 def _submit_mail(
     sender: MailSender, smtp: SmtpConfig, address: str, subject: str, body: str, should_send: bool
@@ -56,17 +60,19 @@ def _user_payload(user: dict) -> dict[str, str]:
     return {key: user[key] for key in ("id", "email", "display_name", "role")}
 
 
+def _set_session_cookie(response: Response, token: str, auth: AuthConfig) -> None:
+    response.set_cookie(
+        key=cookie_name,
+        value=token,
+        max_age=auth.session_days * 86400,
+        path="/",
+        secure=True,
+        httponly=True,
+        samesite="lax",
+    )
+
+
 # ROUTES
-@router.get("/auth/status")
-def auth_status(request: Request, engine: Engine = Depends(get_engine)) -> dict[str, bool]:
-    try:
-        with engine.connect() as connection:
-            smtp = get_smtp_config(connection)
-    except Exception as error:
-        raise HTTPException(status_code=503, detail=mail_not_configured_text) from error
-    return {"mail_configured": smtp.configured}
-
-
 @router.post("/auth/request-code")
 def request_login_code(
     payload: EmailRequest, request: Request, engine: Engine = Depends(get_engine)
@@ -116,15 +122,28 @@ def confirm_login(
     if outcome.user is None or token is None:
         raise HTTPException(status_code=outcome.status_code, detail=outcome.detail)
 
-    response.set_cookie(
-        key=cookie_name,
-        value=token,
-        max_age=auth.session_days * 86400,
-        path="/",
-        secure=True,
-        httponly=True,
-        samesite="lax",
-    )
+    _set_session_cookie(response, token, auth)
+    return _user_payload(outcome.user)
+
+
+@router.post("/auth/admin-code")
+def confirm_admin_login(
+    payload: AdminCodeRequest,
+    request: Request,
+    response: Response,
+    engine: Engine = Depends(get_engine),
+) -> dict[str, str]:
+    auth: AuthConfig = request.app.state.auth_config
+    provider = EmailCodeProvider(auth)
+    with engine.begin() as connection:
+        outcome, token = provider.complete_admin_login(
+            connection, payload.code, request.headers.get("user-agent", "")
+        )
+
+    if outcome.user is None or token is None:
+        raise HTTPException(status_code=outcome.status_code, detail=outcome.detail)
+
+    _set_session_cookie(response, token, auth)
     return _user_payload(outcome.user)
 
 

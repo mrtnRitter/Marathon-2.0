@@ -181,7 +181,7 @@ export function WorkflowsPage() {
   }
   const columns: Column<Workflow>[] = [
     { key: 'name', label: 'Name', render: row => <><strong>{row.name}</strong><IssueMark issues={row.issues} /></> },
-    { key: 'owner', label: 'Eigentümer', render: row => row.owner?.email ?? '–', sort_value: row => row.owner?.email ?? '' },
+    { key: 'owner', label: 'Eigentümer', render: row => row.owner ? row.owner.email || row.owner.display_name : '–', sort_value: row => row.owner ? row.owner.email || row.owner.display_name : '' },
     { key: 'access', label: 'Zugriff', render: row => access_labels[row.access], sort_value: row => access_labels[row.access] },
     { key: 'active', label: 'Status', render: row => <StatusBadge meta={workflow_state_meta(row)} />, sort_value: row => Number(row.active) },
     ...((data?.some(can_run_workflow) ?? false) ? [run_column] : []),

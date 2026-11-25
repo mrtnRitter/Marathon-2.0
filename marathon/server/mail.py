@@ -5,15 +5,16 @@ import argparse
 import logging
 import os
 import smtplib
+import socket
 import ssl
 import sys
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
 from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
-from threading import Lock
-from typing import Mapping
+from threading import Event, Lock, Timer
 
 from marathon.server import config as server_config
 from marathon.server.config import (
@@ -31,8 +32,9 @@ from marathon.server.db.settings_writes import get_smtp_config
 app_name = "marathon-mail"
 app_version = "2.0.0"
 smtp_timeout_s = 10.0
-password_env = "MARATHON_SMTP_PASSWORD"
 not_configured_error = "Mailversand ist nicht eingerichtet (Einstellungen → Mailversand)"
+test_mail_subject = "Marathon: Testmail"
+test_mail_body = "Der Mailversand von Marathon funktioniert."
 
 
 # FUNC
@@ -40,14 +42,8 @@ class MailError(Exception):
     """An SMTP delivery failure safe to show without exposing credentials."""
 
 
-def read_smtp_password(
-    env: Mapping[str, str] | None = None, file: Path | None = None
-) -> str:
-    """Read the SMTP password from the environment first, then the local password file."""
-    env = os.environ if env is None else env
-    value = env.get(password_env)
-    if value is not None:
-        return value
+def read_smtp_password(file: Path | None = None) -> str:
+    """Read the SMTP password from the local password file."""
     password_file = server_config.smtp_password_file if file is None else file
     try:
         return password_file.read_text(encoding="utf-8").rstrip()
@@ -56,9 +52,7 @@ def read_smtp_password(
 
 
 def smtp_password_is_set() -> bool:
-    """Return whether the environment or non-empty password file is configured."""
-    if password_env in os.environ:
-        return True
+    """Return whether the local password file contains a non-empty password."""
     try:
         return bool(server_config.smtp_password_file.read_text(encoding="utf-8").rstrip())
     except OSError:
@@ -102,15 +96,18 @@ def send_mail(
     *,
     password: str | None = None,
     smtp_factory=smtplib.SMTP,
+    smtp_ssl_factory=smtplib.SMTP_SSL,
     timeout_s: float = smtp_timeout_s,
 ) -> None:
     """Send a plain-text email using the configured SMTP server."""
+    if config.encryption not in server_config.smtp_encryptions:
+        raise MailError("Mailversand: Verschlüsselung muss none, starttls oder tls sein")
     if not config.configured:
         raise MailError(not_configured_error)
     if config.username and password is None:
         password = read_smtp_password()
     if config.username and not password:
-        raise MailError("SMTP-Passwort fehlt (MARATHON_SMTP_PASSWORD oder .data/smtp.pass)")
+        raise MailError("SMTP-Passwort fehlt (Einstellungen → Mailversand)")
 
     message = EmailMessage()
     message["From"] = formataddr((config.from_name, config.from_address))
@@ -120,18 +117,59 @@ def send_mail(
     message["Message-ID"] = make_msgid()
     message.set_content(body, subtype="plain", charset="utf-8")
 
+    started = time.monotonic()
+    smtp = None
+    timer = None
+    timed_out = Event()
+    timeout_message = f"Zeitlimit von {timeout_s:g} s überschritten"
     try:
-        with smtp_factory(config.host, config.port, timeout=timeout_s) as smtp:
-            if config.use_tls:
-                smtp.starttls(context=ssl.create_default_context())
-            if config.username:
-                smtp.login(config.username, password)
-            smtp.send_message(message)
+        factory = smtp_ssl_factory if config.encryption == "tls" else smtp_factory
+        factory_kwargs = {"timeout": timeout_s}
+        if config.encryption == "tls":
+            factory_kwargs["context"] = ssl.create_default_context()
+        smtp = factory(**factory_kwargs)
+        remaining = timeout_s - (time.monotonic() - started)
+        if remaining <= 0:
+            raise MailError(timeout_message)
+
+        def stop_smtp() -> None:
+            timed_out.set()
+            current_socket = getattr(smtp, "sock", None)
+            if current_socket is not None:
+                try:
+                    current_socket.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        timer = Timer(remaining, stop_smtp)
+        timer.name = "marathon-mail-timeout"
+        timer.daemon = True
+        timer.start()
+
+        smtp.connect(config.host, config.port)
+        if timed_out.is_set():
+            raise MailError(timeout_message)
+        if config.encryption == "starttls":
+            smtp.starttls(context=ssl.create_default_context())
+        if config.username:
+            smtp.login(config.username, password)
+        smtp.send_message(message)
+        smtp.quit()
+        if timed_out.is_set():
+            raise MailError(timeout_message)
     except (smtplib.SMTPException, OSError, ssl.SSLError) as error:
+        if timed_out.is_set() or isinstance(error, (socket.timeout, TimeoutError)):
+            raise MailError(timeout_message) from error
         detail = str(error).splitlines()[0]
         if password:
             detail = detail.replace(password, "[geschützt]")
         raise MailError(f"{type(error).__name__}: {detail}") from error
+    finally:
+        if timer is not None:
+            timer.cancel()
+            timer.join(timeout=1)
+        if smtp is not None:
+            smtp.close()
 
 
 def login_code_mail(code: str, ttl_minutes: int) -> tuple[str, str]:
@@ -207,7 +245,7 @@ def main(argv: list[str] | None = None, config_file: Path = default_config_file)
         print("Fehler: SMTP-Einstellungen konnten nicht aus der Datenbank gelesen werden", file=sys.stderr)
         return 1
     try:
-        send_mail(smtp, address, "Marathon: Testmail", "Der Mailversand von Marathon funktioniert.")
+        send_mail(smtp, address, test_mail_subject, test_mail_body)
     except MailError as error:
         if str(error) == not_configured_error:
             print(f"Fehler: {error}", file=sys.stderr)

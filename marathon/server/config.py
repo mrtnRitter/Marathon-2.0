@@ -30,6 +30,7 @@ public_url_error = "Öffentliche Adresse: nur https://-Adresse ohne Pfad, z. B. 
 trusted_proxies_error = "Proxy-Adressen: nur IP-Adressen, z. B. 10.0.77.20"
 trusted_proxies_required_error = "Proxy-Adressen: mindestens eine Adresse eintragen, wenn der mitgelieferte Proxy aus ist"
 email_error = "Bitte eine gültige E-Mail-Adresse eingeben"
+smtp_encryptions = ("none", "starttls", "tls")
 domains_error = "E-Mail-Domains: nur Domains ohne Adresse, z. B. looks.film"
 _public_url_host_pattern = re.compile(r"^[a-z0-9.-]{1,253}$")
 _database_identifier = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
@@ -164,8 +165,6 @@ class ProxyConfig:
 
 @dataclass(frozen=True)
 class AuthConfig:
-    admin_emails: tuple[str, ...] = ()
-    allowed_domains: tuple[str, ...] = ()
     session_days: int = 180
     code_ttl_minutes: int = 15
 
@@ -175,7 +174,7 @@ class SmtpConfig:
     host: str = ""
     port: int = 587
     username: str = ""
-    use_tls: bool = True
+    encryption: str = "starttls"
     from_address: str = ""
     from_name: str = "Marathon"
 
@@ -193,8 +192,6 @@ class ServerConfig:
     server_worker: ServerWorkerConfig = field(default_factory=ServerWorkerConfig)
     folder_dialog: FolderDialogConfig = field(default_factory=FolderDialogConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
-    auth: AuthConfig = field(default_factory=AuthConfig)
-    smtp: SmtpConfig = field(default_factory=SmtpConfig)
 
 
 def _validated_value(
@@ -303,68 +300,4 @@ def load_server_config(config_file: Path = default_config_file) -> ServerConfig:
         raise ConfigError(f"[proxy] trusted_proxies in {config_file}: {error}") from error
     proxy = ProxyConfig(public_url, builtin, trusted_proxies)
 
-    auth_data = data.get("auth", {})
-    if not isinstance(auth_data, dict):
-        raise ConfigError(f"[auth] in {config_file} muss eine Tabelle sein")
-    admin_emails_data = auth_data.get("admin_emails", [])
-    if not isinstance(admin_emails_data, list) or any(not isinstance(value, str) for value in admin_emails_data):
-        raise ConfigError(f"[auth] admin_emails in {config_file} muss eine Liste gültiger E-Mail-Adressen sein")
-    try:
-        admin_emails = tuple(dict.fromkeys(normalize_email(value) for value in admin_emails_data))
-    except ValueError as error:
-        raise ConfigError(
-            f"[auth] admin_emails in {config_file} muss eine Liste gültiger E-Mail-Adressen sein"
-        ) from error
-    try:
-        allowed_domains = normalize_domains(auth_data.get("allowed_domains", []))
-    except ValueError as error:
-        raise ConfigError(f"[auth] allowed_domains in {config_file}: {domains_error}") from error
-    auth = AuthConfig(
-        admin_emails=admin_emails,
-        allowed_domains=allowed_domains,
-        session_days=_validated_value(auth_data, "auth", "session_days", 180, 1, 365, config_file, integer=True),
-        code_ttl_minutes=_validated_value(
-            auth_data, "auth", "code_ttl_minutes", 15, 1, 60, config_file, integer=True
-        ),
-    )
-
-    smtp_data = data.get("smtp", {})
-    if not isinstance(smtp_data, dict):
-        raise ConfigError(f"[smtp] in {config_file} muss eine Tabelle sein")
-    smtp_host = smtp_data.get("host", "")
-    if not isinstance(smtp_host, str):
-        raise ConfigError(f"[smtp] host in {config_file} muss ein Text sein")
-    smtp_username = smtp_data.get("username", "")
-    if not isinstance(smtp_username, str):
-        raise ConfigError(f"[smtp] username in {config_file} muss ein Text sein")
-    smtp_use_tls = smtp_data.get("use_tls", True)
-    if not isinstance(smtp_use_tls, bool):
-        raise ConfigError(f"[smtp] use_tls in {config_file} muss true oder false sein")
-    smtp_from_name = smtp_data.get("from_name", "Marathon")
-    if not isinstance(smtp_from_name, str):
-        raise ConfigError(f"[smtp] from_name in {config_file} muss ein Text sein")
-    smtp_from_address_data = smtp_data.get("from_address", "")
-    if not isinstance(smtp_from_address_data, str):
-        raise ConfigError(f"[smtp] from_address in {config_file} muss leer oder eine gültige E-Mail-Adresse sein")
-    if smtp_from_address_data:
-        try:
-            smtp_from_address = normalize_email(smtp_from_address_data)
-        except ValueError as error:
-            raise ConfigError(
-                f"[smtp] from_address in {config_file} muss leer oder eine gültige E-Mail-Adresse sein"
-            ) from error
-    else:
-        smtp_from_address = ""
-    smtp = SmtpConfig(
-        host=smtp_host.strip(),
-        port=_validated_value(smtp_data, "smtp", "port", 587, 1, 65535, config_file, integer=True),
-        username=smtp_username.strip(),
-        use_tls=smtp_use_tls,
-        from_address=smtp_from_address,
-        from_name=smtp_from_name,
-    )
-    if smtp.host and not smtp.from_address:
-        raise ConfigError(
-            f"[smtp] from_address in {config_file} fehlt: Absenderadresse ist nötig, wenn host gesetzt ist"
-        )
-    return ServerConfig(config.host, config.port, database, engine, server_worker, folder_dialog, proxy, auth, smtp)
+    return ServerConfig(config.host, config.port, database, engine, server_worker, folder_dialog, proxy)

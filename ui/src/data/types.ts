@@ -277,11 +277,13 @@ export interface Settings {
   auth: { allowed_domains: string[] }
 }
 
+export type SmtpEncryption = 'none' | 'starttls' | 'tls'
+
 export interface SmtpSettings {
   host: string
   port: number
   username: string
-  use_tls: boolean
+  encryption: SmtpEncryption
   from_address: string
   from_name: string
   password_set: boolean

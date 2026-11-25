@@ -56,7 +56,7 @@ export function UsersPage() {
   }
 
   const remove_user = (user: UserRecord) => {
-    if (!window.confirm(`Konto ${user.email} löschen? Workflows dieses Nutzers sind danach nur noch für Admins sichtbar.`)) return
+    if (!window.confirm(`Konto ${user.email || user.display_name} löschen? Workflows dieses Nutzers sind danach nur noch für Admins sichtbar.`)) return
     void perform_user_action(user.id, () => delete_user(user.id))
   }
 
@@ -154,13 +154,13 @@ function UserRows({
   return (
     <>
       <tr>
-        <td>{user.email}</td>
+        <td>{user.email || user.display_name}</td>
         <td>
-          <select className="input users-role-select" aria-label={`Rolle für ${user.email}`} value={user.role} disabled={user.protected || busy} onChange={event => on_role_change(event.target.value as UserRole)}>
+          <select className="input users-role-select" aria-label={`Rolle für ${user.email || user.display_name}`} value={user.role} disabled={user.protected || busy} onChange={event => on_role_change(event.target.value as UserRole)}>
             <option value="user">Nutzer</option>
             <option value="admin">Admin</option>
           </select>
-          {user.protected && <span className="users-protected-note">In Konfiguration festgelegt</span>}
+          {user.protected && <span className="users-protected-note">Notfallzugang</span>}
         </td>
         <td>{user.last_login_at ? format_datetime(user.last_login_at) : 'noch nie'}</td>
         <td><button type="button" className="users-count-button" aria-expanded={expanded} onClick={on_toggle_sessions}>{user.session_count}</button></td>

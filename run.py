@@ -10,7 +10,7 @@ import threading
 import time
 from pathlib import Path
 from subprocess import CompletedProcess
-from typing import TextIO
+from typing import Callable, TextIO
 
 from build import (
     BuildError,
@@ -172,9 +172,9 @@ def _mail_test(address: str) -> int:
         return 1
 
 
-def _admin_code(address: str) -> int:
+def _admin_code() -> int:
     """Run the emergency admin-code command."""
-    command = [str(venv_python()), "-m", "marathon.server.auth", "admin-code", address]
+    command = [str(venv_python()), "-m", "marathon.server.auth", "admin-code"]
     try:
         return _run_command(command, timeout=60).returncode
     except BuildError as error:
@@ -275,8 +275,8 @@ class _ConsoleAdminCodeJobs:
         self._processes: set[subprocess.Popen] = set()
         self._threads: list[threading.Thread] = []
 
-    def start(self, address: str) -> None:
-        thread = threading.Thread(target=self._run, args=(address,), daemon=True)
+    def start(self) -> None:
+        thread = threading.Thread(target=self._run, daemon=True)
         with self._lock:
             self._threads.append(thread)
         thread.start()
@@ -317,10 +317,10 @@ class _ConsoleAdminCodeJobs:
         except subprocess.TimeoutExpired:
             return
 
-    def _run(self, address: str) -> None:
+    def _run(self) -> None:
         if self._cancel_event.is_set():
             return
-        command = [str(venv_python()), "-m", "marathon.server.auth", "admin-code", address]
+        command = [str(venv_python()), "-m", "marathon.server.auth", "admin-code"]
         try:
             process = subprocess.Popen(command, cwd=root_dir, stdin=subprocess.DEVNULL)
         except OSError as error:
@@ -374,10 +374,10 @@ def _watch_console(
                     continue
                 parts = line.strip().split(maxsplit=1)
                 if parts and parts[0].casefold() == "admin-code":
-                    if len(parts) == 1 or not parts[1].strip():
-                        print("Fehler: Adresse fehlt (admin-code <adresse>)")
+                    if len(parts) == 1:
+                        admin_code_jobs.start()
                     else:
-                        admin_code_jobs.start(parts[1].strip())
+                        print("Fehler: admin-code erwartet keine Adresse")
         except Exception:
             return
 
@@ -594,7 +594,7 @@ def start_server(venv: Path) -> int:
         admin_code_jobs.cancel()
 
 
-def _run_single_database_command(command_runner, address: str) -> int:
+def _run_single_database_command(command_runner: Callable[[], int]) -> int:
     """Run a one-shot command, owning database cleanup only when needed."""
     database_started = False
     try:
@@ -609,7 +609,7 @@ def _run_single_database_command(command_runner, address: str) -> int:
             raise
         if database_started:
             _run_database_command(venv_python(), "upgrade")
-        return command_runner(address)
+        return command_runner()
     finally:
         if database_started:
             stop_database()
@@ -626,11 +626,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("address", nargs="?")
     args = parser.parse_args(argv)
     if args.command in ("mail-test", "admin-code"):
-        if not args.address:
-            parser.error(f"{args.command} braucht eine E-Mail-Adresse")
-        command_runner = _mail_test if args.command == "mail-test" else _admin_code
+        if args.command == "mail-test":
+            if not args.address:
+                parser.error("mail-test braucht eine E-Mail-Adresse")
+            command_runner = lambda: _mail_test(args.address)
+        else:
+            if args.address is not None:
+                parser.error("admin-code erwartet keine Adresse")
+            command_runner = _admin_code
         try:
-            return _run_single_database_command(command_runner, args.address)
+            return _run_single_database_command(command_runner)
         except KeyboardInterrupt:
             return 0
         except BuildError as error:
