@@ -117,31 +117,32 @@ Vertrag: `docs/spec.md` §3.1 (`[worker_client]`), §3.2, §3.4 (ohne Rechner-Er
 
 - [ ] Strikte Trennung von Nutzerkonto und Worker: Ein Worker ist ein eigenständiger Rechner mit individuellem Worker-Token (Erstregistrierung über `/api/v1/worker/enroll`, optional mit Admin-Freigabe über `[worker_client] require_admin_approval`), ohne dauerhafte Bindung an einen Nutzer-Account
   - Offen: Standard für `require_admin_approval`. Vorschlag: `true`, sonst kann jeder Rechner im Netz sich anmelden, über `/worker-control` selbst starten und Jobs mit Dateipfaden erhalten
-  - Offen: Wer setzt die erste Fähigkeiten-Liste? Der Datensatz entsteht schon bei `enroll`, die Regel „erste Anmeldung → gemeldete Modultypen“ greift dann nie. Vorschlag: bei der ersten Anmeldung mit leerer Liste
-  - Offen: Neuinstallation erzeugt einen neuen Worker. Worker löschen (Admin) einplanen?
-  - Offen: Protokoll 2 weiter annehmen? Vorschlag: nein, der Server-Worker wechselt mit auf Protokoll 3
+  - Offen: Wer setzt die erste Fähigkeiten-Liste? Der Datensatz entsteht schon bei `enroll`, die Regel „erste Anmeldung → gemeldete Modultypen“ greift dann nie. Vorschlag: bei der ersten Anmeldung mit leerer Liste -- ok
+  - Offen: Neuinstallation erzeugt einen neuen Worker. Worker löschen (Admin) einplanen? -- ja, der Admin kann worker wieder entfernen
+  - Offen: Protokoll 2 weiter annehmen? Vorschlag: nein, der Server-Worker wechselt mit auf Protokoll 3 -- ja
 - [ ] Windows-Tray-Client im Benutzerkontext (Autostart, Starter + austauschbare Laufzeit, kein eigenes Einstellungs-UI); Doppelklick / Rechtsklick → „Worker-Einstellungen öffnen“ holt einen kurzlebigen Einmal-Steuerungslink vom Server und öffnet genau diesen Worker im Browser – auch ohne Marathon-User-Login
-  - Offen: Paketierung – Python mitgeliefert (eingebettet + `requirements/client.txt`) oder eine einzelne `.exe`?
-  - Offen: Installation und Autostart – Installer, ZIP + Startskript, Aufgabenplanung oder Autostart-Ordner? Mit oder ohne Adminrechte?
-  - Offen: Braucht der Download (`/api/v1/client/download`) eine Anmeldung?
-  - Offen: Client-Updates bis zum Auto-Update (Backlog): manuell neu installieren?
-  - Offen: Einmal-Link per `GET` oder per Bestätigungs-`POST` einlösen. Vorschlag: `POST`, damit Vorabrufe ihn nicht verbrauchen
-  - Installer importiert das Stammzertifikat des mitgelieferten Proxys in den Zertifikatsspeicher des Benutzers; Browser und Worker vertrauen dem Server dann ohne weiteren Schritt
-  - Offen: Wie kommt das Stammzertifikat sicher in den Installer (z. B. im Download enthalten und per Fingerabdruck geprüft)?
+  - Offen: Paketierung – Python mitgeliefert (eingebettet + `requirements/client.txt`) oder eine einzelne `.exe`? - Client als einzelne Exe mit Funktion, sich in den Windows Autostart einzutragen - meine bisherigen Exen bekommen unter windows 11 einen Warndialog, wahrscheinlich weil die Software irgendeine Signatur nicht hat - wäre gut, die Exe gleich völlig kompatibel zu machen - so offiziell wie möglich
+  - Offen: Installation und Autostart – Installer, ZIP + Startskript, Aufgabenplanung oder Autostart-Ordner? Mit oder ohne Adminrechte? - Installer Exe, Berechtigung soweit wie nötig
+  - Offen: Braucht der Download (`/api/v1/client/download`) eine Anmeldung? - Nein, Client lassen sich komplett ohne Marathon User hinzufügen, einstellen
+  - Offen: Client-Updates bis zum Auto-Update (Backlog): manuell neu installieren? - Nein, wir bauen gleich das Auto-Update ein, auch wenn der Server es noch nicht hat und noch nicht ausrollen kann
+  - Offen: Einmal-Link per `GET` oder per Bestätigungs-`POST` einlösen. Vorschlag: `POST`, damit Vorabrufe ihn nicht verbrauchen - ok
+  - Installer importiert das Stammzertifikat des mitgelieferten Proxys in den Zertifikatsspeicher des Benutzers; Browser und Worker vertrauen dem Server dann ohne weiteren Schritt - ok
+  - Offen: Wie kommt das Stammzertifikat sicher in den Installer (z. B. im Download enthalten und per Fingerabdruck geprüft)? - wähle den besten weg selbst
 - [ ] Drei Steuerbefehle am Worker (vor Ort über Tray-Link & für Admins): „Starten“, „Stoppen“ (sanftes Auslaufen / Drain: keine neuen Jobs, laufende Jobs sauber beenden), „Sofort stoppen“ (harter Abbruch, Assets zurück ans letzte Modul, zählt nicht als Versuch)
-  - Offen: Anzeigetext für den neuen Status `draining`. Vorschlag: „Läuft aus“
-  - Offen: „Starten“ während `draining`. Vorschlag: sofort zurück auf `ready`, laufende Jobs bleiben
-  - Offen: `POST /workers/{id}/stop` ändert seine Bedeutung (bisher Abbruch, künftig Drain; Abbruch über neues `/stop-now`). So gewollt? Betrifft auch den noch nicht abgenommenen Release Worker-Steuerung
+  - Offen: Anzeigetext für den neuen Status `draining`. Vorschlag: „Läuft aus“ - nein, wir nehmen genau die 3 Begriffe Starten, Stoppen, Sofort-Aus - jeweils mit einem Icon Play, Stop-Symbol weiß, Stop-Symbol rot
+  - Offen: „Starten“ während `draining`. Vorschlag: sofort zurück auf `ready`, laufende Jobs bleiben - ok
+  - Offen: `POST /workers/{id}/stop` ändert seine Bedeutung (bisher Abbruch, künftig Drain; Abbruch über neues `/stop-now`). So gewollt? Betrifft auch den noch nicht abgenommenen Release Worker-Steuerung - machen wir doch stop-drain und stop-now - dann ist jeweils klar, welche stop-art das ist
 - [ ] Verfügbarkeitsregeln am Worker durchgängig als Positivliste („Wann ist der Worker verfügbar?“): Zeitplan Mo–So 0–24 Uhr, Inaktivitäts-Start nach X Minuten (Tastatur/Maus + CPU, RAM, GPU unter Schwellenwert; Eigenlast laufender Worker-Jobs deaktiviert die Prüfung nicht), Ausschlussliste „Nur verfügbar, wenn keines der Programme X, Y, Z läuft“
-  - Offen: Welche Uhrzeit gilt – die des Rechners oder `timezone` aus der Regel?
-  - Offen: Bedeutung einer leeren Regel (`{}`). Vorschlag: immer verfügbar
-  - Offen: Prüfregeln für Zeitfenster (`24:00`, Fenster über Mitternacht, Überschneidungen) und Prozessnamen (mit/ohne `.exe`, Groß/klein)
-  - Offen: Nach Jobende stehen CPU/RAM durch die eigene Last im 30-s-Mittel noch hoch; der Worker wäre kurz „nicht verfügbar“. Vorschlag: Lastprüfung erst nach Ablauf des Mittelungsfensters wieder einschalten
-  - Offen: Ohne GPU-Sensor gilt die GPU-Bedingung als erfüllt?
+  - Offen: Welche Uhrzeit gilt – die des Rechners oder `timezone` aus der Regel? - die des rechners
+  - Offen: Bedeutung einer leeren Regel (`{}`). Vorschlag: immer verfügbar - genau und das ist die Standardeinstellung
+  - Offen: Prüfregeln für Zeitfenster (`24:00`, Fenster über Mitternacht, Überschneidungen) und Prozessnamen (mit/ohne `.exe`, Groß/klein) - das sollte geprüft werden, ja
+  - Offen: Nach Jobende stehen CPU/RAM durch die eigene Last im 30-s-Mittel noch hoch; der Worker wäre kurz „nicht verfügbar“. Vorschlag: Lastprüfung erst nach Ablauf des Mittelungsfensters wieder einschalten - besser: niedrige Last über einen längeren Zeitraum aktivieren den Worker für Marathon - nur durch Tastatur oder Mauseingaben, wird er über stop-drain wieder deaktiviert - ab da gilt wieder die Lastbeobachtung. Regelwerk: Zuerst Zeitplan, dann Software, dann Last - wir gucken also nur auf die Last, wenn der Rechner nach Zeitplan zur Verfügung steht, Sperrsoftware nicht läuft, Jobs bekommt er erst, wenn der Rechner dann im idle ist
+  - Offen: Ohne GPU-Sensor gilt die GPU-Bedingung als erfüllt? - ok
 - [ ] Einstellungen liegen zentral im Marathon-Server; Worker-Client wertet lokale Sensoren aus und meldet Verfügbarkeit samt Grund zurück; bei Verlust der Verfügbarkeit laufen aktive Jobs sauber zu Ende (Drain); Fähigkeiten-Rangliste bleibt Admin-Sache
-  - Offen: „Sofort melden“ geht nicht über die bis zu 25 s offene Abfrage. Vorschlag: eigener Endpunkt `POST /api/v1/worker/availability`
-  - Offen: Zugeteilter, noch nicht gestarteter Job bei Verlust der Verfügbarkeit. Vorschlag: zurückgeben wie „Nicht abgeholt“, zählt nicht als Versuch
-  - Offen: Kennung für geänderte Regeln in der Poll-Antwort (Hash oder Versionsnummer)
+  - Offen: „Sofort melden“ geht nicht über die bis zu 25 s offene Abfrage. Vorschlag: eigener Endpunkt `POST /api/v1/worker/availability` -- verfügbarkeit kann gerne erst nach 25s gemeldet werden - das betrifft den Zustandswechsel (Zeitplan aktiv, Software die sperrt läuft nicht, Last niedrig)
+  - Offen: Zugeteilter, noch nicht gestarteter Job bei Verlust der Verfügbarkeit. Vorschlag: zurückgeben wie „Nicht abgeholt“, zählt nicht als Versuch -- ja
+  - Offen: Kennung für geänderte Regeln in der Poll-Antwort (Hash oder Versionsnummer) -- entscheide selbst 
+- [ ] Der Client soll Fachsoftware wie ffmpeg vom Server beziehen, damit die Client exe schlank bleibt - wir brauchen einen Download-Kanal und eine Ablage für den Client auf dem PC. Der Client muss selbst wissen, wo nötige Zusatzmodule liegen
 
 ### Release Datei- und Ordner-Dialog
 
@@ -297,4 +298,4 @@ Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee:
 ### Änderungen Martin (diesen Bereich immer im Doc belassen!)
 - [ ] Reihenfolge linkes Seitenmenü -> System: Nutzer, Worker, Einstellungen -- Einstellungen immer als letztes, auch wenn noch weitere Optionen dazukommen
 - [ ] Tooltips sollen überall keine Internas preisgeben (IP Adressen, Domain, Server) - immer neutrale Tooltips verwenden
-- [ ] 
+- [ ] Software (Client), soll gleich von Marathon-Seite downlodbar sein
