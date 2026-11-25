@@ -93,6 +93,24 @@ Vertrag: `docs/spec.md` §3.1–3.3 (ohne `[worker_client]`); offene Punkte und 
 - [x] Proxy-Einstellungen: Schalter „Proxy verwenden“ (aus = mitgelieferter Proxy Caddy, an = externer Proxy; `[proxy] builtin` bleibt, die Oberfläche zeigt den umgekehrten Wert), Feld „Proxy“ (Adresse des externen Proxys, nur bei eingeschaltetem Schalter bearbeitbar, Platzhalter `0.0.0.0`); Hilfetexte unter Schalter und Feld entfallen
 - [x] Server neu starten (nur Admins): Konsolenbefehl `restart` in `python run.py` und Schaltfläche „Server neu starten“ in den Einstellungen; die Datenbank läuft weiter, die Oberfläche zeigt während des Neustarts das Verbindungs-Overlay
 
+#### Nacharbeit Notfallzugang & Mailversand
+
+Geht den Einträgen oben zu `[smtp]`, `[auth] admin_emails` und `admin-code <mail>` vor.
+
+- [ ] Notfallzugang nur über die Konsole: `admin-code` ohne Adresse (während `python run.py` läuft und als `python run.py admin-code`) erzeugt einen Einmalcode für ein festes Notfallkonto ohne E-Mail-Adresse mit Admin-Rechten; den Befehl gibt es nirgends sonst (keine API, keine Oberfläche)
+  - Entschieden: Funktioniert immer, unabhängig davon, ob oder wie weit der Mailversand eingerichtet ist und ob es schon Admins gibt
+  - Entschieden: Einziger fester Zugangsweg; `[auth] admin_emails` und die in der Konfiguration festgelegten, geschützten Admins entfallen; geschützt bleibt nur der letzte Admin
+  - Entschieden: Die Sperre nach 3 falschen Codes bleibt; `admin-code` hebt die Sperre des Notfallkontos auf
+- [ ] Anmeldeseite ohne Sperre: Wer nicht angemeldet ist, landet immer auf der Anmeldeseite, wer angemeldet ist, in der Oberfläche; neben E-Mail und „Code senden“ gibt es einen eigenen Weg für den Admin-Code. Ohne Mailversand meldet nur „Code senden“ „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“
+- [ ] `[auth]` und `[smtp]` vollständig aus `config/marathon.toml` entfernt, samt Einlesen und Startwerten; Einrichtung nur über die Oberfläche, Daten nur in der Datenbank
+  - Entschieden: Erlaubte E-Mail-Domains starten leer; Sitzungsdauer 180 Tage und Code-Gültigkeit 15 Minuten fest im Code
+  - Entschieden: Das SMTP-Passwort bleibt in `.data/smtp.pass` (geschrieben über Einstellungen → Mailversand); `MARATHON_SMTP_PASSWORD` entfällt
+- [ ] SMTP vervollständigen
+  - Verschlüsselung wählbar: keine, STARTTLS oder SSL/TLS (Port 465) statt Schalter „STARTTLS verwenden“; gespeicherte Einstellungen werden übernommen
+  - „Testmail senden“ unter Einstellungen → Mailversand mit Ergebnis oder Fehlergrund; `python run.py mail-test <adresse>` bleibt
+  - Speichern lehnt einen Benutzernamen ohne gespeichertes Passwort ab
+  - Zeitlimit 10 s für den gesamten Versand statt je Schritt
+
 ### Release Worker-Client & Steuerung
 
 Vertrag: `docs/spec.md` §3.1 (`[worker_client]`), §3.2, §3.4 (ohne Rechner-Erkennung im Browser); offene Punkte unten gehen vor
@@ -262,9 +280,16 @@ Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee:
 
 - [ ] Reports ausbauen: weitere Filter und Kennzahlen
 
+### Mailversand
+
+- [ ] Versand über Microsoft Graph API (Microsoft 365) als weitere Methode neben SMTP; SMTP bleibt die universelle Methode
+  - Offen: Details klärt Martin (App-Registrierung im Tenant, Berechtigung zum Senden, Wahl der Methode in Einstellungen → Mailversand); Einrichtung wie bei SMTP nur über die Oberfläche, Daten nur in der Datenbank
+
 ### Zugang und Sicherheit
 
 - [ ] Anbindung an übergeordnetes Ökosystem (SSO / Landingpage mit Tool-Übersicht ohne zweiten Login in Marathon; nutzt `AuthProvider` und `users.external_subject` aus dem Release Zugang & Nutzer)
   - Offen: Übernimmt der übergeordnete Server nur den Login oder auch mehrere Instanzen/Mandanten?
+- [ ] Geführte Ersteinrichtung: Der erste Admin hinterlegt seine E-Mail-Adresse und erhält darüber den Code; der Notfallzugang per `admin-code` bleibt
+  - Erst nach Klärung des Mail-Wegs (SMTP, Graph API) und nach wichtigeren Releases
 - [ ] Öffentlicher Zugang aus dem Internet (HTTPS im LAN kommt mit Release HTTPS)
   - Offen: Übernimmt den Zugang von außen ein übergeordneter Server / Reverse-Proxy?
