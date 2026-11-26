@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 
+from marathon.common.availability import default_availability
 from marathon.modules import load_catalog
 from marathon.server.config import EngineConfig
 from marathon.server.db.catalog_writes import sync_module_types
@@ -20,10 +21,22 @@ from marathon.server.db.workflow_writes import create_workflow, save_graph
 from marathon.server.engine.flow import load_graph
 from marathon.server.engine.jobs import create_batch_job, create_job, start_job
 from marathon.server.app import create_app
+from marathon.server.worker_auth import hash_token
 
 
 now = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
-headers = {"Authorization": "Bearer test-token"}
+
+
+def _default_availability():
+    return default_availability()
+
+
+def _headers(worker_id="worker-1"):
+    return {"Authorization": f"Bearer worker-token-{worker_id}"}
+
+
+headers = _headers()
+server_headers = {"Authorization": "Bearer test-token"}
 
 
 @pytest.fixture
@@ -44,10 +57,10 @@ def api_client(db_engine, tmp_path):
         yield client
 
 
-def _worker(db_engine, worker_id="worker-1", *, status="ready", name="Worker", skills=None, last_seen=None):
+def _worker(db_engine, worker_id="worker-1", *, status="ready", name="Worker", skills=None, last_seen=None, approved=True):
     statement = text(
-        "INSERT INTO workers (id, name, status, capabilities, skills, client_version, ip_address, last_seen, created_at) "
-        "VALUES (:id, :name, :status, :capabilities, :skills, '', NULL, :last_seen, :created_at) "
+        "INSERT INTO workers (id, name, status, capabilities, skills, client_version, ip_address, last_seen, created_at, token_hash, approved) "
+        "VALUES (:id, :name, :status, :capabilities, :skills, '', NULL, :last_seen, :created_at, :token_hash, :approved) "
         "ON CONFLICT (id) DO NOTHING"
     ).bindparams(
         bindparam("capabilities", type_=JSONB), bindparam("skills", type_=JSONB),
@@ -56,7 +69,8 @@ def _worker(db_engine, worker_id="worker-1", *, status="ready", name="Worker", s
         connection.execute(statement, {
             "id": worker_id, "name": name, "status": status, "capabilities": ["copy_file", "move_file"],
             "skills": skills if skills is not None else ["copy_file", "move_file"],
-            "last_seen": last_seen, "created_at": now,
+            "last_seen": last_seen, "created_at": now, "token_hash": hash_token(f"worker-token-{worker_id}"),
+            "approved": approved,
         })
 
 
@@ -132,6 +146,97 @@ def _row(db_engine, table, key, value):
     return dict(row)
 
 
+def test_token_identity_must_match_every_worker_route(api_client, db_engine):
+    _worker(db_engine, "worker-1")
+    _worker(db_engine, "worker-2")
+    mismatch = {"detail": "Worker-Token gehört zu einem anderen Worker"}
+    register = api_client.post("/api/v1/worker/register", headers=headers, json={
+        "worker_id": "worker-2", "name": "Worker", "client_version": "3.1",
+        "capabilities": [], "protocol": 3,
+    })
+    poll = api_client.post("/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-2"})
+    assert register.status_code == poll.status_code == 403
+    assert register.json() == poll.json() == mismatch
+
+    job_id, _, asset_id = _job(db_engine, "worker-2", status="running")
+    requests = [
+        (f"/api/v1/worker/jobs/{job_id}/start", {"worker_id": "worker-2"}),
+        (f"/api/v1/worker/jobs/{job_id}/progress", {"worker_id": "worker-2", "progress": 1}),
+        (f"/api/v1/worker/jobs/{job_id}/assets/{asset_id}/result", {
+            "worker_id": "worker-2", "outcome": "result", "output": "done",
+        }),
+        (f"/api/v1/worker/jobs/{job_id}/result", {
+            "worker_id": "worker-2", "outcome": "result", "output": "done",
+        }),
+    ]
+    for route, payload in requests:
+        response = api_client.post(route, headers=headers, json=payload)
+        assert response.status_code == 403
+        assert response.json() == mismatch
+
+
+def test_poll_sends_changed_availability_and_status(api_client, db_engine):
+    _worker(db_engine, "worker-1", status="draining", approved=False)
+    stored = {"idle": {"enabled": True, "minutes": 20}, "blocked_processes": ["Editor.EXE"]}
+    statement = text(
+        "UPDATE workers SET availability_config = :config, availability_revision = 7 WHERE id = 'worker-1'"
+    ).bindparams(bindparam("config", type_=JSONB))
+    with db_engine.begin() as connection:
+        connection.execute(statement, {"config": stored})
+
+    started = monotonic()
+    response = api_client.post("/api/v1/worker/poll", headers=headers, json={
+        "worker_id": "worker-1", "availability_revision": 6,
+    })
+    assert monotonic() - started < 0.8
+    assert response.status_code == 200
+    assert response.json() == {
+        "jobs": [], "cancel": [], "status": "draining", "approved": False,
+        "availability": {
+            "config": {
+                **default_availability(),
+                "idle": {
+                    "enabled": True, "minutes": 20, "max_cpu_percent": 25,
+                    "max_ram_percent": 75, "max_gpu_percent": 20,
+                },
+                "blocked_processes": ["Editor.EXE"],
+            },
+            "revision": 7,
+        },
+    }
+
+
+def test_poll_current_availability_revision_waits_without_update(api_client, db_engine):
+    _worker(db_engine)
+    started = monotonic()
+    response = api_client.post("/api/v1/worker/poll", headers=headers, json={
+        "worker_id": "worker-1", "availability_revision": 0,
+    })
+    assert response.status_code == 200
+    assert "availability" not in response.json()
+    assert response.json()["status"] == "ready"
+    assert response.json()["approved"] is True
+    assert monotonic() - started >= 0.9
+
+
+def test_unavailable_poll_drops_assigned_jobs_without_attempt(api_client, db_engine):
+    _worker(db_engine)
+    job_id, _, _ = _job(db_engine)
+    reason = "temporary maintenance " * 15
+    response = api_client.post("/api/v1/worker/poll", headers=headers, json={
+        "worker_id": "worker-1", "available": False, "availability_reason": reason,
+        "availability_revision": 0,
+    })
+    assert response.status_code == 200
+    worker = _row(db_engine, "workers", "id", "worker-1")
+    assert worker["client_available"] is False
+    assert worker["availability_reason"] == reason[:200]
+    job = _row(db_engine, "jobs", "id", job_id)
+    assert job["status"] == "cancelled"
+    assert job["attempt"] == 1
+    assert _row(db_engine, "assets", "id", _row(db_engine, "job_assets", "job_id", job_id)["asset_id"])["attempts"] == 0
+
+
 def test_requires_token(api_client):
     without_token = api_client.post("/api/v1/worker/register", json={})
     wrong_token = api_client.post("/api/v1/worker/register", headers={"Authorization": "Bearer wrong"}, json={})
@@ -152,38 +257,37 @@ def test_load_or_create_token(tmp_path):
 
 
 def test_register_new_worker(api_client, db_engine):
-    register_payload = {
-        "worker_id": "new", "name": "GPU", "client_version": "2.1",
-        "capabilities": ["move_file", "copy_file"], "protocol": 2,
-    }
-    register_payload["max_parallel"] = 4
-    register_payload["last" + "_choice"] = ["copy_file"]
-    response = api_client.post("/api/v1/worker/register", headers=headers, json=register_payload)
+    _worker(db_engine, "new", status="stopped", name="Enrolled", skills=[])
+    response = api_client.post("/api/v1/worker/register", headers=_headers("new"), json={
+        "worker_id": "new", "name": "GPU", "client_version": "3.1",
+        "capabilities": ["move_file", "copy_file"], "protocol": 3,
+    })
     assert response.status_code == 200
-    assert response.json() == {"worker_id": "new", "status": "stopped", "protocol": 2, "poll_timeout_s": 1.0}
+    assert response.json() == {
+        "worker_id": "new", "status": "stopped", "approved": True, "protocol": 3,
+        "poll_timeout_s": 1.0,
+        "availability": {"config": _default_availability(), "revision": 0},
+    }
     worker = _row(db_engine, "workers", "id", "new")
     assert worker["status"] == "stopped"
-    assert worker["skills"] == worker["capabilities"] == ["move_file", "copy_file"]
+    assert worker["skills"] == []
+    assert worker["capabilities"] == ["move_file", "copy_file"]
     assert worker["online"] is True
 
-    server_worker = api_client.post("/api/v1/worker/register", headers=headers, json={
-        "worker_id": "server-worker", "name": "Server", "client_version": "2.1",
-        "capabilities": [], "protocol": 2,
+    server_worker = api_client.post("/api/v1/worker/register", headers=server_headers, json={
+        "worker_id": "server-worker", "name": "Server", "client_version": "3.1",
+        "capabilities": [], "protocol": 3,
     })
     assert server_worker.status_code == 200
     assert server_worker.json()["status"] == "ready"
-
-    without_legacy_field = api_client.post("/api/v1/worker/register", headers=headers, json={
-        "worker_id": "new-without-legacy-field", "name": "GPU", "client_version": "2.1",
-        "capabilities": ["copy_file"], "protocol": 2,
-    })
-    assert without_legacy_field.status_code == 200
+    assert _row(db_engine, "workers", "id", "server-worker")["skills"] == []
 
 
-def test_register_rejects_protocol(api_client):
+def test_register_rejects_protocol(api_client, db_engine):
+    _worker(db_engine)
     response = api_client.post("/api/v1/worker/register", headers=headers, json={
-        "worker_id": "new", "name": "GPU", "client_version": "2.1", "capabilities": [],
-        "protocol": 1,
+        "worker_id": "worker-1", "name": "GPU", "client_version": "2.1", "capabilities": [],
+        "protocol": 2,
     })
     assert response.status_code == 409
     assert response.json() == {"detail": "Protokollversion nicht unterstützt"}
@@ -197,7 +301,7 @@ def test_register_known_worker_resets_jobs(api_client, db_engine):
     running, _, _ = _job(db_engine, "worker-1", status="running")
     response = api_client.post("/api/v1/worker/register", headers=headers, json={
         "worker_id": "worker-1", "name": "Changed", "client_version": "2.2", "capabilities": ["move_file"],
-        "protocol": 2,
+        "protocol": 3,
     })
     assert response.status_code == 200
     assert response.json()["status"] == "stopped"
@@ -219,7 +323,7 @@ def test_register_known_worker_resets_jobs(api_client, db_engine):
 def test_poll_returns_assigned_jobs(api_client, db_engine):
     job_id, _, asset_ids = _batch_job(db_engine, status="assigned")
     response = api_client.post("/api/v1/worker/poll", headers=headers,
-                               json={"worker_id": "worker-1"})
+                               json={"worker_id": "worker-1", "availability_revision": 0})
     assert response.status_code == 200
     jobs = response.json()["jobs"]
     assert len(jobs) == 1
@@ -232,15 +336,18 @@ def test_poll_returns_assigned_jobs(api_client, db_engine):
     }
     assert _row(db_engine, "workers", "id", "worker-1")["online"] is True
     assert response.json()["cancel"] == []
+    assert response.json()["status"] == "ready"
+    assert response.json()["approved"] is True
 
 
 def test_poll_times_out_empty(api_client, db_engine):
     _worker(db_engine)
     started = monotonic()
-    response = api_client.post("/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1"})
+    response = api_client.post("/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1", "availability_revision": 0})
     duration = monotonic() - started
     assert response.status_code == 200
-    assert response.json() == {"jobs": [], "cancel": []}
+    assert response.json() == {"jobs": [], "cancel": [], "status": "ready", "approved": True}
+    assert "availability" not in response.json()
     assert 0.9 <= duration <= 3
 
 
@@ -249,7 +356,7 @@ def test_poll_returns_early_when_job_appears(api_client, db_engine):
     results = []
     started = monotonic()
     poll_thread = Thread(target=lambda: results.append(api_client.post(
-        "/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1"}
+        "/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1", "availability_revision": 0}
     )))
     poll_thread.start()
     sleep(0.3)
@@ -266,22 +373,27 @@ def test_poll_cancel_lists(api_client, db_engine):
     cancelling, _, _ = _job(db_engine, status="cancelling")
     running, _, _ = _job(db_engine, status="running")
     response = api_client.post("/api/v1/worker/poll", headers=headers, json={
-        "worker_id": "worker-1", "running": [cancelling, running, "unknown-job"],
+        "worker_id": "worker-1", "running": [cancelling, running, "unknown-job"], "availability_revision": 0,
     })
     assert response.status_code == 200
-    assert response.json() == {"jobs": [], "cancel": [cancelling, "unknown-job"]}
+    assert response.json() == {"jobs": [], "cancel": [cancelling, "unknown-job"], "status": "ready", "approved": True}
 
 
-def test_poll_unknown_worker_404(api_client):
-    response = api_client.post("/api/v1/worker/poll", headers=headers, json={"worker_id": "missing"})
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Worker unbekannt"}
+def test_poll_deleted_worker_token_is_unauthorized(api_client, db_engine):
+    _worker(db_engine, "deleted-worker")
+    with db_engine.begin() as connection:
+        connection.execute(text("DELETE FROM workers WHERE id = 'deleted-worker'"))
+    response = api_client.post("/api/v1/worker/poll", headers=_headers("deleted-worker"), json={
+        "worker_id": "deleted-worker", "availability_revision": 0,
+    })
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Worker-Token ungültig"}
 
 
 def test_poll_touches_worker(api_client, db_engine):
     _worker(db_engine, "stopped-worker", status="stopped", last_seen=now - timedelta(days=1))
     _job(db_engine, "stopped-worker")
-    response = api_client.post("/api/v1/worker/poll", headers=headers, json={"worker_id": "stopped-worker"})
+    response = api_client.post("/api/v1/worker/poll", headers=_headers("stopped-worker"), json={"worker_id": "stopped-worker", "availability_revision": 0})
     assert response.status_code == 200
     stopped = _row(db_engine, "workers", "id", "stopped-worker")
     assert stopped["status"] == "stopped"
@@ -290,8 +402,8 @@ def test_poll_touches_worker(api_client, db_engine):
 
     _worker(db_engine, "locked-worker", status="stopped", last_seen=now - timedelta(days=1))
     _job(db_engine, "locked-worker")
-    locked_response = api_client.post("/api/v1/worker/poll", headers=headers,
-                                      json={"worker_id": "locked-worker"})
+    locked_response = api_client.post("/api/v1/worker/poll", headers=_headers("locked-worker"),
+                                      json={"worker_id": "locked-worker", "availability_revision": 0})
     assert locked_response.status_code == 200
     inactive = _row(db_engine, "workers", "id", "locked-worker")
     assert inactive["status"] == "stopped"
@@ -311,7 +423,7 @@ def test_start_endpoint(api_client, db_engine):
     invalid = api_client.post(f"/api/v1/worker/jobs/{cancelled}/start", headers=headers,
                               json={"worker_id": "worker-1"})
     missing = api_client.post("/api/v1/worker/jobs/missing/start", headers=headers,
-                              json={"worker_id": "worker-1"})
+                              json={"worker_id": "worker-1", "availability_revision": 0})
     assert invalid.status_code == 409
     assert invalid.json() == {"detail": "Job nicht mehr gültig"}
     assert missing.status_code == 404
@@ -336,7 +448,8 @@ def test_progress_endpoint(api_client, db_engine):
                                  json={"worker_id": "worker-1", "progress": 50})
     assert cancelling.status_code == 200
     assert cancelling.json() == {"cancel": True}
-    foreign = api_client.post(f"/api/v1/worker/jobs/{job_id}/progress", headers=headers,
+    _worker(db_engine, "worker-2")
+    foreign = api_client.post(f"/api/v1/worker/jobs/{job_id}/progress", headers=_headers("worker-2"),
                               json={"worker_id": "worker-2", "progress": 50})
     missing = api_client.post("/api/v1/worker/jobs/missing/progress", headers=headers,
                               json={"worker_id": "worker-1", "progress": 50})
@@ -355,7 +468,8 @@ def test_result_endpoint(api_client, db_engine):
     assert late.json() == {"accepted": False}
 
     foreign_job, _, _ = _job(db_engine, status="running")
-    foreign = api_client.post(f"/api/v1/worker/jobs/{foreign_job}/result", headers=headers,
+    _worker(db_engine, "worker-2")
+    foreign = api_client.post(f"/api/v1/worker/jobs/{foreign_job}/result", headers=_headers("worker-2"),
                               json={**payload, "worker_id": "worker-2"})
     missing = api_client.post("/api/v1/worker/jobs/missing/result", headers=headers, json=payload)
     assert foreign.status_code == 403
@@ -390,9 +504,10 @@ def test_asset_result_endpoint_completes_batch_one_asset_at_a_time(api_client, d
 
 def test_asset_result_endpoint_rejects_foreign_worker_and_asset(api_client, db_engine):
     job_id, _, asset_ids = _batch_job(db_engine, status="running")
+    _worker(db_engine, "worker-2")
     payload = {"worker_id": "worker-2", "outcome": "result", "output": "success"}
     foreign_worker = api_client.post(
-        f"/api/v1/worker/jobs/{job_id}/assets/{asset_ids[0]}/result", headers=headers, json=payload
+        f"/api/v1/worker/jobs/{job_id}/assets/{asset_ids[0]}/result", headers=_headers("worker-2"), json=payload
     )
     assert foreign_worker.status_code == 403
     assert foreign_worker.json() == {"detail": "Job gehört einem anderen Worker"}
@@ -414,6 +529,7 @@ def test_asset_result_endpoint_rejects_foreign_worker_and_asset(api_client, db_e
 
 def test_asset_result_rejects_foreign_worker_after_job_finished(api_client, db_engine):
     job_id, _, asset_id = _job(db_engine, status="running")
+    _worker(db_engine, "worker-2")
     result_url = f"/api/v1/worker/jobs/{job_id}/assets/{asset_id}/result"
     accepted = api_client.post(
         result_url, headers=headers,
@@ -423,14 +539,15 @@ def test_asset_result_rejects_foreign_worker_after_job_finished(api_client, db_e
     assert accepted.json() == {"accepted": True}
 
     foreign = api_client.post(
-        result_url, headers=headers,
+        result_url, headers=_headers("worker-2"),
         json={"worker_id": "worker-2", "outcome": "result", "output": "success"},
     )
     assert foreign.status_code == 403
     assert foreign.json() == {"detail": "Job gehört einem anderen Worker"}
 
 
-def test_result_validation(api_client):
+def test_result_validation(api_client, db_engine):
+    _worker(db_engine)
     response = api_client.post("/api/v1/worker/jobs/job-1/result", headers=headers, json={
         "worker_id": "worker-1", "outcome": "invalid",
     })
@@ -445,7 +562,7 @@ def test_poll_returns_when_shutdown_requested(api_client, db_engine):
         app.state.shutdown_event = Event()
     responses = []
     poll_thread = Thread(target=lambda: responses.append(api_client.post(
-        "/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1"}
+        "/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1", "availability_revision": 0}
     )), daemon=True)
     poll_thread.start()
     sleep(0.3)
@@ -469,7 +586,7 @@ def test_poll_bounded_when_worker_row_locked(api_client, db_engine):
     responses = []
     started = monotonic()
     poll_thread = Thread(target=lambda: responses.append(api_client.post(
-        "/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1"}
+        "/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1", "availability_revision": 0}
     )))
 
     def waiting_updates():
@@ -498,9 +615,10 @@ def test_poll_bounded_when_worker_row_locked(api_client, db_engine):
         poll_thread.join(timeout=2)
 
 
-def test_poll_returns_with_shutdown_during_threadpool_query(api_client, monkeypatch):
+def test_poll_returns_with_shutdown_during_threadpool_query(api_client, db_engine, monkeypatch):
     import marathon.server.api.worker as worker_api
 
+    _worker(db_engine)
     started = Event()
     release = Event()
     responses = []
@@ -513,7 +631,7 @@ def test_poll_returns_with_shutdown_during_threadpool_query(api_client, monkeypa
 
     monkeypatch.setattr(worker_api, "run_in_threadpool", blocked_query)
     poll_thread = Thread(target=lambda: responses.append(api_client.post(
-        "/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1"}
+        "/api/v1/worker/poll", headers=headers, json={"worker_id": "worker-1", "availability_revision": 0}
     )), daemon=True)
     poll_thread.start()
     assert started.wait(1)

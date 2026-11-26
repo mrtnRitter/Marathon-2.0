@@ -5,6 +5,8 @@ from marathon.server.config import (
     EngineConfig,
     ProxyConfig,
     ServerWorkerConfig,
+    WorkerClientConfig,
+    ClientBuildConfig,
     check_proxy,
     load_server_config,
     normalize_domains,
@@ -26,6 +28,8 @@ def test_defaults_without_sections(tmp_path):
 
     assert config.engine == EngineConfig()
     assert config.server_worker == ServerWorkerConfig()
+    assert config.worker_client == WorkerClientConfig()
+    assert config.client_build == ClientBuildConfig()
     assert config.folder_dialog.server_address == ""
     assert config.server_worker.skills == ("copy_file", "move_file", "rename_file")
 
@@ -249,3 +253,67 @@ def test_normalize_helpers():
     assert normalize_domains(["", " @Looks.Film "]) == ("looks.film",)
     with pytest.raises(ValueError):
         normalize_domains("looks.film")
+
+
+
+def test_worker_client_and_build_config_valid_values(tmp_path):
+    config_file = tmp_path / "marathon.toml"
+    config_file.write_text(
+        "[worker_client]\nrequire_admin_approval = false\ncontrol_session_hours = 24\n\n"
+        "[client_build]\nsign_command = [\"signtool\", \"sign\", \"{file}\"]\n",
+        encoding="utf-8",
+    )
+
+    config = load_server_config(config_file)
+
+    assert config.worker_client == WorkerClientConfig(False, 24)
+    assert config.client_build == ClientBuildConfig(("signtool", "sign", "{file}"))
+
+
+@pytest.mark.parametrize(
+    ("contents", "message"),
+    [
+        ("worker_client = 1\n", "[worker_client] in {config_file} muss eine Tabelle sein"),
+        (
+            '[worker_client]\nrequire_admin_approval = "yes"\n',
+            "[worker_client] require_admin_approval in {config_file} muss true oder false sein",
+        ),
+        (
+            "client_build = 1\n",
+            "[client_build] in {config_file} muss eine Tabelle sein",
+        ),
+        (
+            '[client_build]\nsign_command = "signtool"\n',
+            "[client_build] sign_command in {config_file} muss eine Liste von Texten sein",
+        ),
+        (
+            '[client_build]\nsign_command = ["", "{file}"]\n',
+            "[client_build] sign_command in {config_file} muss eine Liste von Texten sein",
+        ),
+        (
+            '[client_build]\nsign_command = ["signtool"]\n',
+            "[client_build] sign_command in {config_file} braucht den Platzhalter {file}",
+        ),
+    ],
+)
+def test_invalid_worker_client_and_build_config(tmp_path, contents, message):
+    config_file = tmp_path / "marathon.toml"
+    config_file.write_text(contents, encoding="utf-8")
+
+    with pytest.raises(ConfigError) as error:
+        load_server_config(config_file)
+
+    assert str(error.value) == message.replace("{config_file}", str(config_file))
+
+
+@pytest.mark.parametrize("hours", [0, 169])
+def test_invalid_control_session_hours(tmp_path, hours):
+    config_file = tmp_path / "marathon.toml"
+    config_file.write_text(f"[worker_client]\ncontrol_session_hours = {hours}\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError) as error:
+        load_server_config(config_file)
+
+    assert str(error.value) == (
+        f"[worker_client] control_session_hours in {config_file} muss eine ganze Zahl zwischen 1 und 168 sein"
+    )

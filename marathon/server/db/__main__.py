@@ -2,6 +2,7 @@
 
 # IMPORTS
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from sqlalchemy.exc import OperationalError
 from marathon.server.config import ConfigError, default_config_file, load_server_config, pg_password_file
 from marathon.server.db.engine import create_db_engine, ensure_database, read_password, upgrade_database
 from marathon.server.db.seed import seed_defaults
+from marathon.server.db.settings_writes import get_proxy_config
 
 
 # CONFIG
@@ -27,11 +29,21 @@ def main(
     parser = argparse.ArgumentParser(prog="python -m marathon.server.db")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("upgrade", help="Datenbank bis zur neuesten Migration aktualisieren")
+    subparsers.add_parser("proxy-info", help="Gespeicherte öffentliche Server-Adresse ausgeben")
     arguments = parser.parse_args(argv)
 
     try:
         server_config = load_server_config(config_file)
         password = read_password(password_file)
+        if arguments.command == "proxy-info":
+            engine = create_db_engine(server_config.database, password)
+            try:
+                with engine.connect() as connection:
+                    proxy = get_proxy_config(connection)
+            finally:
+                engine.dispose()
+            print(json.dumps({"public_url": proxy.public_url, "builtin": proxy.builtin}, ensure_ascii=False))
+            return 0
         ensure_database(server_config.database, password)
         engine = create_db_engine(server_config.database, password)
         try:

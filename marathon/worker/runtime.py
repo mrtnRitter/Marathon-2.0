@@ -1,6 +1,8 @@
 # IMPORTS
+from collections import deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 import http.client
 import json
 import logging
@@ -36,7 +38,10 @@ def worker_capabilities() -> list[str]:
 
 
 class WorkerRuntime:
-    """Register with a Marathon server, execute offered jobs, and report results."""
+    """Register with a Marathon server, execute offered jobs, and report results.
+
+    Callbacks run in the worker control thread and must return quickly.
+    """
 
     def __init__(
         self,
@@ -52,6 +57,11 @@ class WorkerRuntime:
         result_deadline_s: float = 120.0,
         shutdown_timeout_s: float = 10.0,
         ssl_context: ssl.SSLContext | None = None,
+        availability: Callable[[], tuple[bool, str]] | None = None,
+        on_status: Callable[[dict[str, Any]], None] | None = None,
+        on_availability_config: Callable[[dict[str, Any], int], None] | None = None,
+        on_update_offer: Callable[[Mapping[str, Any]], None] | None = None,
+        tool_path: Callable[[str], Path] | None = None,
     ) -> None:
         if request_timeout_s <= 0 or result_retry_s < 0 or result_deadline_s < 0 or shutdown_timeout_s < 0:
             raise ValueError("Zeitlimits müssen gültig und nicht negativ sein")
@@ -69,6 +79,20 @@ class WorkerRuntime:
         self.result_deadline_s = result_deadline_s
         self.shutdown_timeout_s = shutdown_timeout_s
         self.ssl_context = ssl_context
+        self.availability = availability
+        self.on_status = on_status
+        self.on_availability_config = on_availability_config
+        self.on_update_offer = on_update_offer
+        self.tool_path = tool_path
+        self._availability_revision = -1
+        self._available = True
+        self._availability_reason = ""
+        self._last_status: str | None = None
+        self._last_approved: bool | None = None
+        self._callback_condition = threading.Condition()
+        self._callback_queue: deque[tuple[str, Any] | None] = deque()
+        self._callback_thread: threading.Thread | None = None
+        self._callback_stopping = False
         self._jobs: dict[str, _RunningJob] = {}
         self._jobs_lock = threading.Lock()
         self._stop = threading.Event()
@@ -123,16 +147,25 @@ class WorkerRuntime:
         return self.retry_delays_s[min(attempt, len(self.retry_delays_s) - 1)]
 
     def _register(self, stop: threading.Event) -> tuple[int | None, dict[str, Any]]:
-        payload = {
-            "worker_id": self.worker_id,
-            "name": self.name,
-            "client_version": app_version,
-            "capabilities": self.capabilities,
-            "protocol": 2,
-        }
         attempt = 0
         while not stop.is_set():
+            availability = self._evaluate_availability(stop)
+            if availability is None:
+                break
+            available, reason = availability
+            payload = {
+                "worker_id": self.worker_id,
+                "name": self.name,
+                "client_version": app_version,
+                "capabilities": self.capabilities,
+                "protocol": 3,
+                "available": available,
+                "availability_reason": reason,
+            }
             status, response = self._post_interruptible("/worker/register", payload, self.request_timeout_s, stop)
+            if stop.is_set():
+                break
+            self._notify_response(status, response)
             if status is not None and 200 <= status < 300:
                 return status, response
             if status == 401:
@@ -147,6 +180,109 @@ class WorkerRuntime:
         with self._jobs_lock:
             return list(self._jobs)
 
+    def running_jobs(self) -> int:
+        """Return the number of currently running jobs."""
+        with self._jobs_lock:
+            return len(self._jobs)
+
+    def _evaluate_availability(self, stop: threading.Event) -> tuple[bool, str] | None:
+        if stop.is_set():
+            return None
+        try:
+            available, reason = self.availability() if self.availability is not None else (True, "")
+            result = bool(available), str(reason)
+        except Exception:
+            logger.warning("Verfügbarkeit nicht prüfbar", exc_info=True)
+            result = False, "Verfügbarkeit nicht prüfbar"
+        if stop.is_set():
+            return None
+        self._available, self._availability_reason = result
+        return result
+
+    def _start_callback_thread(self) -> None:
+        if all(callback is None for callback in (self.on_status, self.on_availability_config, self.on_update_offer)):
+            return
+        self._callback_thread = threading.Thread(
+            target=self._callback_loop, name="marathon-worker-callbacks", daemon=True
+        )
+        self._callback_thread.start()
+
+    def _enqueue_callback(self, kind: str, value: Any) -> None:
+        with self._callback_condition:
+            if self._callback_stopping:
+                return
+            if kind == "status":
+                self._callback_queue = deque(
+                    item for item in self._callback_queue if item is None or item[0] != "status"
+                )
+            self._callback_queue.append((kind, value))
+            self._callback_condition.notify()
+
+    def _callback_loop(self) -> None:
+        callbacks = {
+            "status": self.on_status,
+            "availability": self.on_availability_config,
+            "update": self.on_update_offer,
+        }
+        while True:
+            with self._callback_condition:
+                while not self._callback_queue:
+                    self._callback_condition.wait()
+                item = self._callback_queue.popleft()
+            if item is None:
+                return
+            kind, value = item
+            callback = callbacks[kind]
+            if callback is None:
+                continue
+            try:
+                if kind == "availability":
+                    callback(value[0], value[1])
+                else:
+                    callback(value)
+            except Exception:
+                logger.exception("Fehler im Worker-Callback (%s)", kind)
+
+    def _stop_callback_thread(self) -> None:
+        thread = self._callback_thread
+        if thread is None:
+            return
+        with self._callback_condition:
+            if not self._callback_stopping:
+                self._callback_stopping = True
+                self._callback_queue.append(None)
+                self._callback_condition.notify()
+        thread.join(1.0)
+
+    def _notify_response(self, status: int | None, response: Mapping[str, Any], *, is_poll: bool = False) -> None:
+        connected = status is not None and status < 500
+        successful = status is not None and 200 <= status < 300
+        if successful:
+            if isinstance(response.get("status"), str):
+                self._last_status = response["status"]
+            if isinstance(response.get("approved"), bool):
+                self._last_approved = response["approved"]
+            availability = response.get("availability")
+            if isinstance(availability, Mapping):
+                config = availability.get("config")
+                revision = availability.get("revision")
+                if isinstance(config, Mapping) and type(revision) is int:
+                    self._availability_revision = revision
+                    if self.on_availability_config is not None:
+                        self._enqueue_callback("availability", (dict(config), revision))
+            update = response.get("client_update")
+            if is_poll and isinstance(update, Mapping) and self.on_update_offer is not None:
+                self._enqueue_callback("update", dict(update))
+        if self.on_status is not None:
+            self._enqueue_callback("status", {
+                "connected": connected,
+                "status": self._last_status,
+                "approved": self._last_approved,
+                "available": self._available,
+                "reason": self._availability_reason,
+                "running": self.running_jobs(),
+            })
+
     def _poll(self, timeout_s: float, stop: threading.Event) -> tuple[int | None, dict[str, Any]]:
         completed = threading.Event()
         result: list[tuple[int | None, dict[str, Any]]] = []
@@ -154,8 +290,21 @@ class WorkerRuntime:
             attempt = 0
             try:
                 while not stop.is_set():
-                    payload = {"worker_id": self.worker_id, "running": self._running_ids()}
+                    availability = self._evaluate_availability(stop)
+                    if availability is None:
+                        return
+                    available, reason = availability
+                    payload = {
+                        "worker_id": self.worker_id,
+                        "running": self._running_ids(),
+                        "available": available,
+                        "availability_reason": reason,
+                        "availability_revision": self._availability_revision,
+                    }
                     status, response = self._post("/worker/poll", payload, timeout_s)
+                    if stop.is_set():
+                        return
+                    self._notify_response(status, response, is_poll=True)
                     if status == 401 or (status == 404 and response.get("detail") == "Worker unbekannt"):
                         result.append((status, response))
                         return
@@ -223,7 +372,7 @@ class WorkerRuntime:
             module = self.resolve_module(type_id)
             if module is None:
                 return {**base, "outcome": "error", "error": f"Modultyp unbekannt: {type_id}"}
-            result = module.run(ModuleJob(asset_path, settings, stop))
+            result = module.run(ModuleJob(asset_path, settings, stop, self.tool_path))
         except JobStopped:
             return {**base, "outcome": "cancelled"}
         except Exception as error:
@@ -292,6 +441,8 @@ class WorkerRuntime:
                     state.stop.set()
                     activity = True
         jobs = response.get("jobs", [])
+        if not self._available:
+            return None, activity
         for offered in jobs if isinstance(jobs, list) else []:
             if stop.is_set():
                 break
@@ -322,6 +473,7 @@ class WorkerRuntime:
         if stop.is_set():
             return 0
         exit_code = 0
+        self._start_callback_thread()
         try:
             status, registration = self._register(stop)
             if stop.is_set():
@@ -361,4 +513,5 @@ class WorkerRuntime:
                         break
         finally:
             self._shutdown(stop)
+            self._stop_callback_thread()
         return exit_code

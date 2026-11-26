@@ -7,7 +7,7 @@ Bezeichner im Code englisch (`snake_case`), Texte für Nutzer deutsch und wörtl
 - **Teil 1** hält die entschiedenen Architektur-Grundsätze fest.
 - **Teil 2** beschreibt den **bereits umgesetzten** Systemvertrag für Kern, Engine und Worker-Steuerung (Stand Migration `0009`, Worker-Protokoll 2; Abnahme offen).
 - **Teil 2a** beschreibt den Vertrag für den Release *HTTPS* (keine Migration, Worker-Protokoll unverändert).
-- **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Zugang & Nutzer: Migration `0010_users`, Worker-Protokoll unverändert; übrige Releases: eigene Migrationen, Worker-Protokoll 3; noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
+- **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Zugang & Nutzer: Migration `0010_users`, Worker-Protokoll unverändert; Worker-Client & Steuerung: Migration `0011_worker_client`, Worker-Protokoll 3, umgesetzt; übrige Releases: eigene Migrationen, noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
 
 ---
 
@@ -59,7 +59,7 @@ Bezeichner im Code englisch (`snake_case`), Texte für Nutzer deutsch und wörtl
   - Nur **Dark Theme** (vorerst kein helles Theme), zentrale Farben und Statusfarben (`ui/src/theme/`).
   - Durchgängige Monospace-Schrift (**JetBrains Mono**, OFL), lokal ausgeliefert.
   - Feste Seitenleiste (**Dashboard**, **Workflows**, **Assets**, **Worker**, **Einstellungen** – Sichtbarkeit ab Teil 3 rollenabhängig). Innerhalb eines Workflows Reiter **Module** (*Überwachen* / *Bearbeiten*) und **Assets**; Asset-Detail mit Kopfdaten, Metadaten, Zeitstrahl und Logs.
-- **Installation & Abhängigkeiten:** Alles lokal im Projektordner über `build.py` (`.venv`, gepinnte Requirements `requirements/server.txt` und künftig `requirements/client.txt`, lokales PostgreSQL unter `.tools/postgres`, lokales Node.js unter `.tools/node` nur zum Bauen, gebaute Oberfläche unter `marathon/server/static`). Zur Laufzeit wird nichts aus dem Internet nachgeladen.
+- **Installation & Abhängigkeiten:** Alles lokal im Projektordner über `build.py` (`.venv`, gepinnte Requirements `requirements/server.txt`, `requirements/client.txt` und `requirements/client-build.txt`, lokales PostgreSQL unter `.tools/postgres`, lokales Node.js unter `.tools/node` nur zum Bauen, gebaute Oberfläche unter `marathon/server/static`). Zur Laufzeit wird nichts aus dem Internet nachgeladen.
 - **Architektur-Vorgabe Auto-Update (für späteren Rollout im Backlog):**
   - Aufbau des Worker-Clients aus einem kleinen, selten geänderten **Starter** und der austauschbaren **Client-Laufzeit**.
   - Rollout geht vom Server aus (Freigabe für alle oder ausgewählte Worker); Client erfährt per Lebenszeichen von neuen Versionen, lädt das Paket, prüft die Prüfsumme, lässt laufende Jobs auslaufen (Drain), tauscht die Laufzeit, startet neu und meldet die neue Version.
@@ -502,10 +502,15 @@ Verbindlicher Architektur- und Umsetzungsvertrag (v2: User und Worker strikt get
 
 ```toml
 [worker_client]
-require_admin_approval = false         # true = neue Worker müssen vor dem ersten Start einmalig vom Admin zugelassen werden
-local_bridge_port = 47291              # Loopback-Port (127.0.0.1) des Tray-Clients zur lokalen Rechner-Erkennung im Browser
+require_admin_approval = true          # true = neue Worker müssen vor dem ersten Job einmalig vom Admin zugelassen werden
 control_session_hours = 12             # Gültigkeit der lokalen Worker-Steuerungs-Session im Browser (1–168)
+# local_bridge_port = 47291            # erst Release Lokale Watchfolder & Rechnerwechsel: Loopback-Port (127.0.0.1) zur Rechner-Erkennung im Browser
+
+[client_build]
+sign_command = []                      # Signierbefehl für die Worker-Client-Exe als Argumentliste, {file} = Pfad der Exe; leer = unsigniert
 ```
+
+`[worker_client]` und `[client_build]` gelten immer aus der Datei (keine Datenbankwerte).
 
 `config/marathon.toml` enthält keine Abschnitte `[auth]` oder `[smtp]`; ältere Abschnitte werden ignoriert.
 
@@ -513,7 +518,7 @@ Regeln:
 - **Keine Zugangsdaten in `marathon.toml` oder im Code:** Das SMTP-Passwort wird ausschließlich in `.data/smtp.pass` (Dateirechte `0600` unter Linux) gespeichert.
 - **Validierung unter Einstellungen:**
   - `allowed_domains` werden getrimmt, mit `casefold()` normalisiert, auf gültige Syntax geprüft und ohne Doppelte übernommen (Reihenfolge bleibt); ungültige Einträge werden abgewiesen. Bei `allowed_domains` wird ein führendes `@` entfernt.
-  - Sitzungsdauer und Code-Gültigkeit sind fest auf 180 Tage beziehungsweise 15 Minuten gesetzt. `smtp.port` muss zwischen 1 und 65535 liegen; `smtp.encryption` ist `none`, `starttls` oder `tls`; `smtp.from_address` ist leer oder eine gültige Adresse. Ist `host` gesetzt, muss auch `from_address` gesetzt sein. `[worker_client]` (Release Worker-Client): `local_bridge_port` (1024–65535), `control_session_hours` (1–168).
+  - Sitzungsdauer und Code-Gültigkeit sind fest auf 180 Tage beziehungsweise 15 Minuten gesetzt. `smtp.port` muss zwischen 1 und 65535 liegen; `smtp.encryption` ist `none`, `starttls` oder `tls`; `smtp.from_address` ist leer oder eine gültige Adresse. Ist `host` gesetzt, muss auch `from_address` gesetzt sein. `[worker_client]`: `control_session_hours` (1–168); ab Release Lokale Watchfolder `local_bridge_port` (1024–65535). `[client_build] sign_command` ist eine Liste von Zeichenketten.
 - **Mailversand eingerichtet** heißt: `smtp.host` und `smtp.from_address` sind gesetzt.
 - **Datenbankwerte:**
   - `settings.auth.allowed_domains` startet leer und wird nur unter Einstellungen → Anmeldung geändert.
@@ -537,16 +542,23 @@ Ausschließlich ergänzende Migrationen mit vollständigem Downgrade.
 
 Die neuen Tabellen erhalten dieselben Live-Kanal-Trigger wie die bestehenden Tabellen (Migration `0006`), außer `auth_codes`, `auth_failures` und `sessions`.
 
-### Migration des Releases Worker-Client & Steuerung (Nummer bei Klärung)
+### Migration `0011_worker_client.py` (Release Worker-Client & Steuerung, umgesetzt; auf Basis von `0010_users.py`)
 
 | Tabelle | Spalten & Constraints |
 |---|---|
 | `worker_ephemeral_tokens` | `token_hash TEXT PRIMARY KEY`, `worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE`, `purpose TEXT NOT NULL CHECK (purpose IN ('control_link','presence'))`, `expires_at TIMESTAMPTZ NOT NULL`, `consumed_at TIMESTAMPTZ NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(worker_id, expires_at)` |
 | `worker_control_sessions` | `id TEXT PRIMARY KEY`, `worker_id TEXT NOT NULL REFERENCES workers(id) ON DELETE CASCADE`, `token_hash TEXT NOT NULL UNIQUE`, `expires_at TIMESTAMPTZ NOT NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()` · Index `(worker_id)` |
-| `workers` (Erweiterung) | `token_hash TEXT NULL UNIQUE`; `approved BOOLEAN NOT NULL DEFAULT true`; `availability_config JSONB NOT NULL DEFAULT '{}'`; `client_available BOOLEAN NOT NULL DEFAULT true`; `availability_reason TEXT NOT NULL DEFAULT ''`; `ck_workers_status` erweitern auf `('ready','draining','stopping','stopped')` |
-| `assets` (Erweiterung, Release Lokale Watchfolder) | `locality_worker_id TEXT NULL REFERENCES workers(id) ON DELETE SET NULL` · Index `(locality_worker_id)` |
+| `workers` (Erweiterung) | `token_hash TEXT NULL UNIQUE`; `approved BOOLEAN NOT NULL DEFAULT true` (bestehende Worker bleiben zugelassen; `enroll` setzt den Wert nach `require_admin_approval`); `availability_config JSONB NOT NULL DEFAULT '{}'`; `availability_revision INTEGER NOT NULL DEFAULT 0` (+1 je Regeländerung); `client_available BOOLEAN NOT NULL DEFAULT true`; `availability_reason TEXT NOT NULL DEFAULT ''`; `ck_workers_status` erweitert auf `('ready','draining','stopping','stopped')` |
+
+Downgrade entfernt Tabellen und Spalten wieder; `draining` wird dabei zu `stopping`.
 
 *(Bewusst **kein** `owner_user_id` auf `workers` – Worker gehören Rechnern, nicht Nutzerkonten.)*
+
+### Migration des Releases Lokale Watchfolder & Rechnerwechsel (Nummer bei Klärung)
+
+| Tabelle | Spalten & Constraints |
+|---|---|
+| `assets` (Erweiterung) | `locality_worker_id TEXT NULL REFERENCES workers(id) ON DELETE SET NULL` · Index `(locality_worker_id)` |
 
 ## 3.3 Zugang, Authentifizierung & Berechtigungen
 
@@ -672,26 +684,29 @@ Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freig
 
 ## 3.4 Worker-Client (Windows-Tray), Entkopplung & Verfügbarkeitsregeln
 
-### Client-Aufbau, Registrierung & Systemtray
+### Client-Aufbau, Registrierung & Systemtray (umgesetzt)
 
-- Paketstruktur: `marathon/client/` (dünner Starter + Tray-Steuerung + Loopback-Bridge) nutzt die bestehende Laufzeit `marathon/worker/runtime.py`; eigene gepinnte `requirements/client.txt` (u. a. `pystray`, `Pillow`, `psutil` für CPU/RAM/Prozesse; Windows-API `GetLastInputInfo` via `ctypes`; GPU-Auslastung best-effort via `nvidia-smi`/NVML oder Windows-PDH, ohne Absturz wenn kein GPU-Sensor vorliegt).
-- **Laufzeitkontext unter Windows:** Läuft im **Benutzerkontext** (Autostart / Benutzer-Aufgabenplanung), **nicht** als Windows-Dienst in Session 0 – nur so stehen Tray-Icon, Benutzereingaben (`GetLastInputInfo`) und lokale/gemappte Laufwerke zur Verfügung.
+- **Paket:** `marathon/client/` (Einstieg `__main__.py`, Verdrahtung `app.py`, Server-Zugriff `api.py`, lokale Dateien `local_state.py`, Sensoren `sensors.py`, Tray `tray.py`, Verfügbarkeit `availability.py`, Zusatzprogramme `tools.py`, Starter `starter.py`, Update `update.py`, Installation `installer.py`) nutzt die Laufzeit `marathon/worker/runtime.py`. Gepinnte Pakete: `requirements/client.txt` (`pystray`, `Pillow`, `psutil`, `truststore`) und `requirements/client-build.txt` (`pyinstaller`). Eingaben über `GetLastInputInfo` (`ctypes`); GPU best-effort, ohne Sensor gilt die GPU-Bedingung als erfüllt.
+- **Laufzeitkontext:** Benutzerkontext mit Autostart über `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, **nicht** als Windows-Dienst. Je Benutzer läuft nur eine Instanz (Mutex `Local\MarathonWorkerClient`).
+- **Eine Exe, selbstinstallierend, ohne Adminrechte:** `python build.py --client` baut mit PyInstaller (onefile, ohne Konsole, Versionsinfo) `.data/client/MarathonWorker.exe` und schreibt `.data/client/client.json` (`version`, `sha256`, `server_url`). In die Exe eingebettet: `server_url` (öffentliche Adresse aus der Datenbank über `python -m marathon.server.db proxy-info`; läuft der Server nicht, Startwert aus `config/marathon.toml`), Stammzertifikat des mitgelieferten Proxys und `client_version`. Signiert wird über `[client_build] sign_command`; leer = unsigniert mit Hinweis. Die Signatur deckt die eingebetteten Werte ab.
+- **Installation:** Start der heruntergeladenen Exe außerhalb von `%LOCALAPPDATA%\MarathonWorker` fragt nach und kopiert sie dorthin (Starter `MarathonWorker.exe` plus versionierte Laufzeit), trägt Autostart und einen Eintrag unter „Apps“ (`HKCU\…\Uninstall\MarathonWorker`, Deinstallation über `--uninstall`) ein, importiert das Stammzertifikat per `certutil -user -addstore Root` und startet. Die Deinstallation entfernt Einträge, Anmeldung und Dateien (verzögertes Löschen, Pfad per Umgebungsvariable an `cmd`); das Stammzertifikat bleibt. Läuft der Client, lehnen Installation und Deinstallation mit Hinweis ab.
 - **Geräte-Registrierung ohne Nutzerkonto (`POST /api/v1/worker/enroll`):**
-  1. Startet der Client ohne `%LOCALAPPDATA%\MarathonWorker\worker.json`, sendet er `POST /api/v1/worker/enroll` mit `{ "hostname", "platform", "client_version" }`.
-  2. Der Server erzeugt eine stabile `worker_id` und ein kryptografisches `worker_token` (`secrets.token_urlsafe(32)`), speichert nur `token_hash` (SHA-256) in `workers`, setzt `status = 'stopped'` sowie `approved = not config.worker_client.require_admin_approval` und gibt `{ "worker_id", "worker_token", "approved" }` genau einmal zurück.
-  3. Der Client speichert `server_url`, `worker_id` und `worker_token` lokal in `%LOCALAPPDATA%\MarathonWorker\worker.json`.
-  4. **Worker-Authentifizierung (`marathon/server/worker_auth.py`):** Jede Anfrage unter `/api/v1/worker/…` prüft `Authorization: Bearer <token>` per SHA-256-Hash gegen `workers.token_hash` und bindet den Request strikt an diese eine `worker_id` (der interne `server-worker` behält sein eigenes lokales Server-Token).
-- **Kein eigenes Einstellungs-UI im Tray:**
-  - Doppelklick oder Rechtsklick → **„Worker-Einstellungen öffnen“** ruft mit dem eigenen `worker_token` `POST /api/v1/worker/control-link` auf und öffnet die zurückgegebene Einmal-URL im Standardbrowser.
-  - Rechtsklick-Menü minimal: *Worker-Einstellungen öffnen*, *Diesen Rechner im Browser verknüpfen* (Fallback für lokale Erkennung), *Status: <Zustand + Grund>* (Infozeile), *Beenden*.
-- **Download aus Marathon:** `GET /api/v1/client/download` liefert das von `build.py` erzeugte Client-Paket mit vorausgefüllter `server_url` aus.
+  1. Fehlt `%LOCALAPPDATA%\MarathonWorker\worker.json` oder gehört sie zu einer anderen `server_url`, sendet der Client `{ "hostname", "platform", "client_version" }` (Wiederholung mit 1, 2, 5, 10, 30, 60 s Abstand).
+  2. Der Server erzeugt eine stabile `worker_id` und ein `worker_token` (`secrets.token_urlsafe(32)`), speichert nur `token_hash` (SHA-256), setzt `status = 'stopped'`, eine leere Fähigkeiten-Liste sowie `approved = not config.worker_client.require_admin_approval` und gibt `{ "worker_id", "worker_token", "approved" }` genau einmal zurück.
+  3. Der Client speichert `server_url`, `worker_id` und `worker_token` in `worker.json`.
+  4. **Worker-Authentifizierung (`marathon/server/worker_auth.py`):** Jede Anfrage unter `/api/v1/worker/…` prüft `Authorization: Bearer <token>` gegen `workers.token_hash` und bindet den Request an diese eine `worker_id`; der `server-worker` behält sein lokales Token aus `.data/worker.token`. Ein abgelehntes Token (Worker entfernt) beendet die Laufzeit mit Code 3: Der Client löscht `worker.json`, zeigt dauerhaft „Worker wurde entfernt. Beim nächsten Start meldet sich dieser Rechner neu an.“ und meldet sich beim nächsten Start neu an.
+- **TLS:** Der Client prüft gegen das eingebettete Stammzertifikat, ohne eingebettetes Zertifikat gegen den Zertifikatsspeicher des Systems (`truststore`).
+- **Tray ohne eigenes Einstellungs-UI:** Menü *Worker-Einstellungen öffnen* (auch Doppelklick), *Status: <Zustand + Grund>* (Infozeile), *Beenden*. Tooltip und Statuszeile nennen keine Server-Adressen. Menübefehle laufen in eigenen Threads und blockieren das Tray nicht. Hinweise der App stehen 30 s in der Statuszeile. *Beenden* stoppt die Laufzeit (höchstens 15 s, übrige Hintergrundarbeit je höchstens 2 s). *Diesen Rechner im Browser verknüpfen* folgt mit der Rechner-Erkennung im Browser.
+- **Download aus Marathon:** `GET /api/v1/client/download` (ohne Anmeldung) liefert `.data/client/MarathonWorker.exe` als `MarathonWorker-Setup.exe`; fehlt das Paket → `404`, wurde es für eine andere als die aktuelle öffentliche Adresse gebaut → `409`. `GET /api/v1/client` liefert die Paketangaben für die Schaltfläche „Client herunterladen“ auf der Worker-Seite (für alle angemeldeten Nutzer sichtbar).
+- **Zusatzprogramme:** Der Server bietet Ordner unter `.data/client-tools/<name>/` (Name `[a-z0-9][a-z0-9_-]{0,63}`, ohne Verknüpfungen und `.part`-Dateien) über `GET /api/v1/worker/tools` (Manifest mit `name`, `version` = Inhalts-Hash, `files` mit `path`, `size`, `sha256`) und einen Datei-Download unter `/api/v1/worker/tools/…` an. Der Client gleicht beim Start und alle 10 Minuten ab, legt nach `%LOCALAPPDATA%\MarathonWorker\tools\<name>\<version>\` ab und prüft jede Datei per SHA-256, auch vorhandene. Module erhalten den Pfad über `ModuleJob.tool(name)`; der Server-Worker optional über `--tools-dir`.
+- **Auto-Update (Client-Seite):** Ein Angebot `client_update` in der Poll-Antwort lädt der Client, prüft die Prüfsumme, nimmt keine neuen Jobs an, wartet auf das Ende laufender Jobs und beendet sich mit Code 10; der Starter startet die neue Version. Diese bestätigt ihren Start nach der ersten erfolgreichen Anmeldung, sonst fällt der Starter auf die vorherige Version zurück. Der Server bietet noch keine Versionen an (Rollout im Backlog).
 
-### Lokale Worker-Steuerung ohne Marathon-Login (`/worker-control`)
+### Lokale Worker-Steuerung ohne Marathon-Login (`/worker-control`, umgesetzt)
 
 1. Client sendet `POST /api/v1/worker/control-link` (authentifiziert mit `worker_token`).
 2. Server legt einen Eintrag in `worker_ephemeral_tokens` (`purpose = 'control_link'`, TTL 60 s) an und liefert `{ "url": "<public_url>/worker-control?token=<einmal_token>" }`.
-3. Browser öffnet die URL → `GET /api/v1/worker-control/exchange?token=<einmal_token>` (bzw. Bestätigungs-POST auf der Route) konsumiert den Einmal-Token atomar, legt eine `worker_control_sessions`-Zeile an (TTL `control_session_hours`), setzt das `HttpOnly; SameSite=Lax`-Cookie `marathon_worker_control` und zeigt die fokussierte Einstellungsseite genau dieses Workers.
-4. Über diese Session sind **ausschließlich** Lesen/Steuern/Verfügbarkeitsregeln dieser einen `worker_id` erlaubt (`GET/PUT /api/v1/worker-control/self`, `POST /api/v1/worker-control/self/{start|stop|stop-now}`), sowie optional ein Live-Event-Stream nur für diesen einen Worker. Fähigkeiten-Rangliste bleibt schreibgeschützt (nur Admin). Ist `worker.approved == false`, zeigt die Seite den Hinweis *„Dieser Worker wartet auf Freigabe durch einen Administrator“*.
+3. Die Seite `/worker-control` (außerhalb der Nutzer-Anmeldung) löst den Token per Bestätigungs-`POST /api/v1/worker-control/exchange` ein (Vorabrufe verbrauchen ihn nicht) und entfernt ihn aus der Adresszeile. Der Server konsumiert ihn atomar, legt eine `worker_control_sessions`-Zeile an (TTL `control_session_hours`) und setzt das `HttpOnly; SameSite=Lax`-Cookie `marathon_worker_control`.
+4. Über diese Session sind **ausschließlich** Lesen, Steuern und Verfügbarkeitsregeln dieser einen `worker_id` erlaubt (`GET /api/v1/worker-control/self`, `PUT /api/v1/worker-control/self/availability`, `POST /api/v1/worker-control/self/{start|stop-drain|stop-now}`). Fähigkeiten nur lesend über `skill_names`. Die Seite fragt alle 5 s neu ab (kein eigener Live-Kanal). Ist `approved == false`, zeigt sie *„Dieser Worker wartet auf Freigabe durch einen Administrator“*.
 
 ### Lokale Rechner-Erkennung im Browser (Loopback-Bridge + Fallback)
 
@@ -708,30 +723,32 @@ Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freig
 3. **Fallback (falls Browser Loopback blockiert):**
    - Über Tray → *„Diesen Rechner im Browser verknüpfen“* öffnet der Client `<public_url>/worker-presence?token=<einmal_token>`, der ein rein browser-lokales `HttpOnly`-Cookie `marathon_local_worker` für genau diese `worker_id` setzt (unabhängig vom User-Account, gebunden an die lokale Browser-Instanz).
 
-### Steuerbefehle & Zustände (`ready`, `draining`, `stopping`, `stopped`)
+### Steuerbefehle & Zustände (`ready`, `draining`, `stopping`, `stopped`, umgesetzt)
+
+Admin-Endpunkte unter `/api/v1/workers/{id}`: `start`, `stop-drain`, `stop-now`, `approve`, `availability` (Regeln) und `DELETE` (Entfernen); `/stop` entfällt. Bedientexte „Starten“ (Play), „Stoppen“ (Stop-Symbol weiß), „Sofort-Aus“ (Stop-Symbol rot), „Zulassen“, „Entfernen“.
 
 | Aktion | Zielzustand | Verhalten |
 |---|---|---|
-| **Starten** | `ready` | Worker darf Jobs annehmen (sofern `approved = true`, `online = true` und `client_available = true`). |
-| **Stoppen** (sanft / Drain) | `draining` | Server vergibt keine neuen Jobs mehr. Laufende Jobs laufen sauber zu Ende. Sobald `running_jobs == 0`, wechselt der Server automatisch auf `stopped`. |
-| **Sofort stoppen** (hart) | `stopping` | Laufende Jobs werden über das Abbruchsignal hart abgebrochen; Assets gehen zurück auf den letzten fertigen Ausgang und werden neu verteilt (zählt nicht als Fehlversuch). Nach Abbruch → `stopped`. |
+| **Starten** | `ready` | Worker darf Jobs annehmen (sofern `approved = true`, `online = true` und `client_available = true`). Während `draining` sofort zurück auf `ready`, laufende Jobs bleiben. |
+| **Stoppen** (Drain, „Wird gestoppt“) | `draining` | Keine neuen Jobs; zugeteilte, nicht gestartete Jobs gehen sofort zurück (kein Versuch). Laufende Jobs laufen sauber zu Ende. Bei `running_jobs == 0` wechselt der Server auf `stopped`. |
+| **Sofort-Aus** („Wird sofort gestoppt“) | `stopping` | Laufende Jobs werden über das Abbruchsignal abgebrochen; Assets gehen zurück auf den letzten fertigen Ausgang (zählt nicht als Versuch). Nach Abbruch → `stopped`. |
+| **Zulassen** | – | `approved = true`. |
+| **Entfernen** | – | Nur ohne aktive Jobs; `server-worker` nicht entfernbar. Löscht den Worker samt Einmal-Tokens und Steuerungs-Sessions. |
 
 ### Verfügbarkeitsregeln als Positivliste (`availability_config`) & Protokoll 3
 
-Alle Einstellungen werden zentral in Marathon gepflegt (erreichbar über `/worker-control` und Admin-`/workers/<id>`) und beantworten durchgängig die Frage: **„Wann ist der Worker verfügbar?“**
+Alle Einstellungen werden zentral in Marathon gepflegt (Seite `/worker-control` und Worker-Seite für Admins) und beantworten die Frage: **„Wann ist der Worker verfügbar?“** Prüfung und Normalisierung in `marathon/common/availability.py`; jede Änderung erhöht `availability_revision`.
 
 ```json
 {
-  "mode": "rules",
   "schedule": {
     "enabled": true,
-    "timezone": "Europe/Berlin",
     "days": {
-      "mon": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
-      "tue": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
-      "wed": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
-      "thu": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
-      "fri": [{"start": "19:00", "end": "24:00"}, {"start": "00:00", "end": "07:00"}],
+      "mon": [{"start": "19:00", "end": "07:00"}],
+      "tue": [{"start": "19:00", "end": "07:00"}],
+      "wed": [{"start": "19:00", "end": "07:00"}],
+      "thu": [{"start": "19:00", "end": "07:00"}],
+      "fri": [{"start": "19:00", "end": "24:00"}],
       "sat": [{"start": "00:00", "end": "24:00"}],
       "sun": [{"start": "00:00", "end": "24:00"}]
     }
@@ -747,18 +764,24 @@ Alle Einstellungen werden zentral in Marathon gepflegt (erreichbar über `/worke
 }
 ```
 
-Auswertungslogik (im Worker-Client, alle 5 s):
-1. **Programm-Bedingung (harte Voraussetzung):** Läuft einer der Prozesse aus `blocked_processes` (case-insensitiver Vergleich auf Prozessname) → `available = false`, Grund: *„Programm <Name> aktiv“*.
-2. **Freigabe-Bedingung (Positivliste):**
-   - `mode == "always"` → positiv erfüllt.
-   - `mode == "rules"` → positiv erfüllt, wenn (`schedule.enabled` **und** aktuelle lokale Uhrzeit liegt in einem positiven Fenster für den heutigen Wochentag) **ODER** (`idle.enabled` **und** Inaktivitätsbedingung erfüllt).
-3. **Inaktivitätsbedingung (Schutz vor Selbst-Deaktivierung):**
-   - **Im Leerlauf (kein aktiver Marathon-Job):** Keine Maus-/Tastatureingabe seit `>= idle.minutes` (`GetLastInputInfo`) **UND** geglättete Systemwerte (30-Sekunden-Mittel) für CPU `< max_cpu_percent`, RAM `< max_ram_percent` und GPU `< max_gpu_percent` (falls GPU-Sensor vorhanden).
-   - **Während ein Marathon-Job läuft:** CPU/RAM/GPU-Schwellenwerte werden ausgesetzt (da der eigene Job Last erzeugt); geprüft werden nur noch Maus-/Tastatureingabe und `blocked_processes`.
-4. **Übergang `available: true → false` während laufendem Job:** Client meldet sofort `available: false` samt Grund an den Server; laufende Jobs laufen sauber zu Ende (Drain). Neue Jobs vergibt der Server erst wieder bei `available: true`.
-5. **Worker-Protokoll Version 3 (`/api/v1/worker/…`):**
-   - `POST /worker/register` und `POST /worker/poll` akzeptieren `protocol: 3`, `available: bool`, `availability_reason: str`.
-   - `POST /worker/poll` liefert zusätzlich bei Konfigurationsänderung `availability_config` (mit Hash/Version) sowie ggf. ausstehende `fs_request`- und `path_check`-Aufträge.
+Prüfregeln:
+- Leere Regel `{}` = immer verfügbar (Standard). Es gilt die Uhrzeit des Rechners (kein `timezone`, kein `mode`).
+- Zeitfenster `HH:MM`, Ende auch `24:00`; Ende vor Beginn = Fenster über Mitternacht in den Folgetag; gleiche Uhrzeiten sowie Überschneidungen der Fenster eines Tages abgelehnt (auch über Mitternacht, Prüfung mit Versatz ±24 h); höchstens 10 Fenster je Tag.
+- Programmnamen ohne Pfad, Vergleich ohne Groß-/Kleinschreibung, `.exe` optional; höchstens 50.
+
+Auswertung im Worker-Client (alle 5 s, `marathon/client/availability.py`), in dieser Reihenfolge:
+1. **Zeitplan:** Ist `schedule.enabled` und liegt die Uhrzeit des Rechners in keinem Fenster → nicht verfügbar.
+2. **Programme:** Läuft eines der `blocked_processes` → nicht verfügbar.
+3. **Leerlauf** (nur wenn 1 und 2 erlauben und `idle.enabled`): Der Worker wird verfügbar, wenn `idle.minutes` lang keine Tastatur-/Mauseingabe erfolgte und der Mittelwert von CPU, RAM und GPU über diese Minuten unter den Höchstwerten liegt (ohne GPU-Sensor erfüllt). Danach deaktiviert ihn nur eine Eingabe (`idle_seconds` kleiner als beim vorigen Messpunkt), nicht die Last; dann beginnt die Leerlauf-Beobachtung neu. Der Lastverlauf wird immer aufgezeichnet.
+
+Meldung und Folgen:
+- Der Client meldet `available` und `availability_reason` mit der nächsten Poll-Anfrage (bis ca. 25 s Verzögerung, kein eigener Endpunkt). Während eines anstehenden Updates meldet er nicht verfügbar. Der Server-Worker meldet immer verfügbar.
+- `available: false` gibt zugeteilte, nicht gestartete Jobs sofort zurück wie „Nicht abgeholt“ (kein Versuch); laufende Jobs laufen zu Ende. Neue Jobs erst wieder bei `available: true`.
+
+**Worker-Protokoll 3 (`/api/v1/worker/…`):**
+- `POST /worker/register` und `POST /worker/poll` verlangen `protocol: 3` und senden `available`, `availability_reason`, `availability_revision` (zuletzt übernommene Regel) und `client_version`; Protokoll 2 → `409` „Protokollversion nicht unterstützt“. Der Server-Worker spricht ebenfalls Protokoll 3.
+- Die Antwort enthält bei abweichender Revision `availability: { config, revision }`; der Poll antwortet dann sofort. Optional `client_update` (Angebot für das Auto-Update, vom Server noch nicht gesendet).
+- `fs_request`- und `path_check`-Aufträge folgen mit Release Lokale Watchfolder & Rechnerwechsel.
 
 ## 3.5 Watchfolder auf Workern, lokale Pfade & Rechnerwechsel
 

@@ -2,7 +2,21 @@
 
 export type AssetStatus = 'pending' | 'in_progress' | 'done' | 'failed' | 'on_hold'
 export type StepStatus = 'waiting' | 'running'
-export type WorkerStatus = 'ready' | 'stopping' | 'stopped'
+export type WorkerStatus = 'ready' | 'draining' | 'stopping' | 'stopped'
+export type AvailabilityDay = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
+
+export interface AvailabilityConfig {
+  schedule: { enabled: boolean; days: Record<AvailabilityDay, { start: string; end: string }[]> }
+  idle: { enabled: boolean; minutes: number; max_cpu_percent: number; max_ram_percent: number; max_gpu_percent: number }
+  blocked_processes: string[]
+}
+
+export interface ClientInfo {
+  available: boolean
+  version: string | null
+  file_name: string
+  detail: string | null
+}
 export type JobStatus = 'open' | 'assigned' | 'running' | 'cancelling' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 export interface PrioEntry { name: string; metadata: Record<string, unknown> }
@@ -220,6 +234,11 @@ export interface Worker {
   id: string
   name: string
   status: WorkerStatus
+  approved: boolean
+  available: boolean
+  availability_reason: string
+  availability_config: AvailabilityConfig
+  availability_revision: number
   online: boolean
   capabilities: string[]
   skills: string[]

@@ -80,6 +80,7 @@ def main() -> int:
         run_engine=True,
         run_live=True,
         server_worker=config.server_worker,
+        worker_client=config.worker_client,
         load_proxy=True,
         listen=(config.host, config.port),
     )

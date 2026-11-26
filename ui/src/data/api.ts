@@ -1,6 +1,6 @@
 // Single data access point for all pages; talks to the server API.
 import { notify } from '../components/Toast'
-import type { Asset, AssetDetail, AssetStatus, AuthUser, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Settings, SmtpSettings, SmtpSettingsInput, UserDirectoryEntry, UserRecord, UserSession, UserRole, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput, WorkflowShare, WorkflowShareAccess } from './types'
+import type { Asset, AssetDetail, AssetStatus, AuthUser, AvailabilityConfig, ClientInfo, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Settings, SmtpSettings, SmtpSettingsInput, UserDirectoryEntry, UserRecord, UserSession, UserRole, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput, WorkflowShare, WorkflowShareAccess } from './types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -155,8 +155,25 @@ export const update_worker = (id: string, input: WorkerInput): Promise<Worker> =
 export const start_worker = (id: string): Promise<Worker> =>
   request<Worker>(`/workers/${encodeURIComponent(id)}/start`, { method: 'POST' }).then(data => data!)
 
-export const stop_worker = (id: string): Promise<Worker> =>
-  request<Worker>(`/workers/${encodeURIComponent(id)}/stop`, { method: 'POST' }).then(data => data!)
+export const stop_drain_worker = (id: string): Promise<Worker> =>
+  request<Worker>(`/workers/${encodeURIComponent(id)}/stop-drain`, { method: 'POST' }).then(data => data!)
+
+export const stop_now_worker = (id: string): Promise<Worker> =>
+  request<Worker>(`/workers/${encodeURIComponent(id)}/stop-now`, { method: 'POST' }).then(data => data!)
+
+export const approve_worker = (id: string): Promise<Worker> =>
+  request<Worker>(`/workers/${encodeURIComponent(id)}/approve`, { method: 'POST' }).then(data => data!)
+
+export async function delete_worker(id: string): Promise<void> {
+  await request<{ ok: true }>(`/workers/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export const update_worker_availability = (id: string, config: AvailabilityConfig): Promise<Worker> =>
+  request<Worker>(`/workers/${encodeURIComponent(id)}/availability`, { method: 'PUT', body: config }).then(data => data!)
+
+export const get_client_info = (): Promise<ClientInfo> => request<ClientInfo>('/client').then(data => data!)
+
+export const client_download_url = `${api_base}/client/download`
 
 export const get_settings = (): Promise<Settings> => request<Settings>('/settings').then(data => data!)
 

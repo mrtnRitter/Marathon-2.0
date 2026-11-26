@@ -13,7 +13,7 @@ from typing import Any, Callable
 
 import pytest
 
-from marathon.modules._job import JobStopped, ModuleResult, SpawnedAsset
+from marathon.modules._job import JobStopped, ModuleJob, ModuleResult, SpawnedAsset, ToolMissing
 from marathon.worker.__main__ import main
 from marathon.worker import runtime as worker_runtime
 from marathon.worker.runtime import WorkerRuntime
@@ -42,10 +42,10 @@ class WorkerTestServer:
                 handler = owner.routes.get(route)
                 if handler is None:
                     if route == "register":
-                        status, body = 200, {"worker_id": "w", "status": "ready", "protocol": 2, "poll_timeout_s": 1}
+                        status, body = 200, {"worker_id": "w", "status": "ready", "approved": True, "poll_timeout_s": 1}
                     elif route == "poll":
                         owner.empty_poll_delay.wait(0.01)
-                        status, body = 200, {"jobs": [], "cancel": []}
+                        status, body = 200, {"jobs": [], "cancel": [], "status": "ready", "approved": True}
                     elif route == "start":
                         status, body = 200, {"ok": True}
                     else:
@@ -115,6 +115,7 @@ def start_runtime(
     run_module: Callable[..., Any] | None = None,
     *,
     resolve_module: Callable[[str], Any | None] | None = None,
+    **runtime_options: Any,
 ) -> tuple[threading.Event, threading.Thread, list[int]]:
     if resolve_module is None:
         resolve_module = lambda type_id: SimpleNamespace(run=run_module) if run_module else None
@@ -130,6 +131,7 @@ def start_runtime(
         result_retry_s=0.05,
         result_deadline_s=0.6,
         shutdown_timeout_s=0.3,
+        **runtime_options,
     )
     stop = threading.Event()
     result: list[int] = []
@@ -540,8 +542,8 @@ def test_cli_exits_on_stdin_eof() -> None:
             process.stderr.close()
 
 
-# Protocol 2 regression coverage
-def protocol2_job(job_id: str, assets: list[dict[str, str]]) -> dict[str, Any]:
+# Protocol 3 regression coverage
+def protocol3_job(job_id: str, assets: list[dict[str, str]]) -> dict[str, Any]:
     return {"job_id": job_id, "type_id": "x", "settings": {}, "assets": assets}
 
 
@@ -553,12 +555,12 @@ def offer_jobs(server: WorkerTestServer, jobs: list[dict[str, Any]]) -> None:
     server.routes["poll"] = lambda _: (200, {"jobs": jobs, "cancel": []}) if not server.matching("/start") else (200, {"jobs": [], "cancel": []})
 
 
-def test_register_uses_protocol_2_without_max_parallel(server: WorkerTestServer) -> None:
+def test_register_uses_protocol_3_without_max_parallel(server: WorkerTestServer) -> None:
     stop, thread, _ = start_runtime(server)
     try:
         assert wait_until(lambda: bool(server.matching("/register")))
         payload = server.matching("/register")[0]["payload"]
-        assert payload["protocol"] == 2
+        assert payload["protocol"] == 3
         assert "max_parallel" not in payload
     finally:
         stop_runtime(stop, thread)
@@ -566,7 +568,7 @@ def test_register_uses_protocol_2_without_max_parallel(server: WorkerTestServer)
 
 def test_job_runs_assets_in_parallel_and_reports_each_result(server: WorkerTestServer) -> None:
     assets = [{"id": "a1", "name": "one", "path": "/one"}, {"id": "a2", "name": "two", "path": "/two"}]
-    offer_jobs(server, [protocol2_job("j1", assets)])
+    offer_jobs(server, [protocol3_job("j1", assets)])
     both_running = threading.Barrier(2)
     paths: list[str] = []
     paths_lock = threading.Lock()
@@ -593,8 +595,8 @@ def test_second_job_offer_is_ignored_while_job_runs(server: WorkerTestServer) ->
     release = threading.Event()
     server.routes["poll"] = lambda _: (200, {
         "jobs": [
-            protocol2_job("j1", [{"id": "a1", "name": "one", "path": "/one"}]),
-            protocol2_job("j2", [{"id": "a2", "name": "two", "path": "/two"}]),
+            protocol3_job("j1", [{"id": "a1", "name": "one", "path": "/one"}]),
+            protocol3_job("j2", [{"id": "a2", "name": "two", "path": "/two"}]),
         ], "cancel": [],
     })
 
@@ -621,7 +623,7 @@ def test_cancel_cancels_each_running_asset(server: WorkerTestServer) -> None:
 
     def poll(_: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         if not server.matching("/start"):
-            return 200, {"jobs": [protocol2_job("j1", assets)], "cancel": []}
+            return 200, {"jobs": [protocol3_job("j1", assets)], "cancel": []}
         return 200, {"jobs": [], "cancel": ["j1"] if both_running.is_set() else []}
 
     def module(module_job: Any) -> None:
@@ -644,7 +646,7 @@ def test_cancel_cancels_each_running_asset(server: WorkerTestServer) -> None:
 
 def test_asset_exception_does_not_prevent_other_result(server: WorkerTestServer) -> None:
     assets = [{"id": "a1", "name": "one", "path": "/bad"}, {"id": "a2", "name": "two", "path": "/good"}]
-    offer_jobs(server, [protocol2_job("j1", assets)])
+    offer_jobs(server, [protocol3_job("j1", assets)])
 
     def module(module_job: Any) -> ModuleResult:
         if module_job.asset_path == "/bad":
@@ -665,7 +667,7 @@ def test_failed_asset_result_send_does_not_block_other_asset(server: WorkerTestS
     send_one_started = threading.Event()
     release_send_one = threading.Event()
     send_two_accepted = threading.Event()
-    server.routes["poll"] = lambda _: (200, {"jobs": [protocol2_job("j1", assets)] if not server.matching("/start") else [], "cancel": []})
+    server.routes["poll"] = lambda _: (200, {"jobs": [protocol3_job("j1", assets)] if not server.matching("/start") else [], "cancel": []})
 
     def result_route(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         if payload.get("output") == "/one":
@@ -689,7 +691,7 @@ def test_failed_asset_result_send_does_not_block_other_asset(server: WorkerTestS
 
 
 def test_job_without_assets_is_not_started(server: WorkerTestServer) -> None:
-    offer_jobs(server, [protocol2_job("j1", [])])
+    offer_jobs(server, [protocol3_job("j1", [])])
     stop, thread, _ = start_runtime(server)
     try:
         assert wait_until(lambda: len(server.matching("/poll")) >= 1)
@@ -700,7 +702,7 @@ def test_job_without_assets_is_not_started(server: WorkerTestServer) -> None:
 
 def test_shutdown_does_not_wait_for_unresponsive_asset(server: WorkerTestServer) -> None:
     started = threading.Event()
-    offer_jobs(server, [protocol2_job("j1", [{"id": "a1", "name": "one", "path": "/hang"}])])
+    offer_jobs(server, [protocol3_job("j1", [{"id": "a1", "name": "one", "path": "/hang"}])])
 
     def module(_: Any) -> None:
         started.set()
@@ -711,3 +713,299 @@ def test_shutdown_does_not_wait_for_unresponsive_asset(server: WorkerTestServer)
     began = time.monotonic()
     stop_runtime(stop, thread, timeout=0.8)
     assert time.monotonic() - began < 0.8
+
+
+
+def test_register_and_poll_report_availability_and_revision(server: WorkerTestServer) -> None:
+    configs = []
+    server.routes["register"] = lambda _: (200, {
+        "status": "ready", "approved": True,
+        "availability": {"config": {"blocked_processes": ["bad.exe"]}, "revision": 4},
+    })
+    polls = 0
+
+    def poll(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        nonlocal polls
+        polls += 1
+        assert payload["availability_revision"] == (4 if polls == 1 else 5)
+        if polls == 1:
+            return 200, {
+                "jobs": [], "cancel": [], "status": "ready", "approved": True,
+                "availability": {"config": {"blocked_processes": ["worse.exe"]}, "revision": 5},
+            }
+        return 200, {"jobs": [], "cancel": [], "status": "ready", "approved": True}
+
+    server.routes["poll"] = poll
+    stop, thread, _ = start_runtime(server, on_availability_config=lambda config, revision: configs.append((config, revision)))
+    try:
+        assert wait_until(lambda: len(server.matching("/poll")) >= 2)
+        registration_payload = server.matching("/register")[0]["payload"]
+        assert registration_payload == {
+            "worker_id": "w", "name": "W", "client_version": worker_runtime.app_version,
+            "capabilities": [], "protocol": 3, "available": True, "availability_reason": "",
+        }
+        poll_payloads = [request["payload"] for request in server.matching("/poll")]
+        assert poll_payloads[0] == {
+            "worker_id": "w", "running": [], "available": True,
+            "availability_reason": "", "availability_revision": 4,
+        }
+        assert poll_payloads[1]["availability_revision"] == 5
+        assert configs == [
+            ({"blocked_processes": ["bad.exe"]}, 4),
+            ({"blocked_processes": ["worse.exe"]}, 5),
+        ]
+    finally:
+        stop_runtime(stop, thread)
+
+
+def test_poll_uses_minus_one_before_any_availability_revision(server: WorkerTestServer) -> None:
+    seen = threading.Event()
+    server.routes["poll"] = lambda payload: (seen.set() or 200, {"jobs": [], "cancel": []})
+    stop, thread, _ = start_runtime(server)
+    try:
+        assert seen.wait(1)
+        assert server.matching("/poll")[0]["payload"]["availability_revision"] == -1
+    finally:
+        stop_runtime(stop, thread)
+
+
+def test_status_callbacks_cover_responses_and_server_failures(server: WorkerTestServer) -> None:
+    statuses: list[dict[str, Any]] = []
+    server.routes["register"] = lambda _: (200, {"status": "paused", "approved": False})
+    polls = 0
+
+    def poll(_: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        nonlocal polls
+        polls += 1
+        return (500, {}) if polls == 1 else (200, {"jobs": [], "cancel": [], "status": "ready", "approved": True})
+
+    server.routes["poll"] = poll
+    stop, thread, _ = start_runtime(server, on_status=statuses.append)
+    try:
+        assert wait_until(lambda: any(item["connected"] and item["status"] == "ready" for item in statuses))
+        assert any(item["connected"] and item["status"] == "paused" and item["approved"] is False for item in statuses)
+        assert any(item["connected"] is False for item in statuses)
+        assert statuses[-1] == {
+            "connected": True, "status": "ready", "approved": True,
+            "available": True, "reason": "", "running": 0,
+        }
+    finally:
+        stop_runtime(stop, thread)
+
+
+def test_status_callback_reports_connection_failure(server: WorkerTestServer) -> None:
+    statuses: list[dict[str, Any]] = []
+    runtime = WorkerRuntime(
+        "http://127.0.0.1:1", "token", "w", "W", (), request_timeout_s=0.1,
+        retry_delays_s=(0.01,), on_status=statuses.append,
+    )
+    stop = threading.Event()
+    thread = threading.Thread(target=lambda: runtime.run(stop), daemon=True)
+    thread.start()
+    try:
+        assert wait_until(lambda: any(item["connected"] is False for item in statuses), 1)
+        assert statuses[0] == {
+            "connected": False, "status": None, "approved": None,
+            "available": True, "reason": "", "running": 0,
+        }
+    finally:
+        stop_runtime(stop, thread)
+
+
+def test_unavailable_worker_does_not_start_offered_job(server: WorkerTestServer) -> None:
+    calls = 0
+
+    def availability() -> tuple[bool, str]:
+        nonlocal calls
+        calls += 1
+        return (True, "") if calls == 1 else (False, "Wartung")
+
+    server.routes["poll"] = lambda _: (200, {"jobs": [job()], "cancel": []})
+    stop, thread, _ = start_runtime(server, availability=availability)
+    try:
+        assert wait_until(lambda: len(server.matching("/poll")) >= 1)
+        assert not server.matching("/start")
+        assert server.matching("/register")[0]["payload"]["available"] is True
+        assert server.matching("/poll")[0]["payload"]["available"] is False
+        assert server.matching("/poll")[0]["payload"]["availability_reason"] == "Wartung"
+    finally:
+        stop_runtime(stop, thread)
+
+
+def test_availability_exception_marks_worker_unavailable(server: WorkerTestServer, caplog: pytest.LogCaptureFixture) -> None:
+    server.routes["poll"] = lambda _: (200, {"jobs": [], "cancel": []})
+
+    def fail() -> tuple[bool, str]:
+        raise RuntimeError("unavailable")
+
+    stop, thread, _ = start_runtime(server, availability=fail)
+    try:
+        assert wait_until(lambda: bool(server.matching("/poll")))
+        assert server.matching("/register")[0]["payload"]["available"] is False
+        assert server.matching("/register")[0]["payload"]["availability_reason"] == "Verfügbarkeit nicht prüfbar"
+        assert server.matching("/poll")[0]["payload"]["availability_reason"] == "Verfügbarkeit nicht prüfbar"
+        assert "Verfügbarkeit" in caplog.text
+    finally:
+        stop_runtime(stop, thread)
+
+
+def test_callback_exception_does_not_stop_runtime(server: WorkerTestServer) -> None:
+    server.routes["poll"] = lambda _: (200, {"jobs": [], "cancel": []})
+
+    def fail(_: dict[str, Any]) -> None:
+        raise RuntimeError("callback failed")
+
+    stop, thread, result = start_runtime(server, on_status=fail)
+    try:
+        assert wait_until(lambda: len(server.matching("/poll")) >= 1)
+        assert thread.is_alive()
+    finally:
+        stop_runtime(stop, thread)
+    assert result == [0]
+
+
+def test_client_update_offer_is_forwarded(server: WorkerTestServer) -> None:
+    offered: list[dict[str, Any]] = []
+    server.routes["poll"] = lambda _: (200, {
+        "jobs": [], "cancel": [], "client_update": {"version": "2.0", "url": "https://example.invalid/update"},
+    })
+    stop, thread, _ = start_runtime(server, on_update_offer=offered.append)
+    try:
+        assert wait_until(lambda: bool(offered))
+        assert offered == [{"version": "2.0", "url": "https://example.invalid/update"}]
+    finally:
+        stop_runtime(stop, thread)
+
+
+def test_module_job_tool_resolver_and_missing() -> None:
+    tool = Path("/tools/ffmpeg")
+    module_job = ModuleJob("/asset", {}, threading.Event(), lambda name: tool if name == "ffmpeg" else Path(name))
+    assert module_job.tool("ffmpeg") == tool
+    with pytest.raises(ToolMissing, match="Zusatzprogramm fehlt: ffmpeg"):
+        ModuleJob("/asset", {}, threading.Event()).tool("ffmpeg")
+
+
+def test_main_tools_dir_configures_tool_resolver(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import marathon.worker.__main__ as worker_main
+
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir()
+    captured: dict[str, Any] = {}
+
+    class RuntimeStub:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+        def run(self, stop: threading.Event) -> int:
+            return 0
+
+    monkeypatch.setenv("MARATHON_WORKER_TOKEN", "token")
+    monkeypatch.setattr(worker_main, "WorkerRuntime", RuntimeStub)
+    assert main([
+        "--server", "https://localhost", "--worker-id", "w", "--name", "W", "--tools-dir", str(tools_dir),
+    ]) == 0
+    assert captured["tool_path"]("ffmpeg") == tools_dir / "ffmpeg"
+
+
+def test_main_tools_dir_missing_raises_tool_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import marathon.worker.__main__ as worker_main
+
+    captured: dict[str, Any] = {}
+
+    class RuntimeStub:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+        def run(self, stop: threading.Event) -> int:
+            return 0
+
+    monkeypatch.setenv("MARATHON_WORKER_TOKEN", "token")
+    monkeypatch.setattr(worker_main, "WorkerRuntime", RuntimeStub)
+    assert main([
+        "--server", "https://localhost", "--worker-id", "w", "--name", "W", "--tools-dir", str(tmp_path / "absent"),
+    ]) == 0
+    with pytest.raises(ToolMissing, match="Zusatzprogramm fehlt: ffmpeg"):
+        captured["tool_path"]("ffmpeg")
+
+
+def test_runtime_passes_tool_resolver_to_module_job() -> None:
+    tool = Path("/tools/ffmpeg")
+    observed: list[Path] = []
+
+    def run(module_job: ModuleJob) -> ModuleResult:
+        observed.append(module_job.tool("ffmpeg"))
+        return ModuleResult("done")
+
+    runtime = WorkerRuntime(
+        "https://localhost", "token", "w", "W", (),
+        resolve_module=lambda _: SimpleNamespace(run=run),
+        tool_path=lambda name: tool if name == "ffmpeg" else Path(name),
+    )
+    runtime._job_result("x", "/asset", {}, threading.Event())
+    assert observed == [tool]
+
+
+def test_running_jobs_returns_current_job_count() -> None:
+    runtime = WorkerRuntime("https://localhost", "token", "w", "W", ())
+    assert runtime.running_jobs() == 0
+    with runtime._jobs_lock:
+        runtime._jobs["j1"] = worker_runtime._RunningJob("j1")
+    assert runtime.running_jobs() == 1
+
+
+@pytest.mark.parametrize("phase", ["register", "poll"])
+def test_blocking_status_callback_does_not_block_stop(server: WorkerTestServer, phase: str) -> None:
+    callback_started = threading.Event()
+    release_callback = threading.Event()
+    callback_threads: list[str] = []
+    calls = 0
+
+    def on_status(_: dict[str, Any]) -> None:
+        nonlocal calls
+        calls += 1
+        should_block = calls == (1 if phase == "register" else 2)
+        if should_block:
+            callback_threads.append(threading.current_thread().name)
+            callback_started.set()
+            release_callback.wait()
+
+    stop, thread, _ = start_runtime(server, on_status=on_status)
+    try:
+        assert callback_started.wait(1)
+        stop.set()
+        thread.join(1.8)
+        stopped_promptly = not thread.is_alive()
+    finally:
+        release_callback.set()
+        stop_runtime(stop, thread)
+    assert stopped_promptly
+    assert callback_threads == ["marathon-worker-callbacks"]
+
+
+def test_availability_config_callbacks_keep_response_order(server: WorkerTestServer) -> None:
+    callback_started = threading.Event()
+    release_callback = threading.Event()
+    revisions: list[int] = []
+
+    def on_config(_: dict[str, Any], revision: int) -> None:
+        if revision == 1:
+            callback_started.set()
+            release_callback.wait()
+        revisions.append(revision)
+
+    server.routes["register"] = lambda _: (200, {
+        "status": "ready", "approved": True,
+        "availability": {"config": {"blocked_processes": ["one.exe"]}, "revision": 1},
+    })
+    server.routes["poll"] = lambda _: (200, {
+        "jobs": [], "cancel": [], "status": "ready", "approved": True,
+        "availability": {"config": {"blocked_processes": ["two.exe"]}, "revision": 2},
+    })
+    stop, thread, _ = start_runtime(server, on_availability_config=on_config)
+    try:
+        assert callback_started.wait(1)
+        assert wait_until(lambda: bool(server.matching("/poll")))
+    finally:
+        release_callback.set()
+        stop_runtime(stop, thread)
+    assert revisions == [1, 2]

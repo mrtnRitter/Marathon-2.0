@@ -24,6 +24,8 @@ a:hover { color: var(--accent-hover); }
 
 :focus-visible { outline: 1px solid var(--border-focus); outline-offset: 1px; }
 
+.text-error { color: var(--status-failed); }
+
 .muted { color: var(--text-muted); }
 .dim { color: var(--text-dim); }
 

@@ -7,11 +7,14 @@ import { use_server_connected } from '../data/use_connection'
 import { routes } from './routes'
 import { AuthProvider, use_auth_user } from '../data/auth'
 import { LoginPage } from '../pages/LoginPage'
+import { WorkerControlPage } from '../pages/WorkerControlPage'
 import './App.css'
 
 const collapsed_key = 'marathon.sidebar_collapsed'
 
 export function App() {
+  const location = useLocation()
+  if (location.pathname === '/worker-control') return <WorkerControlPage />
   return <AuthProvider><AppContent /></AuthProvider>
 }
 

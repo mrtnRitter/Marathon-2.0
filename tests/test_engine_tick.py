@@ -497,6 +497,7 @@ def test_finish_worker_stops_only_without_active_jobs(db_engine):
 
     workflow_id = _workflow(db_engine)
     _worker(db_engine, "idle-stop", status="stopping")
+    _worker(db_engine, "idle-drain", status="draining")
     for status in ("assigned", "running", "cancelling"):
         worker_id = f"stop-{status}"
         asset_id = f"asset-{status}"
@@ -511,12 +512,13 @@ def test_finish_worker_stops_only_without_active_jobs(db_engine):
             status=status,
         )
 
-    assert _step(db_engine, tick.finish_worker_stops) == 1
+    assert _step(db_engine, tick.finish_worker_stops) == 2
     statuses = _rows(
         db_engine,
-        "SELECT id, status FROM workers WHERE id = 'idle-stop' OR id LIKE 'stop-%' ORDER BY id",
+        "SELECT id, status FROM workers WHERE id IN ('idle-stop', 'idle-drain') OR id LIKE 'stop-%' ORDER BY id",
     )
     assert statuses == [
+        {"id": "idle-drain", "status": "stopped"},
         {"id": "idle-stop", "status": "stopped"},
         {"id": "stop-assigned", "status": "stopping"},
         {"id": "stop-cancelling", "status": "stopping"},
@@ -710,3 +712,41 @@ def test_asset_without_path_fails_without_available_worker(db_engine):
     assert _asset_row(db_engine, "asset-1")["status"] == "failed"
     assert _history(db_engine, "asset-1")[0]["text"] == "Asset hat keine Datei"
     assert _rows(db_engine, "SELECT id FROM jobs") == []
+
+
+@pytest.mark.parametrize(("approved", "client_available"), [(False, True), (True, False)])
+def test_assignment_skips_unapproved_or_unavailable_workers(db_engine, approved, client_available):
+    workflow_id = _workflow(db_engine)
+    _asset(db_engine, workflow_id)
+    _worker(db_engine, "blocked", status="ready")
+    with db_engine.begin() as connection:
+        connection.execute(
+            text("UPDATE workers SET approved = :approved, client_available = :available WHERE id = 'blocked'"),
+            {"approved": approved, "available": client_available},
+        )
+
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 0
+    assert _rows(db_engine, "SELECT id FROM jobs") == []
+    assert _asset_row(db_engine, "asset-1")["step_status"] == "waiting"
+
+
+
+def test_drain_returns_unstarted_asset_for_next_assignment(db_engine):
+    from marathon.server.db.worker_writes import drain_worker
+
+    workflow_id = _workflow(db_engine)
+    _asset(db_engine, workflow_id, "drain-asset", step_status="running")
+    _job(db_engine, workflow_id, job_id="drain-job", asset_id="drain-asset", status="assigned")
+    _worker(db_engine, "replacement", name="Replacement")
+
+    with db_engine.begin() as connection:
+        assert drain_worker(connection, "worker-1", NOW) is True
+    assert _asset_row(db_engine, "drain-asset")["step_status"] == "waiting"
+    assert _asset_row(db_engine, "drain-asset")["attempts"] == 0
+    assert _step(db_engine, assign_jobs, NOW, EngineConfig()) == 1
+    assignment = _rows(
+        db_engine,
+        "SELECT jobs.worker_id FROM jobs JOIN job_assets ON job_assets.job_id = jobs.id "
+        "WHERE job_assets.asset_id = 'drain-asset' AND jobs.status = 'assigned'",
+    )
+    assert assignment == [{"worker_id": "replacement"}]

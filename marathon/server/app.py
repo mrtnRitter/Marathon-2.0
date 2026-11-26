@@ -20,6 +20,7 @@ from marathon.server.config import (
     ConfigError,
     EngineConfig,
     ServerWorkerConfig,
+    WorkerClientConfig,
     caddy_exe,
     caddy_log_file,
     caddy_root_cert,
@@ -196,6 +197,7 @@ def create_app(
     listen: tuple[str, int] | None = None,
     auth_config: AuthConfig | None = None,
     mail_sender: MailSender | None = None,
+    worker_client: WorkerClientConfig | None = None,
 ) -> FastAPI:
     """Build the versioned API and UI without opening a database connection."""
     app = FastAPI(
@@ -214,6 +216,7 @@ def create_app(
     app.state.watch_interval_s = watch_interval_s
     app.state.engine_config = engine_config or EngineConfig()
     app.state.worker_token = worker_token
+    app.state.worker_client = worker_client if worker_client is not None else WorkerClientConfig()
     app.state.run_engine = run_engine
     app.state.live_hub = LiveHub()
     app.state.run_live = run_live

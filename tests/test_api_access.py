@@ -11,6 +11,15 @@ from marathon.server.auth.sessions import AuthUser
 
 
 _EXCEPTIONS = {
+    ("GET", "/api/v1/client"),
+    ("GET", "/api/v1/client/download"),
+    ("POST", "/api/v1/worker/control-link"),
+    ("POST", "/api/v1/worker-control/exchange"),
+    ("GET", "/api/v1/worker-control/self"),
+    ("PUT", "/api/v1/worker-control/self/availability"),
+    ("POST", "/api/v1/worker-control/self/start"),
+    ("POST", "/api/v1/worker-control/self/stop-drain"),
+    ("POST", "/api/v1/worker-control/self/stop-now"),
     ("GET", "/api/v1/health"),
     ("POST", "/api/v1/auth/request-code"),
     ("POST", "/api/v1/auth/confirm"),
@@ -84,13 +93,30 @@ def test_admin_routes_reject_regular_users_and_reads_remain_available(db_engine)
     with TestClient(app) as client:
         settings = client.get("/api/v1/settings")
         assert settings.status_code == 200
-        for method, path, body in (
+        worker_write_routes = {
+            (method, path)
+            for method, path in _route_calls(app)
+            if path.startswith("/api/v1/workers/") and method in {"POST", "PUT", "DELETE"}
+        }
+        expected_worker_routes = {
+            ("POST", "/api/v1/workers/test-value/stop-drain"),
+            ("POST", "/api/v1/workers/test-value/stop-now"),
+            ("POST", "/api/v1/workers/test-value/approve"),
+            ("PUT", "/api/v1/workers/test-value/availability"),
+            ("DELETE", "/api/v1/workers/test-value"),
+        }
+        assert expected_worker_routes <= worker_write_routes
+        assert ("POST", "/api/v1/workers/test-value/stop") not in worker_write_routes
+
+        protected_routes = [
             ("PUT", "/api/v1/settings", settings.json()),
-            ("PUT", "/api/v1/workers/test-value", {}),
-            ("POST", "/api/v1/workers/test-value/start", {}),
-            ("POST", "/api/v1/workers/test-value/stop", {}),
             ("POST", "/api/v1/server/restart", None),
-        ):
+        ]
+        protected_routes.extend(
+            (method, path, {} if method in {"POST", "PUT"} else None)
+            for method, path in sorted(worker_write_routes)
+        )
+        for method, path, body in protected_routes:
             response = client.request(method, path, json=body) if body is not None else client.request(method, path)
             assert response.status_code == 403, f"{method} {path}: {response.status_code} {response.text}"
             assert response.json() == {"detail": "Nur für Admins"}

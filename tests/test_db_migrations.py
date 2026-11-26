@@ -28,6 +28,7 @@ table_names = {
     "workflow_connections", "workers", "assets", "jobs", "job_assets",
     "asset_history", "log_lines", "watch_modules", "watch_files", "settings", "alembic_version",
     "users", "auth_codes", "auth_failures", "auth_locks", "sessions", "workflow_shares",
+    "worker_ephemeral_tokens", "worker_control_sessions",
 }
 
 
@@ -47,8 +48,8 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0010"
-    assert upgrade_database(db_engine) == "0010"
+    assert upgrade_database(db_engine) == "0011"
+    assert upgrade_database(db_engine) == "0011"
 
 
 def test_engine_columns_exist(db_engine):
@@ -104,7 +105,7 @@ def test_downgrade_0005(db_engine):
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM jobs WHERE id = 'job-downgrade'")).scalar_one() == "cancelled"
     assert "attempts" not in {column["name"] for column in inspect(db_engine).get_columns("assets")}
-    assert upgrade_database(db_engine) == "0010"
+    assert upgrade_database(db_engine) == "0011"
 
 
 def _migration_config(connection):
@@ -173,7 +174,7 @@ def test_worker_cleanup_migration_up_down_up(db_engine):
         assert defaults == {"priorities": {}, "max_parallel": 1, "client_slots": 1}
         command.upgrade(config, "head")
 
-    assert upgrade_database(db_engine) == "0010"
+    assert upgrade_database(db_engine) == "0011"
 
 
 def test_worker_release_migration_up_down_up(db_engine):
@@ -222,7 +223,7 @@ def test_worker_release_migration_up_down_up(db_engine):
                     {"job_id": job_id, "asset_id": extra_asset_id},
                 )
 
-    assert upgrade_database(db_engine) == "0010"
+    assert upgrade_database(db_engine) == "0011"
     with db_engine.begin() as connection:
         worker = connection.execute(
             text("SELECT skills, online FROM workers WHERE id = 'worker-offline'")
@@ -260,8 +261,128 @@ def test_worker_release_migration_up_down_up(db_engine):
     assert not {"skills", "online"} & {column["name"] for column in inspect(db_engine).get_columns("workers")}
     assert not {"outcome", "finished_at", "error"} & {column["name"] for column in inspect(db_engine).get_columns("job_assets")}
     assert "asset_id" not in {column["name"] for column in inspect(db_engine).get_columns("log_lines")}
-    assert upgrade_database(db_engine) == "0010"
+    assert upgrade_database(db_engine) == "0011"
     assert "settings" in inspect(db_engine).get_table_names()
+
+
+
+def test_0011_worker_client_schema(db_engine):
+    worker_columns = {column["name"]: column for column in inspect(db_engine).get_columns("workers")}
+    assert {"token_hash", "approved", "availability_config", "availability_revision", "client_available", "availability_reason"} <= set(worker_columns)
+    assert {"worker_ephemeral_tokens", "worker_control_sessions"} <= set(inspect(db_engine).get_table_names())
+    assert {index["name"] for index in inspect(db_engine).get_indexes("worker_ephemeral_tokens")} >= {
+        "ix_worker_ephemeral_tokens_worker_id_expires_at"
+    }
+    assert {index["name"] for index in inspect(db_engine).get_indexes("worker_control_sessions")} >= {
+        "ix_worker_control_sessions_worker_id"
+    }
+
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO workers (id, name, status) VALUES ('worker-0011', 'Worker', 'ready')"))
+        defaults = connection.execute(text(
+            "SELECT token_hash, approved, availability_config, availability_revision, client_available, availability_reason "
+            "FROM workers WHERE id = 'worker-0011'"
+        )).mappings().one()
+        assert defaults == {
+            "token_hash": None,
+            "approved": True,
+            "availability_config": {},
+            "availability_revision": 0,
+            "client_available": True,
+            "availability_reason": "",
+        }
+        connection.execute(text("UPDATE workers SET status = 'draining' WHERE id = 'worker-0011'"))
+
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text("UPDATE workers SET status = 'unknown' WHERE id = 'worker-0011'"))
+
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO worker_ephemeral_tokens (token_hash, worker_id, purpose, expires_at) "
+                "VALUES ('invalid-purpose', 'worker-0011', 'x', now() + interval '1 hour')"
+            ))
+
+    with db_engine.begin() as connection:
+        connection.execute(text("UPDATE workers SET token_hash = 'worker-hash' WHERE id = 'worker-0011'"))
+
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO workers (id, name, status, token_hash) "
+                "VALUES ('worker-0011-duplicate', 'Duplicate', 'ready', 'worker-hash')"
+            ))
+
+    with db_engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO worker_ephemeral_tokens (token_hash, worker_id, purpose, expires_at) "
+            "VALUES ('ephemeral-hash', 'worker-0011', 'presence', now() + interval '1 hour')"
+        ))
+        connection.execute(text(
+            "INSERT INTO worker_control_sessions (id, worker_id, token_hash, expires_at) "
+            "VALUES ('control-0011', 'worker-0011', 'control-hash', now() + interval '1 hour')"
+        ))
+
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO worker_control_sessions (id, worker_id, token_hash, expires_at) "
+                "VALUES ('control-duplicate', 'worker-0011', 'control-hash', now() + interval '1 hour')"
+            ))
+
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO worker_ephemeral_tokens (token_hash, worker_id, purpose, expires_at) "
+                "VALUES ('ephemeral-hash', 'worker-0011', 'presence', now() + interval '1 hour')"
+            ))
+
+    with db_engine.begin() as connection:
+        triggers = connection.execute(text(
+            "SELECT t.tgname FROM pg_trigger AS t "
+            "JOIN pg_class AS relation ON relation.oid = t.tgrelid "
+            "WHERE relation.relname IN ('worker_ephemeral_tokens', 'worker_control_sessions') "
+            "AND NOT t.tgisinternal"
+        )).scalars().all()
+        assert triggers == []
+        connection.execute(text("INSERT INTO workers (id, name, status) VALUES ('worker-0011-cascade', 'Cascade', 'ready')"))
+        connection.execute(text(
+            "INSERT INTO worker_ephemeral_tokens (token_hash, worker_id, purpose, expires_at) "
+            "VALUES ('cascade-ephemeral', 'worker-0011-cascade', 'control_link', now() + interval '1 hour')"
+        ))
+        connection.execute(text(
+            "INSERT INTO worker_control_sessions (id, worker_id, token_hash, expires_at) "
+            "VALUES ('cascade-control', 'worker-0011-cascade', 'cascade-control-hash', now() + interval '1 hour')"
+        ))
+        connection.execute(text("DELETE FROM workers WHERE id = 'worker-0011-cascade'"))
+        assert connection.execute(text(
+            "SELECT count(*) FROM worker_ephemeral_tokens WHERE worker_id = 'worker-0011-cascade'"
+        )).scalar_one() == 0
+        assert connection.execute(text(
+            "SELECT count(*) FROM worker_control_sessions WHERE worker_id = 'worker-0011-cascade'"
+        )).scalar_one() == 0
+
+
+def test_0011_worker_client_downgrade(db_engine):
+    from alembic import command
+
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO workers (id, name, status) VALUES ('worker-0011-down', 'Drain', 'draining')"))
+        config = _migration_config(connection)
+        command.downgrade(config, "0010")
+        assert connection.execute(text(
+            "SELECT status FROM workers WHERE id = 'worker-0011-down'"
+        )).scalar_one() == "stopping"
+        assert not {"worker_ephemeral_tokens", "worker_control_sessions"} & set(
+            inspect(connection).get_table_names()
+        )
+        assert not {"token_hash", "approved", "availability_config", "availability_revision", "client_available", "availability_reason"} & {
+            column["name"] for column in inspect(connection).get_columns("workers")
+        }
+        command.upgrade(config, "head")
+
+    assert upgrade_database(db_engine) == "0011"
 
 
 
@@ -368,7 +489,7 @@ def test_0010_users_downgrade(db_engine):
         }
         command.upgrade(config, "head")
 
-    assert upgrade_database(db_engine) == "0010"
+    assert upgrade_database(db_engine) == "0011"
 
 
 def test_ensure_database_creates_then_reuses(db_config):
@@ -452,7 +573,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0010" in captured.out
+    assert "Revision 0011" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 
@@ -534,7 +655,7 @@ def test_schedule_waiting_migration_up_down_up_preserves_data_rules(db_engine):
             ("legacy-waiting", False, False),
         ]
         command.upgrade(config, "head")
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0010"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0011"
 
 
 def test_schedule_constraints(db_engine):

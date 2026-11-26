@@ -27,3 +27,9 @@ public_url = "https://laptop-martin-r"  # Adresse, unter der Marathon erreichbar
 builtin = true                          # Mitgelieferten Proxy (Caddy) starten; false = externer Reverse-Proxy
 trusted_proxies = []                    # IP-Adressen externer Reverse-Proxys; bei builtin = true gilt 127.0.0.1 automatisch
 
+[worker_client]
+require_admin_approval = true  # true = neue Worker muss ein Admin einmal zulassen
+control_session_hours = 12     # So lange gilt die Worker-Einstellungsseite nach „Worker-Einstellungen öffnen“ (1–168 Stunden)
+
+[client_build]
+sign_command = []              # Befehl zum Signieren der Worker-Client-Exe als Liste, {file} = Pfad der Exe; leer = nicht signieren

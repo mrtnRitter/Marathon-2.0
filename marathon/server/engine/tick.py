@@ -85,10 +85,10 @@ def finish_pausing(connection: Connection) -> int:
 
 
 def finish_worker_stops(connection: Connection) -> int:
-    """Stop workers once they have no active jobs."""
+    """Stop stopping or draining workers once they have no active jobs."""
     workers = connection.execute(
         text(
-            "UPDATE workers SET status = 'stopped' WHERE status = 'stopping' AND NOT EXISTS ("
+            "UPDATE workers SET status = 'stopped' WHERE status IN ('stopping', 'draining') AND NOT EXISTS ("
             "SELECT 1 FROM jobs WHERE jobs.worker_id = workers.id "
             "AND jobs.status IN ('assigned', 'running', 'cancelling')) RETURNING id"
         )
@@ -221,7 +221,8 @@ def _available_workers(connection: Connection) -> list[dict[str, Any]]:
             "SELECT w.id, w.name, w.skills, w.capabilities, "
             "(SELECT count(*) FROM jobs AS j WHERE j.worker_id = w.id "
             "AND j.status IN ('assigned', 'running', 'cancelling')) AS active_jobs "
-            "FROM workers AS w WHERE w.status = 'ready' AND w.online ORDER BY w.id"
+            "FROM workers AS w WHERE w.status = 'ready' AND w.online "
+            "AND w.approved AND w.client_available ORDER BY w.id"
         )
     ).mappings()
     workers = []

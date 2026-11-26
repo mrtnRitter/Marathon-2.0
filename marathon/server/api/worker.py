@@ -21,8 +21,14 @@ from marathon.server.engine.jobs import (
     apply_job_result,
     start_job,
 )
-from marathon.server.engine.protocol import job_progress, poll_commands, register_worker, touch_worker
-from marathon.server.worker_auth import require_worker_token
+from marathon.server.engine.protocol import (
+    job_progress,
+    poll_commands,
+    protocol_version,
+    register_worker,
+    touch_worker,
+)
+from marathon.server.worker_auth import check_worker_id, require_worker
 
 
 # MODELS
@@ -34,6 +40,8 @@ class RegisterInput(BaseModel):
     client_version: str
     capabilities: list[str]
     protocol: int
+    available: bool = True
+    availability_reason: str = ""
 
 
 class PollInput(BaseModel):
@@ -41,6 +49,9 @@ class PollInput(BaseModel):
 
     worker_id: str
     running: list[str] = Field(default_factory=list)
+    available: bool = True
+    availability_reason: str = ""
+    availability_revision: int = -1
 
 
 class StartInput(BaseModel):
@@ -78,7 +89,7 @@ class ResultInput(BaseModel):
 
 
 # CONFIG
-router = APIRouter(prefix="/worker", tags=["worker"], dependencies=[Depends(require_worker_token)])
+router = APIRouter(prefix="/worker", tags=["worker"])
 _empty_poll = {"jobs": [], "cancel": []}
 
 
@@ -88,16 +99,16 @@ def _set_poll_timeouts(connection) -> None:
     connection.execute(text("SET LOCAL statement_timeout = '2s'"))
 
 
-def _touch(engine: Engine, worker_id: str, now: datetime) -> bool:
+def _touch(engine: Engine, worker_id: str, now: datetime, available: bool, reason: str) -> bool:
     with engine.begin() as connection:
         _set_poll_timeouts(connection)
-        return touch_worker(connection, worker_id, now)
+        return touch_worker(connection, worker_id, now, available, reason)
 
 
-def _poll(engine: Engine, worker_id: str, running: Sequence[str]) -> dict:
+def _poll(engine: Engine, worker_id: str, running: Sequence[str], availability_revision: int) -> dict:
     with engine.begin() as connection:
         _set_poll_timeouts(connection)
-        return poll_commands(connection, worker_id, running)
+        return poll_commands(connection, worker_id, running, availability_revision)
 
 
 def _consume_background_result(task: asyncio.Task) -> None:
@@ -135,24 +146,31 @@ def _utc_now() -> datetime:
 def post_worker_register(
     payload: RegisterInput,
     request: Request,
+    authenticated_worker_id: str = Depends(require_worker),
     engine: Engine = Depends(get_engine),
 ) -> dict:
-    """Register or refresh a worker using protocol version 2."""
-    if payload.protocol != 2:
+    """Register or refresh a worker using the current protocol version."""
+    check_worker_id(authenticated_worker_id, payload.worker_id)
+    if payload.protocol != protocol_version:
         raise HTTPException(status_code=409, detail="Protokollversion nicht unterstützt")
     config: EngineConfig = request.app.state.engine_config
     ip_address = request.client.host if request.client is not None else None
     with engine.begin() as connection:
-        return register_worker(connection, payload.model_dump(), ip_address, _utc_now(), config)
+        try:
+            return register_worker(connection, payload.model_dump(), ip_address, _utc_now(), config)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="Worker unbekannt") from exc
 
 
 @router.post("/poll")
 async def post_worker_poll(
     payload: PollInput,
     request: Request,
+    authenticated_worker_id: str = Depends(require_worker),
     engine: Engine = Depends(get_engine),
 ) -> dict:
     """Wait asynchronously for commands while periodically refreshing the worker."""
+    check_worker_id(authenticated_worker_id, payload.worker_id)
     config: EngineConfig = request.app.state.engine_config
     shutdown_event = request.app.state.shutdown_event
 
@@ -174,7 +192,8 @@ async def post_worker_poll(
         current = loop.time()
         if last_seen is None or current - last_seen >= 5.0:
             completed, exists = await _run_threadpool_until(
-                hard_deadline, should_stop, _touch, engine, payload.worker_id, _utc_now()
+                hard_deadline, should_stop, _touch, engine, payload.worker_id, _utc_now(),
+                payload.available, payload.availability_reason[:200]
             )
             if await should_stop():
                 return _empty_poll
@@ -187,13 +206,14 @@ async def post_worker_poll(
         if await should_stop():
             return _empty_poll
         completed, response = await _run_threadpool_until(
-            hard_deadline, should_stop, _poll, engine, payload.worker_id, payload.running
+            hard_deadline, should_stop, _poll, engine, payload.worker_id, payload.running,
+            payload.availability_revision
         )
         if await should_stop():
             return _empty_poll
         if not completed:
             return _empty_poll
-        if response["jobs"] or response["cancel"]:
+        if response["jobs"] or response["cancel"] or "availability" in response:
             return response
         remaining = deadline - loop.time()
         if remaining <= 0:
@@ -207,9 +227,11 @@ async def post_worker_poll(
 def post_worker_job_start(
     job_id: str,
     payload: StartInput,
+    authenticated_worker_id: str = Depends(require_worker),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, bool]:
     """Mark an assigned job as started by its worker."""
+    check_worker_id(authenticated_worker_id, payload.worker_id)
     try:
         with engine.begin() as connection:
             started = start_job(connection, job_id, payload.worker_id, _utc_now())
@@ -224,9 +246,11 @@ def post_worker_job_start(
 def post_worker_job_progress(
     job_id: str,
     payload: ProgressInput,
+    authenticated_worker_id: str = Depends(require_worker),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, bool]:
     """Persist progress and return whether the worker must cancel the job."""
+    check_worker_id(authenticated_worker_id, payload.worker_id)
     try:
         with engine.begin() as connection:
             cancel = job_progress(connection, job_id, payload.worker_id, payload.progress, payload.log)
@@ -243,9 +267,11 @@ def post_worker_asset_result(
     asset_id: str,
     payload: ResultInput,
     request: Request,
+    authenticated_worker_id: str = Depends(require_worker),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, bool]:
     """Apply one asset result from the assigned worker."""
+    check_worker_id(authenticated_worker_id, payload.worker_id)
     try:
         with engine.begin() as connection:
             accepted = apply_asset_result(
@@ -269,9 +295,11 @@ def post_worker_job_result(
     job_id: str,
     payload: ResultInput,
     request: Request,
+    authenticated_worker_id: str = Depends(require_worker),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, bool]:
     """Apply a result from the assigned worker and acknowledge acceptance."""
+    check_worker_id(authenticated_worker_id, payload.worker_id)
     try:
         with engine.begin() as connection:
             accepted = apply_job_result(

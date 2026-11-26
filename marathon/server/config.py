@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 root_dir = Path(__file__).resolve().parents[2]
 default_config_file = root_dir / "config" / "marathon.toml"
 data_dir = root_dir / ".data"
+client_package_dir = data_dir / "client"
 pg_dir = root_dir / ".tools" / "postgres"
 pg_bin_dir = pg_dir / "bin"
 pg_data_dir = data_dir / "postgres"
@@ -157,6 +158,17 @@ class ServerWorkerConfig:
 
 
 @dataclass(frozen=True)
+class WorkerClientConfig:
+    require_admin_approval: bool = True
+    control_session_hours: int = 12
+
+
+@dataclass(frozen=True)
+class ClientBuildConfig:
+    sign_command: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ProxyConfig:
     public_url: str = "https://localhost"
     builtin: bool = True
@@ -192,6 +204,8 @@ class ServerConfig:
     server_worker: ServerWorkerConfig = field(default_factory=ServerWorkerConfig)
     folder_dialog: FolderDialogConfig = field(default_factory=FolderDialogConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
+    worker_client: WorkerClientConfig = field(default_factory=WorkerClientConfig)
+    client_build: ClientBuildConfig = field(default_factory=ClientBuildConfig)
 
 
 def _validated_value(
@@ -300,4 +314,33 @@ def load_server_config(config_file: Path = default_config_file) -> ServerConfig:
         raise ConfigError(f"[proxy] trusted_proxies in {config_file}: {error}") from error
     proxy = ProxyConfig(public_url, builtin, trusted_proxies)
 
-    return ServerConfig(config.host, config.port, database, engine, server_worker, folder_dialog, proxy)
+    worker_client_data = data.get("worker_client", {})
+    if not isinstance(worker_client_data, dict):
+        raise ConfigError(f"[worker_client] in {config_file} muss eine Tabelle sein")
+    require_admin_approval = worker_client_data.get("require_admin_approval", True)
+    if not isinstance(require_admin_approval, bool):
+        raise ConfigError(
+            f"[worker_client] require_admin_approval in {config_file} muss true oder false sein"
+        )
+    worker_client = WorkerClientConfig(
+        require_admin_approval=require_admin_approval,
+        control_session_hours=_validated_value(
+            worker_client_data, "worker_client", "control_session_hours", 12, 1, 168, config_file, integer=True
+        ),
+    )
+
+    client_build_data = data.get("client_build", {})
+    if not isinstance(client_build_data, dict):
+        raise ConfigError(f"[client_build] in {config_file} muss eine Tabelle sein")
+    sign_command = client_build_data.get("sign_command", [])
+    if not isinstance(sign_command, list) or any(
+        not isinstance(part, str) or not part for part in sign_command
+    ):
+        raise ConfigError(f"[client_build] sign_command in {config_file} muss eine Liste von Texten sein")
+    if sign_command and not any("{file}" in part for part in sign_command):
+        raise ConfigError(f"[client_build] sign_command in {config_file} braucht den Platzhalter {{file}}")
+    client_build = ClientBuildConfig(sign_command=tuple(sign_command))
+
+    return ServerConfig(
+        config.host, config.port, database, engine, server_worker, folder_dialog, proxy, worker_client, client_build
+    )

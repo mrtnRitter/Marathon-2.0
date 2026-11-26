@@ -8,6 +8,7 @@ import sys
 import threading
 
 from marathon.common.version import app_version as package_version
+from marathon.modules._job import ToolMissing
 from marathon.worker.runtime import WorkerRuntime, worker_capabilities
 from marathon.worker.tls import create_ssl_context
 
@@ -25,6 +26,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--worker-id", required=True)
     parser.add_argument("--name", required=True)
     parser.add_argument("--exit-on-stdin-eof", action="store_true")
+    parser.add_argument("--tools-dir", type=Path)
     args = parser.parse_args(argv)
     logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     if not args.server.casefold().startswith("https://"):
@@ -61,6 +63,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         ssl_context = create_ssl_context(args.ca_file)
+        def resolve_tool(name: str) -> Path:
+            if args.tools_dir is None or not args.tools_dir.is_dir():
+                raise ToolMissing(f"Zusatzprogramm fehlt: {name}")
+            return args.tools_dir / name
+
         runtime = WorkerRuntime(
             args.server,
             token,
@@ -68,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
             args.name,
             worker_capabilities(),
             ssl_context=ssl_context,
+            tool_path=resolve_tool if args.tools_dir is not None else None,
         )
         return runtime.run(stop)
     except ValueError as error:

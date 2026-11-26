@@ -1,8 +1,9 @@
 """Shared job contracts for executable Marathon modules."""
 
 # IMPORTS
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 import threading
 from typing import Any
 
@@ -12,6 +13,10 @@ class JobStopped(Exception):
     """Raised when the job's stop event is set."""
 
 
+class ToolMissing(Exception):
+    """Raised when a module requests an unavailable auxiliary program."""
+
+
 @dataclass(frozen=True)
 class ModuleJob:
     """Input passed to a module for one asset."""
@@ -19,6 +24,12 @@ class ModuleJob:
     asset_path: str
     settings: Mapping[str, Any]
     stop: threading.Event
+    tool_path: Callable[[str], Path] | None = None
+
+    def tool(self, name: str) -> Path:
+        if self.tool_path is None:
+            raise ToolMissing(f"Zusatzprogramm fehlt: {name}")
+        return self.tool_path(name)
 
 
 @dataclass(frozen=True)

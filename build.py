@@ -3,6 +3,7 @@
 # IMPORTS
 import argparse
 import hashlib
+import json
 import os
 import platform
 import secrets
@@ -19,6 +20,8 @@ from marathon.server.config import (
     ConfigError,
     caddy_dir,
     caddy_exe,
+    caddy_root_cert,
+    client_package_dir,
     data_dir,
     load_server_config,
     pg_bin_dir,
@@ -60,6 +63,10 @@ ui_dir = root_dir / "ui"
 ui_package_file = ui_dir / "package.json"
 ui_lock_file = ui_dir / "package-lock.json"
 ui_modules_dir = ui_dir / "node_modules"
+client_venv_dir = build_dir / "client-venv"
+client_build_dir = build_dir / "client"
+client_requirements_file = root_dir / "requirements" / "client.txt"
+client_build_requirements_file = root_dir / "requirements" / "client-build.txt"
 static_dir = root_dir / "marathon" / "server" / "static"
 
 required_files = (requirements_file, server_config_file, ui_package_file, ui_lock_file)
@@ -112,15 +119,20 @@ def run(
     cwd: Path = root_dir,
     env: dict[str, str] | None = None,
     timeout: int = command_timeout,
-) -> None:
+    capture_output: bool = False,
+) -> subprocess.CompletedProcess:
     try:
-        result = subprocess.run(command, cwd=cwd, env=env, shell=False, timeout=timeout)
+        result = subprocess.run(
+            command, cwd=cwd, env=env, shell=False, timeout=timeout,
+            capture_output=capture_output, text=capture_output,
+        )
     except subprocess.TimeoutExpired as error:
         raise BuildError(f"Befehl überschritt das Zeitlimit von {timeout} Sekunden: {command[0]}") from error
     except OSError as error:
         raise BuildError(f"Befehl konnte nicht gestartet werden: {command[0]} ({error})") from error
     if result.returncode:
         raise BuildError(f"Befehl fehlgeschlagen (Exit-Code {result.returncode}): {' '.join(command)}")
+    return result
 
 
 # FUNC: change detection
@@ -434,6 +446,165 @@ def build_ui() -> None:
         raise BuildError(f"UI-Build hat keine index.html in {static_dir} erzeugt")
 
 
+# FUNC: worker client
+def client_venv_python() -> Path:
+    return client_venv_dir / ("Scripts/python.exe" if is_windows else "bin/python")
+
+
+def client_requirements_hash() -> str:
+    digest = hashlib.sha256()
+    for path in (client_requirements_file, client_build_requirements_file):
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def setup_client_venv() -> None:
+    new_venv = not client_venv_python().is_file()
+    if new_venv:
+        print("  lege .build/client-venv an")
+        run([sys.executable, "-m", "venv", str(client_venv_dir)])
+    requirements_hash = client_requirements_hash()
+    if not new_venv and stamp_matches("client-requirements", requirements_hash):
+        print("  Client-Pakete aktuell, übersprungen")
+        return
+    run([
+        str(client_venv_python()), "-m", "pip", "install", "--disable-pip-version-check", "-q",
+        "-r", str(client_requirements_file), "-r", str(client_build_requirements_file),
+    ])
+    write_stamp("client-requirements", requirements_hash)
+
+
+def client_proxy_settings(config) -> tuple[str, bool]:
+    try:
+        result = run([str(venv_python()), "-m", "marathon.server.db", "proxy-info"], capture_output=True)
+        values = json.loads(result.stdout)
+        public_url = values["public_url"]
+        builtin = values["builtin"]
+        if not isinstance(public_url, str) or type(builtin) is not bool:
+            raise ValueError("Ungültige Proxy-Einstellungen")
+        return public_url, builtin
+    except (BuildError, AttributeError, KeyError, TypeError, ValueError) as error:
+        print("  Server-Adresse aus config/marathon.toml (Datenbank nicht erreichbar)")
+        return config.proxy.public_url, config.proxy.builtin
+
+
+def write_client_version_info(path: Path) -> None:
+    version = tuple(int(part) for part in app_version.split("."))
+    version_tuple = (*version, 0)
+    content = f'''VSVersionInfo(
+  ffi=FixedFileInfo(filevers={version_tuple}, prodvers={version_tuple}, mask=0x3f, flags=0x0, OS=0x4, fileType=0x1, subtype=0x0, date=(0, 0)),
+  kids=[
+    StringFileInfo([StringTable('040904B0', [
+      StringStruct('CompanyName', 'Marathon'),
+      StringStruct('ProductName', 'Marathon-Worker'),
+      StringStruct('FileDescription', 'Marathon-Worker'),
+      StringStruct('FileVersion', '{app_version}'),
+      StringStruct('ProductVersion', '{app_version}'),
+      StringStruct('OriginalFilename', 'MarathonWorker.exe'),
+    ])]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])]),
+  ],
+)
+'''
+    path.write_text(content, encoding="utf-8", newline="\n")
+
+
+def write_client_bootstrap(path: Path, server_url: str, root_ca_pem: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as output:
+        json.dump(
+            {"server_url": server_url, "root_ca_pem": root_ca_pem, "client_version": app_version},
+            output, ensure_ascii=False, indent=2,
+        )
+        output.write("\n")
+
+
+def publish_client(exe_path: Path, server_url: str) -> None:
+    client_package_dir.mkdir(parents=True, exist_ok=True)
+    target_exe = client_package_dir / "MarathonWorker.exe"
+    temporary_exe = client_package_dir / ".MarathonWorker.exe.tmp"
+    temporary_manifest = client_package_dir / ".client.json.tmp"
+    try:
+        shutil.copyfile(exe_path, temporary_exe)
+        os.replace(temporary_exe, target_exe)
+        manifest = {
+            "version": app_version,
+            "sha256": file_hash(target_exe),
+            "server_url": server_url,
+        }
+        with temporary_manifest.open("w", encoding="utf-8", newline="\n") as output:
+            json.dump(manifest, output, ensure_ascii=False, indent=2)
+            output.write("\n")
+        os.replace(temporary_manifest, client_package_dir / "client.json")
+    finally:
+        temporary_exe.unlink(missing_ok=True)
+        temporary_manifest.unlink(missing_ok=True)
+
+
+def build_client(*, strict: bool = False) -> None:
+    if not is_windows:
+        if strict:
+            raise BuildError("Der Worker-Client lässt sich nur unter Windows bauen.")
+        print("  nur unter Windows, übersprungen")
+        return
+
+    required = (client_requirements_file, client_build_requirements_file)
+    missing = [str(path.relative_to(root_dir)) for path in required if not path.is_file()]
+    if missing:
+        raise BuildError(f"Dateien fehlen im Repo: {', '.join(missing)}")
+    try:
+        config = load_server_config()
+    except ConfigError as error:
+        raise BuildError(str(error)) from error
+
+    server_url, builtin = client_proxy_settings(config)
+    if builtin:
+        if not caddy_root_cert.is_file():
+            message = f"Stammzertifikat fehlt ({caddy_root_cert}). Zuerst python run.py einmal starten."
+            if strict:
+                raise BuildError(message)
+            print(message)
+            return
+        root_ca_pem = caddy_root_cert.read_text(encoding="utf-8")
+    else:
+        root_ca_pem = ""
+
+    setup_client_venv()
+    client_build_dir.mkdir(parents=True, exist_ok=True)
+    bootstrap_path = client_build_dir / "client_bootstrap.json"
+    version_info_path = client_build_dir / "version_info.txt"
+    write_client_bootstrap(bootstrap_path, server_url, root_ca_pem)
+    write_client_version_info(version_info_path)
+
+    command = [
+        str(client_venv_python()), "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--windowed",
+        "--name", "MarathonWorker", "--distpath", str(client_build_dir / "dist"),
+        "--workpath", str(client_build_dir / "work"), "--specpath", str(client_build_dir),
+        "--add-data", f"{bootstrap_path}{os.pathsep}.", "--paths", str(root_dir),
+        "--collect-submodules", "marathon.modules", "--hidden-import", "pystray._win32",
+        "--version-file", str(version_info_path), str(root_dir / "marathon" / "client" / "__main__.py"),
+    ]
+    run(command)
+    exe_path = client_build_dir / "dist" / "MarathonWorker.exe"
+    if not exe_path.is_file():
+        raise BuildError(f"PyInstaller hat keine Exe in {exe_path} erzeugt")
+
+    if config.client_build.sign_command:
+        sign_command = [part.replace("{file}", str(exe_path)) for part in config.client_build.sign_command]
+        try:
+            run(sign_command)
+        except BuildError as error:
+            raise BuildError(f"Signieren fehlgeschlagen: {error}") from error
+    else:
+        print("  Hinweis: Worker-Client ist nicht signiert ([client_build] sign_command leer); Windows zeigt beim Start eine Warnung.")
+
+    publish_client(exe_path, server_url)
+    print("  Worker-Client bereit: .data/client/MarathonWorker.exe")
+
+
 # MAIN
 steps = (
     ("Python-Umgebung (.venv)", setup_venv),
@@ -443,20 +614,27 @@ steps = (
     ("Datenordner (.data/postgres)", init_database),
     ("UI-Bibliotheken (ui/node_modules)", install_ui_dependencies),
     ("Oberfläche bauen (marathon/server/static)", build_ui),
+    ("Worker-Client (.data/client)", build_client),
 )
 
 
 def main() -> int:
     sys.stdout.reconfigure(line_buffering=True)
-    argparse.ArgumentParser(
-        description="Installiert alles lokal im Projektordner (.venv, .tools/node, .tools/postgres, .tools/caddy, .data, ui/node_modules) und baut die Oberfläche.",
-    ).parse_args()
+    parser = argparse.ArgumentParser(
+        description="Installiert alles lokal im Projektordner, baut die Oberfläche und den Worker-Client.",
+    )
+    parser.add_argument("--client", action="store_true", help="Nur den Worker-Client bauen (nur Windows)")
+    arguments = parser.parse_args()
     try:
         check_python()
-        check_required_files()
-        for number, (title, step) in enumerate(steps, 1):
-            print(f"[{number}/{len(steps)}] {title}")
-            step()
+        if arguments.client:
+            print("[1/1] Worker-Client (.data/client)")
+            build_client(strict=True)
+        else:
+            check_required_files()
+            for number, (title, step) in enumerate(steps, 1):
+                print(f"[{number}/{len(steps)}] {title}")
+                step()
     except BuildError as error:
         print(f"Fehler: {error}", file=sys.stderr)
         return 1

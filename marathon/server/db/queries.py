@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from marathon.common.availability import AvailabilityError, default_availability, normalize_availability
 from marathon.server.auth.sessions import AuthUser
 from marathon.server.db.workflow_access import workflow_access_filter
 from marathon.server.db.workflow_checks import workflow_issues
@@ -135,15 +136,27 @@ _worker_select = (
     "SELECT worker.id, worker.name, worker.status, worker.online, worker.capabilities, worker.skills, "
     "(SELECT COUNT(*) FROM jobs WHERE jobs.status IN ('assigned', 'running', 'cancelling') "
     "AND jobs.worker_id = worker.id) AS running_jobs, worker.client_version, "
-    "COALESCE(worker.last_seen, worker.created_at) AS last_seen, worker.ip_address "
+    "COALESCE(worker.last_seen, worker.created_at) AS last_seen, worker.ip_address, worker.approved, "
+    "worker.client_available AS available, worker.availability_reason, worker.availability_config, "
+    "worker.availability_revision "
     "FROM workers AS worker "
 )
+
+
+def _worker_record(row: Any) -> dict[str, Any]:
+    """Map availability settings to their canonical public representation."""
+    worker = dict(row)
+    try:
+        worker["availability_config"] = normalize_availability(worker["availability_config"])
+    except AvailabilityError:
+        worker["availability_config"] = default_availability()
+    return worker
 
 
 def list_workers(connection: Connection) -> list[dict[str, Any]]:
     """List workers alphabetically with active-job counts and a non-null last-seen time."""
     rows = connection.execute(text(_worker_select + "ORDER BY worker.name")).mappings()
-    return [dict(row) for row in rows]
+    return [_worker_record(row) for row in rows]
 
 
 def get_worker(connection: Connection, worker_id: str) -> dict[str, Any] | None:
@@ -151,7 +164,7 @@ def get_worker(connection: Connection, worker_id: str) -> dict[str, Any] | None:
     row = connection.execute(
         text(_worker_select + "WHERE worker.id = :worker_id"), {"worker_id": worker_id}
     ).mappings().one_or_none()
-    return dict(row) if row is not None else None
+    return _worker_record(row) if row is not None else None
 
 
 def list_module_types(connection: Connection) -> list[dict[str, Any]]:

@@ -556,7 +556,10 @@ def test_main_returns_75_on_restart(tmp_path, monkeypatch):
             live_hub=SimpleNamespace(close_streams=lambda: None),
         )
     )
-    config = SimpleNamespace(host="127.0.0.1", port=8080, engine=None, server_worker=None)
+    config = SimpleNamespace(
+        host="127.0.0.1", port=8080, engine=None, server_worker=None,
+        worker_client=SimpleNamespace(require_admin_approval=True),
+    )
     static_dir = tmp_path / "static"
     static_dir.mkdir()
     (static_dir / "index.html").touch()

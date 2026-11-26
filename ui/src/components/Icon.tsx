@@ -30,6 +30,7 @@ function CatWhiskers({ size }: { size: number }) {
 
 export function Icon({ name, size = 15 }: { name: string; size?: number }) {
   if (name === 'cat') return <CatWhiskers size={size} />
+  if (name === 'stop-red') return <span className="text-error"><Square size={size} strokeWidth={1.75} aria-hidden /></span>
   const Component = icons[name] ?? CircleHelp
   return <Component size={size} strokeWidth={1.75} aria-hidden />
 }

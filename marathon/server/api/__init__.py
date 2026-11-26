@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends
 
-from marathon.server.api import assets, auth, detail, events, fs, read, report, settings, system, users, worker, workers, workflows
+from marathon.server.api import assets, auth, client, detail, events, fs, read, report, settings, system, users, worker, worker_control, worker_enroll, workers, workflows
 from marathon.server.api.deps import current_user
 
 api_prefix = "/api/v1"
@@ -12,4 +12,4 @@ for router in (assets.router, detail.router, events.router, fs.router, read.rout
     protected_router.include_router(router)
 
 # Authentication and worker-token endpoints retain their own independent guards.
-api_routers = (protected_router, system.router, worker.router, auth.router)
+api_routers = (protected_router, system.router, worker_enroll.router, client.client_router, client.tools_router, worker_control.link_router, worker_control.router, worker.router, auth.router)

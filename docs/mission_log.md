@@ -14,7 +14,7 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 Vertrag: `docs/spec.md` (Teil 2)
 
-- [ ] Neuer Worker meldet sich „gestoppt“ an; Stoppen bricht alle Jobs ab, Asset zurück an den letzten fertigen Ausgang, zählt nicht als Versuch
+- [ ] Neuer Worker meldet sich „gestoppt“ an; „Sofort-Aus“ (`stop-now`) bricht alle Jobs ab, Asset zurück an den letzten fertigen Ausgang, zählt nicht als Versuch (früheres `/stop`; „Stoppen“ ist seit Release Worker-Client & Steuerung das Auslaufen `stop-drain`)
 - [ ] Ein Worker macht nur einen Job; ein Job bündelt bis zu N Assets desselben Moduls, bearbeitet in N Strömen, Ergebnis je Asset; N = „Parallele Verarbeitung“ (1–16) bei Kopieren und Verschieben
 
 
@@ -34,117 +34,46 @@ Vertrag: `docs/spec.md` (Teil 2)
 - [ ] Als Versuch zählt nur ein Job, der schon lief; Pausieren und abgelaufene Abhol-Frist zählen nicht; der Zähler beginnt neu, wenn das Asset das Modul verlässt oder erneut verarbeitet wird
 - [ ] Server-Neustart: Jobs auf anderen Workern laufen weiter; meldet sich der Worker innerhalb von 30 s, wird sein Ergebnis übernommen
 
+### Release Worker-Client & Steuerung
+
+Vertrag: `docs/spec.md` §3.1 (`[worker_client]`, `[client_build]`), §3.2 (Migration `0011_worker_client`), §3.4 (ohne Rechner-Erkennung im Browser); Worker-Protokoll 3. Hinweis: Die Exe lässt sich nur unter Windows bauen und dort real testen (`python build.py --client`); geprüft wurde in automatischen Tests. Ohne Zertifikat in `[client_build] sign_command` bleibt sie unsigniert und Windows warnt beim Start.
+
+- [ ] Strikte Trennung von Nutzerkonto und Worker: eigenes Worker-Token je Rechner über `POST /api/v1/worker/enroll`, ohne Bindung an einen Nutzer
+  - Entschieden: `[worker_client] require_admin_approval = true` ab Werk; der Admin wählt „Zulassen“
+  - Entschieden: Neue Worker starten mit leerer Fähigkeiten-Liste; der Admin trägt sie ein, vorher keine Jobs
+  - Entschieden: Der Admin kann Worker entfernen („Entfernen“ mit Bestätigung), nur ohne aktive Jobs; der Server-Worker ist nicht entfernbar. Ein entfernter Client verwirft seine Anmeldung, zeigt das im Tray und meldet sich beim nächsten Start neu an
+  - Entschieden: Protokoll 2 wird abgelehnt („Protokollversion nicht unterstützt“), der Server-Worker spricht Protokoll 3
+- [ ] Windows-Tray-Client als eine einzelne Exe, die sich selbst installiert: `%LOCALAPPDATA%\MarathonWorker`, Autostart, Eintrag unter „Apps“ mit Deinstallation, ohne Adminrechte; Stammzertifikat des Proxys in den Zertifikatsspeicher des Benutzers (bleibt bei Deinstallation)
+  - Entschieden: Keine zweite Installer-Exe und kein fremdes Installer-Werkzeug; die heruntergeladene Exe fragt beim ersten Start „Marathon-Worker auf diesem Rechner installieren?“
+  - Entschieden: Server-Adresse und Stammzertifikat werden beim Bauen eingebettet und von der Signatur abgedeckt; Bau mit `python build.py --client` bei laufendem Server (sonst Startwert aus `config/marathon.toml`). Der Download lehnt eine Exe für eine andere als die aktuelle Adresse ab; nach Adresswechsel neu bauen
+  - Entschieden: Signieren über `[client_build] sign_command` (`{file}` = Exe), leer = unsigniert; Empfehlung Azure Artifact Signing (Beispiel in der README)
+  - Entschieden: Download `GET /api/v1/client/download` ohne Anmeldung; Schaltfläche „Client herunterladen“ auf der Worker-Seite für alle angemeldeten Nutzer
+  - Entschieden: Ohne eingebettetes Stammzertifikat prüft der Client gegen den Zertifikatsspeicher des Systems
+  - Entschieden: Tray-Menü „Worker-Einstellungen öffnen“ (auch Doppelklick), „Status: …“, „Beenden“; Tooltip und Statuszeile ohne Server-Adresse
+- [ ] Steuerung am Rechner ohne Marathon-Login: Einmal-Link (60 s) per Bestätigungs-`POST`, Seite „Worker-Einstellungen“ (`/worker-control`) mit „Starten“, „Stoppen“, „Sofort-Aus“ und Verfügbarkeit; gilt `control_session_hours` (12 Stunden)
+  - Entschieden: Fähigkeiten dort nur lesend; die Seite aktualisiert sich alle 5 s
+- [ ] Drei Steuerbefehle „Starten“ (Play), „Stoppen“ (Stop-Symbol weiß, Drain), „Sofort-Aus“ (Stop-Symbol rot); Endpunkte `start`, `stop-drain`, `stop-now`, `/stop` entfällt
+  - Entschieden: Status `draining` „Wird gestoppt“, `stopping` „Wird sofort gestoppt“
+  - Entschieden: „Starten“ während „Wird gestoppt“ → sofort „bereit“, laufende Jobs bleiben
+  - Entschieden: „Stoppen“ gibt zugeteilte, noch nicht gestartete Jobs sofort zurück
+- [ ] Verfügbarkeitsregeln zentral auf dem Server, ausgewertet im Client alle 5 s, gemeldet mit der nächsten Anfrage (bis ca. 25 s); Reihenfolge Zeitplan → Programme → Leerlauf
+  - Entschieden: Uhrzeit des Rechners; leere Regel = immer verfügbar = Standard; ohne GPU-Sensor gilt die GPU-Bedingung als erfüllt
+  - Entschieden: Zeitfenster `HH:MM`, Ende `24:00` erlaubt, über Mitternacht erlaubt, keine Überschneidungen am Tag (auch über Mitternacht), höchstens 10 je Tag; Programme ohne Pfad, Groß/Klein egal, `.exe` optional, höchstens 50
+  - Entschieden: Leerlauf = die eingestellten Minuten ohne Tastatur/Maus und Mittelwert der Last über diese Minuten unter den Höchstwerten; danach deaktiviert nur eine Eingabe, dann wieder Lastbeobachtung
+  - Entschieden: Verlust der Verfügbarkeit gibt zugeteilte, nicht gestartete Jobs zurück (kein Versuch); laufende Jobs laufen zu Ende
+  - Entschieden: Kennung geänderter Regeln `availability_revision` (+1 je Änderung); der Server-Worker ist immer verfügbar
+- [ ] Zusatzprogramme (z. B. ffmpeg) vom Server: Ablage `.data/client-tools/<name>/`, im Client `%LOCALAPPDATA%\MarathonWorker\tools\<name>\<version>\`; Module finden sie über `job.tool("<name>")`
+  - Entschieden: Abgleich beim Start und alle 10 Minuten, jede Datei per SHA-256 geprüft; Version = Inhalts-Hash
+- [ ] Auto-Update im Client: Angebot laden, Prüfsumme prüfen, Jobs auslaufen lassen, Neustart über den Starter, Rückfall auf die vorherige Version, wenn die neue nicht sauber startet
+  - Entschieden: Der Server bietet noch keine Versionen an (Rollout im Backlog); bis dahin neue Version herunterladen und erneut installieren
+
 ---
 
 ## Geplant
 
 Reihenfolge = Umsetzungsreihenfolge. `Offen:` klären wir je Release Punkt für Punkt, bevor der Punkt umgesetzt wird; `Vorschlag:` ist eine Empfehlung, keine Entscheidung. Wo `docs/spec.md` (Teil 3) und ein offener Punkt sich widersprechen, gilt bis zur Klärung der offene Punkt.
 
-### Nächster Release: Zugang & Nutzer
-
-Vertrag: `docs/spec.md` §3.1–3.3 (ohne `[worker_client]`); offene Punkte und Entscheidungen unten gehen vor. Migration `0010_users` (nur Nutzer-Tabellen), Worker-Protokoll unverändert
-
-#### Mailversand (Grundlage für die Anmeldung)
-
-- [x] Zentraler `[smtp]`-Konfigurationsblock in `config/marathon.toml` (Passwort nur per Umgebungsvariable oder `.data/smtp.pass`), nutzbar für den Anmeldecode und den späteren Bug-Report
-  - Entschieden: Kein eigener Mailserver. Marathon versendet per SMTP über den vorhandenen Mailserver (bei LOOKS Microsoft 365), mit der Python-Standardbibliothek, ohne neue Abhängigkeit; Zeitlimit 10 s je Versand; `username` leer = ohne Anmeldung (z. B. Microsoft 365 Direct Send)
-  - Entschieden: Mailversand gehört zur Einrichtung (README „Mailversand einrichten“); Prüfbefehl `python run.py mail-test <adresse>`; geführte Einrichtung später, nicht in diesem Release
-
-#### Anmeldung und Session
-
-- [x] Anmeldung per E-Mail mit 6-stelligem Einmalcode (kein Link); ein Feld für Login und Selbstregistrierung (Konto wird erst bei Bestätigung angelegt)
-  - Entschieden: Nur Code, kein Magic-Link – funktioniert auf jedem Gerät und in jedem Browser, Mail-Scanner spielen keine Rolle
-  - Entschieden: 3 falsche Codes je Adresse in 24 Stunden sperren die Adresse für 24 Stunden; Admins heben eine Sperre in der Nutzerverwaltung auf, der CLI-Notfallbefehl hebt sie für Admins selbst auf
-  - Entschieden: Nach außen immer neutral. „Code senden“ antwortet für jede Adresse gleich, auch bei nicht freigegebener Domain: „Falls die Adresse für Marathon freigegeben ist, ist eine E-Mail mit Code unterwegs. Keine E-Mail erhalten? Adresse prüfen oder an den Administrator wenden.“ Die Mail geht im Hintergrund raus, damit auch die Antwortzeit nichts verrät. Falscher, abgelaufener oder verbrauchter Code: „Code ungültig oder abgelaufen“
-  - Entschieden: „Konto deaktiviert“ entfällt, weil es kein Deaktivieren gibt (siehe Nutzerverwaltung)
-  - Entschieden: Ohne eingerichteten Mailversand zeigt die Anmeldeseite vor der Eingabe „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“ (verrät nichts über Konten); Admins nutzen den CLI-Notfallbefehl `python run.py admin-code <mail>`
-- [x] Langlebige serverseitige Session (`HttpOnly`-Cookie mit Sliding Expiration, z. B. 180 Tage, einzeln widerrufbar); Andockstelle (`AuthProvider`, `external_subject`) für späteres Ökosystem bleibt erhalten
-  - Entschieden: Nur der Admin widerruft Sessions, in der Nutzerverwaltung (einzeln und „Alle abmelden“ je Nutzer); Nutzer melden sich selbst nur ab
-- [x] Oberfläche in zwei Ausprägungen: Admin-Ansicht mit allem (wird zuerst gebaut) und Nutzer-Ansicht mit reduziertem Menü (ohne Einstellungen, ohne Nutzer)
-- [x] Erlaubte E-Mail-Domains für die Selbstregistrierung in den Serversettings pflegbar (Startwert aus `config/marathon.toml` analog zu `folder_dialog.server_address`)
-  - Entschieden: Form `"auth": { "allowed_domains": ["looks.film"] }` in `GET/PUT /api/v1/settings`; Feld „Erlaubte E-Mail-Domains“ (durch Komma getrennt) in den Einstellungen; Einträge getrimmt, Kleinbuchstaben, führendes `@` entfernt, Doppelte entfernt
-  - Entschieden: Die Liste gilt nur für neue Konten; bestehende Konten melden sich weiter an, auch wenn ihre Domain später entfernt wird
-  - Entschieden: Nur exakte Domains; Subdomains werden bei der Einrichtung einzeln eingetragen
-
-#### Rollen, Nutzer und Freigaben
-
-- [x] Rollen `user` und `admin`; Break-Glass über `[auth] admin_emails` in `config/marathon.toml` (immer Admin, in UI nicht herabstufbar/löschbar, Schutz letzter Admin) plus lokaler Server-CLI-Notfallbefehl (`python run.py admin-code <mail>`) ohne SMTP
-- [x] Nutzerverwaltung (nur Admin): Liste, Rolle ändern, Sessions widerrufen, Sperre aufheben, Nutzer löschen
-  - Entschieden: Admin kann Nutzer löschen; Deaktivieren gibt es nicht (`users.active` entfällt). Nutzer können weder sich selbst noch andere löschen; geschützte Admins, der eigene Account und der letzte Admin sind nicht löschbar
-  - Entschieden: Löschen beendet alle Sessions des Nutzers; ist seine Domain freigegeben, kann sich die Adresse neu registrieren (neues, leeres Konto)
-  - Entschieden: Workflows eines gelöschten Nutzers sind ohne Eigentümer und nur für Admins sichtbar
-- [x] Workflow-Freigaben je Nutzer in vier Stufen: privat (kein Eintrag), `view` teilen zur Ansicht (kein Bearbeiten, kein Starten/Stoppen/erneutes Verarbeiten), `run` teilen zur Ausführung (starten, stoppen, erneut verarbeiten, aber nicht verändern), `edit` teilen zur Bearbeitung und Ausführung
-  - Entschieden: Jeder Nutzer legt Workflows an, der Ersteller wird Eigentümer
-  - Entschieden: Teilen dürfen Eigentümer und Admin
-  - Entschieden: Bestehende Workflows haben nach dem Update keinen Eigentümer und sind nur für Admins sichtbar; Admins dürfen für jeden Workflow den Eigentümer setzen
-- Entschieden: Modulsperren je Nutzer und der Konsistenzschutz Modul-/Workflow-Freigabe entfallen; Module sind bis zum Modul-Builder immer für alle geteilt
-- [x] Normale Nutzer sehen keine Servereinstellungen und keine Nutzerverwaltung; alle API-Routen und der Live-Kanal (SSE) prüfen Rechte serverseitig
-  - Entschieden: Normale Nutzer sehen alle Worker, aber nur lesend (keine Steuerung, kein Bearbeiten)
-  - Entschieden: Der Live-Kanal verlangt eine Anmeldung und meldet weiter nur Tabellennamen ohne Inhalte; gefiltert wird beim Nachladen über die API
-
-#### Aus „Feedback Martin“
-
-- [x] Verbindungs-Overlay: Das Icon bekommt unten rechts ein rotes, blinkendes X
-- [x] Überwachen → Einstellungen: Werte ausgegraut (nur lesen)
-- [ ] Warten-Modul: leere Asset-Seite bei 5.000+ Assets; nicht reproduzierbar – wartet auf Browser-Konsolenfehler und Klickweg
-  - Offener Nebenbefund: Workflow-Reiter „Assets“ startet mit Filter `pending`; Assets im Warten-Modul (`in_progress`) erscheinen erst nach Filterwechsel.
-- [x] Spinner erscheint nicht oder zu spät, obwohl Ladezeiten über 0,5 s auftreten
-- [x] Modul-Log so hoch wie das Seitenpanel; zeigt nur Warnungen und Fehler (alles außer Info); ohne solche Einträge steht dort „Keine Vorkommnisse“
-- [x] Proxy-Einstellungen: Schalter „Proxy verwenden“ (aus = mitgelieferter Proxy Caddy, an = externer Proxy; `[proxy] builtin` bleibt, die Oberfläche zeigt den umgekehrten Wert), Feld „Proxy“ (Adresse des externen Proxys, nur bei eingeschaltetem Schalter bearbeitbar, Platzhalter `0.0.0.0`); Hilfetexte unter Schalter und Feld entfallen
-- [x] Server neu starten (nur Admins): Konsolenbefehl `restart` in `python run.py` und Schaltfläche „Server neu starten“ in den Einstellungen; die Datenbank läuft weiter, die Oberfläche zeigt während des Neustarts das Verbindungs-Overlay
-
-#### Nacharbeit Notfallzugang & Mailversand
-
-Geht den Einträgen oben zu `[smtp]`, `[auth] admin_emails` und `admin-code <mail>` vor.
-
-- [ ] Notfallzugang nur über die Konsole: `admin-code` ohne Adresse (während `python run.py` läuft und als `python run.py admin-code`) erzeugt einen Einmalcode für ein festes Notfallkonto ohne E-Mail-Adresse mit Admin-Rechten; den Befehl gibt es nirgends sonst (keine API, keine Oberfläche)
-  - Entschieden: Funktioniert immer, unabhängig davon, ob oder wie weit der Mailversand eingerichtet ist und ob es schon Admins gibt
-  - Entschieden: Einziger fester Zugangsweg; `[auth] admin_emails` und die in der Konfiguration festgelegten, geschützten Admins entfallen; geschützt bleibt nur der letzte Admin
-  - Entschieden: Die Sperre nach 3 falschen Codes bleibt; `admin-code` hebt die Sperre des Notfallkontos auf
-- [ ] Anmeldeseite ohne Sperre: Wer nicht angemeldet ist, landet immer auf der Anmeldeseite, wer angemeldet ist, in der Oberfläche; neben E-Mail und „Code senden“ gibt es einen eigenen Weg für den Admin-Code. Ohne Mailversand meldet nur „Code senden“ „Anmeldung per E-Mail ist nicht eingerichtet. Bitte wende Dich an Deinen Administrator.“
-- [ ] `[auth]` und `[smtp]` vollständig aus `config/marathon.toml` entfernt, samt Einlesen und Startwerten; Einrichtung nur über die Oberfläche, Daten nur in der Datenbank
-  - Entschieden: Erlaubte E-Mail-Domains starten leer; Sitzungsdauer 180 Tage und Code-Gültigkeit 15 Minuten fest im Code
-  - Entschieden: Das SMTP-Passwort bleibt in `.data/smtp.pass` (geschrieben über Einstellungen → Mailversand); `MARATHON_SMTP_PASSWORD` entfällt
-- [ ] SMTP vervollständigen
-  - Verschlüsselung wählbar: keine, STARTTLS oder SSL/TLS (Port 465) statt Schalter „STARTTLS verwenden“; gespeicherte Einstellungen werden übernommen
-  - „Testmail senden“ unter Einstellungen → Mailversand mit Ergebnis oder Fehlergrund; `python run.py mail-test <adresse>` bleibt
-  - Speichern lehnt einen Benutzernamen ohne gespeichertes Passwort ab
-  - Zeitlimit 10 s für den gesamten Versand statt je Schritt
-
-### Release Worker-Client & Steuerung
-
-Vertrag: `docs/spec.md` §3.1 (`[worker_client]`), §3.2, §3.4 (ohne Rechner-Erkennung im Browser); offene Punkte unten gehen vor
-
-- [ ] Strikte Trennung von Nutzerkonto und Worker: Ein Worker ist ein eigenständiger Rechner mit individuellem Worker-Token (Erstregistrierung über `/api/v1/worker/enroll`, optional mit Admin-Freigabe über `[worker_client] require_admin_approval`), ohne dauerhafte Bindung an einen Nutzer-Account
-  - Offen: Standard für `require_admin_approval`. Vorschlag: `true`, sonst kann jeder Rechner im Netz sich anmelden, über `/worker-control` selbst starten und Jobs mit Dateipfaden erhalten
-  - Offen: Wer setzt die erste Fähigkeiten-Liste? Der Datensatz entsteht schon bei `enroll`, die Regel „erste Anmeldung → gemeldete Modultypen“ greift dann nie. Vorschlag: bei der ersten Anmeldung mit leerer Liste -- ok
-  - Offen: Neuinstallation erzeugt einen neuen Worker. Worker löschen (Admin) einplanen? -- ja, der Admin kann worker wieder entfernen
-  - Offen: Protokoll 2 weiter annehmen? Vorschlag: nein, der Server-Worker wechselt mit auf Protokoll 3 -- ja
-- [ ] Windows-Tray-Client im Benutzerkontext (Autostart, Starter + austauschbare Laufzeit, kein eigenes Einstellungs-UI); Doppelklick / Rechtsklick → „Worker-Einstellungen öffnen“ holt einen kurzlebigen Einmal-Steuerungslink vom Server und öffnet genau diesen Worker im Browser – auch ohne Marathon-User-Login
-  - Offen: Paketierung – Python mitgeliefert (eingebettet + `requirements/client.txt`) oder eine einzelne `.exe`? - Client als einzelne Exe mit Funktion, sich in den Windows Autostart einzutragen - meine bisherigen Exen bekommen unter windows 11 einen Warndialog, wahrscheinlich weil die Software irgendeine Signatur nicht hat - wäre gut, die Exe gleich völlig kompatibel zu machen - so offiziell wie möglich
-  - Offen: Installation und Autostart – Installer, ZIP + Startskript, Aufgabenplanung oder Autostart-Ordner? Mit oder ohne Adminrechte? - Installer Exe, Berechtigung soweit wie nötig
-  - Offen: Braucht der Download (`/api/v1/client/download`) eine Anmeldung? - Nein, Client lassen sich komplett ohne Marathon User hinzufügen, einstellen
-  - Offen: Client-Updates bis zum Auto-Update (Backlog): manuell neu installieren? - Nein, wir bauen gleich das Auto-Update ein, auch wenn der Server es noch nicht hat und noch nicht ausrollen kann
-  - Offen: Einmal-Link per `GET` oder per Bestätigungs-`POST` einlösen. Vorschlag: `POST`, damit Vorabrufe ihn nicht verbrauchen - ok
-  - Installer importiert das Stammzertifikat des mitgelieferten Proxys in den Zertifikatsspeicher des Benutzers; Browser und Worker vertrauen dem Server dann ohne weiteren Schritt - ok
-  - Offen: Wie kommt das Stammzertifikat sicher in den Installer (z. B. im Download enthalten und per Fingerabdruck geprüft)? - wähle den besten weg selbst
-- [ ] Drei Steuerbefehle am Worker (vor Ort über Tray-Link & für Admins): „Starten“, „Stoppen“ (sanftes Auslaufen / Drain: keine neuen Jobs, laufende Jobs sauber beenden), „Sofort stoppen“ (harter Abbruch, Assets zurück ans letzte Modul, zählt nicht als Versuch)
-  - Offen: Anzeigetext für den neuen Status `draining`. Vorschlag: „Läuft aus“ - nein, wir nehmen genau die 3 Begriffe Starten, Stoppen, Sofort-Aus - jeweils mit einem Icon Play, Stop-Symbol weiß, Stop-Symbol rot
-  - Offen: „Starten“ während `draining`. Vorschlag: sofort zurück auf `ready`, laufende Jobs bleiben - ok
-  - Offen: `POST /workers/{id}/stop` ändert seine Bedeutung (bisher Abbruch, künftig Drain; Abbruch über neues `/stop-now`). So gewollt? Betrifft auch den noch nicht abgenommenen Release Worker-Steuerung - machen wir doch stop-drain und stop-now - dann ist jeweils klar, welche stop-art das ist
-- [ ] Verfügbarkeitsregeln am Worker durchgängig als Positivliste („Wann ist der Worker verfügbar?“): Zeitplan Mo–So 0–24 Uhr, Inaktivitäts-Start nach X Minuten (Tastatur/Maus + CPU, RAM, GPU unter Schwellenwert; Eigenlast laufender Worker-Jobs deaktiviert die Prüfung nicht), Ausschlussliste „Nur verfügbar, wenn keines der Programme X, Y, Z läuft“
-  - Offen: Welche Uhrzeit gilt – die des Rechners oder `timezone` aus der Regel? - die des rechners
-  - Offen: Bedeutung einer leeren Regel (`{}`). Vorschlag: immer verfügbar - genau und das ist die Standardeinstellung
-  - Offen: Prüfregeln für Zeitfenster (`24:00`, Fenster über Mitternacht, Überschneidungen) und Prozessnamen (mit/ohne `.exe`, Groß/klein) - das sollte geprüft werden, ja
-  - Offen: Nach Jobende stehen CPU/RAM durch die eigene Last im 30-s-Mittel noch hoch; der Worker wäre kurz „nicht verfügbar“. Vorschlag: Lastprüfung erst nach Ablauf des Mittelungsfensters wieder einschalten - besser: niedrige Last über einen längeren Zeitraum aktivieren den Worker für Marathon - nur durch Tastatur oder Mauseingaben, wird er über stop-drain wieder deaktiviert - ab da gilt wieder die Lastbeobachtung. Regelwerk: Zuerst Zeitplan, dann Software, dann Last - wir gucken also nur auf die Last, wenn der Rechner nach Zeitplan zur Verfügung steht, Sperrsoftware nicht läuft, Jobs bekommt er erst, wenn der Rechner dann im idle ist
-  - Offen: Ohne GPU-Sensor gilt die GPU-Bedingung als erfüllt? - ok
-- [ ] Einstellungen liegen zentral im Marathon-Server; Worker-Client wertet lokale Sensoren aus und meldet Verfügbarkeit samt Grund zurück; bei Verlust der Verfügbarkeit laufen aktive Jobs sauber zu Ende (Drain); Fähigkeiten-Rangliste bleibt Admin-Sache
-  - Offen: „Sofort melden“ geht nicht über die bis zu 25 s offene Abfrage. Vorschlag: eigener Endpunkt `POST /api/v1/worker/availability` -- verfügbarkeit kann gerne erst nach 25s gemeldet werden - das betrifft den Zustandswechsel (Zeitplan aktiv, Software die sperrt läuft nicht, Last niedrig)
-  - Offen: Zugeteilter, noch nicht gestarteter Job bei Verlust der Verfügbarkeit. Vorschlag: zurückgeben wie „Nicht abgeholt“, zählt nicht als Versuch -- ja
-  - Offen: Kennung für geänderte Regeln in der Poll-Antwort (Hash oder Versionsnummer) -- entscheide selbst 
-- [ ] Der Client soll Fachsoftware wie ffmpeg vom Server beziehen, damit die Client exe schlank bleibt - wir brauchen einen Download-Kanal und eine Ablage für den Client auf dem PC. Der Client muss selbst wissen, wo nötige Zusatzmodule liegen
-
-### Release Datei- und Ordner-Dialog
+### Nächster Release: Datei- und Ordner-Dialog
 
 Vertrag: `docs/spec.md` §3.6 (nur Quelle `Server`); offene Punkte unten gehen vor
 
@@ -192,7 +121,7 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
   - Offen: Gebundener Worker wird gelöscht. Vorschlag: Asset *Fehlgeschlagen* statt freigeben (der lokale Pfad existiert anderswo nicht)
   - Offen: Gebundener Worker lange nicht verfügbar – nur warten oder Hinweis am Asset?
 - [ ] Kontextsensitive Fehlermeldungen direkt am Watchfolder-Modul: kein Worker-Client auf dem aktuellen Rechner erkannt → Link zum Client-Download; zugewiesener Worker ist ein anderer Rechner → 1-Klick-Umstellung auf diesen Rechner; zugewiesener Worker ist offline, gestoppt oder nicht verfügbar → Grund + Link zu den Worker-Einstellungen
-  - Offen: hängt an der Leseansicht der Worker für normale Nutzer (Release Zugang & Nutzer)
+  - Entschieden (Release Zugang & Nutzer): Normale Nutzer sehen alle Worker lesend; der Client-Download ist für alle angemeldeten Nutzer da
 - [ ] Watchfolder-Spalten auf `neu` (links, Funde des laufenden Scans; danach → `erfasst`) und `erfasst` (rechts) umgestellt, `wartet` entfällt; gefundene Assets gehen direkt weiter
   - Offen: Was steht in `neu` – Dateien, die noch auf Stabilität warten, oder Assets, die der laufende Scan gerade angelegt hat?
 - [ ] Warten-Modul zeigt Assets während der Wartezeit in der Spalte `wartet`, danach `erledigt` über Ausgang `Erfolg`
@@ -232,7 +161,7 @@ Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee:
 
 ### Engine und Worker
 
-- [ ] Auto-Update mit Rückfall & Rollout von Client-Versionen und Modulen (Server gibt Versionen für alle oder ausgewählte Worker frei; Client prüft Prüfsumme, lässt laufende Jobs auslaufen, tauscht die Laufzeit über den Starter und fällt bei Startfehler auf die vorherige Version zurück)
+- [ ] Rollout von Client-Versionen und Modulen über den Server (Server gibt Versionen für alle oder ausgewählte Worker frei, Schaltfläche „Version ausrollen“); die Client-Seite (Prüfsumme, Auslaufen, Starter, Rückfall) ist seit Release Worker-Client & Steuerung eingebaut
   - Offen: Rollout-Strategie und Versionsverträglichkeit zwischen Server und Client
 - [ ] Umstieg auf Linux & Pfadzuordnung je Worker (Server-Worker sieht `/mnt/...` statt `\\server\freigabe`)
 - [ ] Erreichbare Speicherorte je Worker: Jobs nur an Worker, die die Pfade erreichen – zusammen mit der Pfadzuordnung
@@ -268,6 +197,8 @@ Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee:
 
 ### Oberfläche
 
+- [ ] Warten-Modul: leere Asset-Seite bei 5.000+ Assets; nicht reproduzierbar – wartet auf Browser-Konsolenfehler und Klickweg
+  - Offener Nebenbefund: Workflow-Reiter „Assets“ startet mit Filter `pending`; Assets im Warten-Modul (`in_progress`) erscheinen erst nach Filterwechsel.
 - [ ] Bug-Report: echter Versand per Mail (nutzt den zentralen `[smtp]`-Dienst aus dem Release Zugang & Nutzer)
   - Empfängeradresse in Konfiguration/Einstellungen (keine Zugangsdaten im Code)
   - Server-Endpunkt zum Versenden; „Senden“ ruft ihn auf

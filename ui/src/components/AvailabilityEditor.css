@@ -1,0 +1,26 @@
+.availability-editor { display: grid; gap: var(--space-5); }
+.availability-section { min-width: 0; }
+.availability-section h3 { margin: 0 0 var(--space-3); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); color: var(--accent); font-size: var(--font-size-sm); font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; }
+.availability-always-note { margin: 0; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-muted); font-size: var(--font-size-sm); }
+.availability-switch-row { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-3); cursor: pointer; }
+.availability-switch-row input { accent-color: var(--accent); }
+.availability-days { display: grid; gap: var(--space-2); }
+.availability-day { display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: start; gap: var(--space-2); }
+.availability-day > strong { padding-top: 6px; color: var(--text-muted); font-size: var(--font-size-sm); font-weight: 500; }
+.availability-day-windows { display: grid; gap: var(--space-2); min-width: 0; }
+.availability-window { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.availability-window .input { min-width: 0; width: 82px; padding-inline: 5px; }
+.availability-window-preview { display: none; }
+.availability-remove { flex: 0 0 auto; padding: 4px 6px; }
+.availability-add { justify-self: start; display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; font-size: var(--font-size-xs); }
+.availability-help { margin: var(--space-2) 0 0; color: var(--text-dim); font-size: var(--font-size-xs); line-height: 1.55; }
+.availability-field-label { display: block; margin-bottom: var(--space-2); color: var(--text-muted); font-size: var(--font-size-sm); }
+.availability-programs { display: block; resize: vertical; min-height: 76px; }
+.availability-idle-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+.availability-idle-fields label { display: grid; gap: 5px; color: var(--text-muted); font-size: var(--font-size-xs); }
+.availability-idle-fields .input { min-width: 0; }
+@media (max-width: 520px) {
+  .availability-day { grid-template-columns: 1fr; gap: 4px; }
+  .availability-day > strong { padding-top: 0; }
+  .availability-idle-fields { grid-template-columns: 1fr; }
+}

@@ -24,9 +24,12 @@ export const step_status_meta: Record<StepStatus, StatusMeta> = {
 
 export const worker_status_meta: Record<WorkerStatus, StatusMeta> = {
   ready: { label: 'bereit', color: color('done') },
-  stopping: { label: 'Wird gestoppt', color: color('on-hold') },
+  draining: { label: 'Wird gestoppt', color: color('on-hold') },
+  stopping: { label: 'Wird sofort gestoppt', color: color('failed') },
   stopped: { label: 'gestoppt', color: color('failed') },
 }
+
+export const worker_approval_meta: StatusMeta = { label: 'wartet auf Freigabe', color: color('pending') }
 
 export const job_status_meta: Record<JobStatus, StatusMeta> = {
   open: { label: 'offen', color: color('pending') },

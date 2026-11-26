@@ -2,7 +2,7 @@
 
 Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Version 2.0.0).
 
-**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und stoppen und zeitgesteuert laufen lassen (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuerter Workflow bleibt aktiv und wartet zwischen den Läufen auf den nächsten Termin. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Gestartete Workflows verarbeiten ihre Assets: Die Engine teilt Jobs an Worker zu; der Server bringt dafür einen eigenen Server-Worker mit (siehe [Engine und Worker](#engine-und-worker)). Alle Ansichten aktualisieren sich über einen Live-Kanal in Echtzeit; ist der Server nicht erreichbar, sperrt der Hinweis „Keine Verbindung zum Marathon-Server“ die Oberfläche, bis die Verbindung zurück ist. Worker lassen sich starten und stoppen; ihre Fähigkeiten stehen in einer Rangliste. Die Einstellungsseite speichert in die Datenbank (siehe [Einstellungen](#einstellungen)). Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
+**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und stoppen und zeitgesteuert laufen lassen (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuerter Workflow bleibt aktiv und wartet zwischen den Läufen auf den nächsten Termin. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Gestartete Workflows verarbeiten ihre Assets: Die Engine teilt Jobs an Worker zu; der Server bringt dafür einen eigenen Server-Worker mit (siehe [Engine und Worker](#engine-und-worker)). Alle Ansichten aktualisieren sich über einen Live-Kanal in Echtzeit; ist der Server nicht erreichbar, sperrt der Hinweis „Keine Verbindung zum Marathon-Server“ die Oberfläche, bis die Verbindung zurück ist. Worker lassen sich starten, stoppen (laufende Jobs laufen zu Ende) und sofort stoppen; ihre Fähigkeiten stehen in einer Rangliste. Windows-Rechner arbeiten über den Worker-Client als weitere Worker mit; er wird auf der Worker-Seite heruntergeladen, installiert sich selbst und wird ohne Marathon-Anmeldung über das Tray-Symbol eingestellt (siehe [Worker-Client](#worker-client)). Die Einstellungsseite speichert in die Datenbank (siehe [Einstellungen](#einstellungen)). Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
 
 ## Voraussetzungen
 
@@ -32,6 +32,7 @@ python3 build.py     # Linux
 5. Datenbank-Ordner `.data/postgres` anlegen. Das Passwort wird zufällig erzeugt und liegt in `.data/postgres.pass`.
 6. UI-Bibliotheken aus `ui/package-lock.json` nach `ui/node_modules` installieren.
 7. Die Oberfläche bauen; das Ergebnis liegt in `marathon/server/static`.
+8. Nur unter Windows: den Worker-Client bauen; das Ergebnis liegt in `.data/client` (siehe [Worker-Client bauen und signieren](#worker-client-bauen-und-signieren)). Unter Linux wird der Schritt übersprungen.
 
 Bereits erledigte Schritte werden übersprungen. `build.py` erneut ausführen nach jedem `git pull` und nach Änderungen am UI-Code.
 
@@ -133,7 +134,8 @@ Oberfläche öffnen: http://127.0.0.1:5173
 
 | Befehl | Wirkung |
 |---|---|
-| `python build.py` | Alles installieren, Datenbank-Ordner anlegen und die Oberfläche bauen |
+| `python build.py` | Alles installieren, Datenbank-Ordner anlegen, die Oberfläche und (unter Windows) den Worker-Client bauen |
+| `python build.py --client` | Nur den Worker-Client bauen (nur Windows); am besten bei laufendem Server, damit die aktuelle öffentliche Adresse eingebettet wird |
 | `python run.py` | Datenbank und Server starten |
 | `python run.py --dev` | Datenbank, Server und Live-Vorschau starten |
 | `python run.py --trust` | Stammzertifikat des mitgelieferten Proxys für den angemeldeten Benutzer importieren (Windows); unter Linux Pfad und Vorgehen anzeigen |
@@ -170,8 +172,11 @@ Datei `config/marathon.toml`:
 | `[proxy] public_url` | Adresse, unter der Marathon erreichbar ist (nur `https://`, ohne Pfad); bestimmt Zertifikat und Port des mitgelieferten Proxys | `"https://localhost"` |
 | `[proxy] builtin` | Mitgelieferten Proxy (Caddy) starten; `false` = externer Reverse-Proxy | `true` |
 | `[proxy] trusted_proxies` | IP-Adressen externer Reverse-Proxys; bei `builtin = true` gilt `127.0.0.1` automatisch | `[]` |
+| `[worker_client] require_admin_approval` | `true` = einen neu angemeldeten Worker-Client muss ein Admin einmal mit „Zulassen“ freigeben; `false` = sofort zugelassen | `true` |
+| `[worker_client] control_session_hours` | So lange gilt die Worker-Einstellungsseite nach „Worker-Einstellungen öffnen“ (1–168 Stunden) | `12` |
+| `[client_build] sign_command` | Befehl zum Signieren der Worker-Client-Exe als Liste, `{file}` = Pfad der Exe; leer = nicht signieren | `[]` |
 
-`[server_worker] skills`, `[folder_dialog] server_address` und die `[proxy]`-Einträge sind Standardwerte: Sie gehen beim Start mit `python run.py` in die Datenbank, solange dort noch kein Wert steht. Danach gilt die Datenbank, geändert wird in der Oberfläche (Worker-Seite bzw. Einstellungen). `host` und `port` gelten immer aus der Datei.
+`[server_worker] skills`, `[folder_dialog] server_address` und die `[proxy]`-Einträge sind Standardwerte: Sie gehen beim Start mit `python run.py` in die Datenbank, solange dort noch kein Wert steht. Danach gilt die Datenbank, geändert wird in der Oberfläche (Worker-Seite bzw. Einstellungen). `host` und `port` gelten immer aus der Datei, ebenso `[worker_client]` und `[client_build]`.
 
 `name` und `user` erlauben nur Kleinbuchstaben, Ziffern und `_`. Den Benutzer nach dem Einrichten nicht mehr ändern, sonst die Datenbank zurücksetzen.
 
@@ -182,19 +187,22 @@ Marathon selbst spricht nur HTTP auf `host`/`port` und liegt immer hinter einem 
 - **Mitgelieferter Proxy (Standard):** Der Server startet Caddy aus `.tools/caddy` und beendet ihn mit dem Server. Caddy lauscht nur auf dem Port der öffentlichen Adresse (ab Werk 443) und stellt das Zertifikat für deren Rechnernamen aus seiner eigenen Zertifizierungsstelle aus; die Zertifikate erneuert Caddy selbst. Andere Namen oder IP-Adressen erhalten keine Verbindung. Daten in `.cert/`, Ausgaben in `.data/caddy.log`.
 - **Stammzertifikat:** `.cert/caddy/pki/authorities/local/root.crt` (entsteht beim ersten Start, gilt 10 Jahre). Jeder Rechner, der Marathon im Browser öffnet oder als Worker arbeitet, muss es einmal importieren:
   - Server-Rechner: `python run.py --trust`.
+  - Rechner mit Worker-Client: übernimmt die Installation des Clients (siehe [Worker-Client](#worker-client)).
   - Andere Windows-Rechner: Datei kopieren, Doppelklick → „Zertifikat installieren“ → „Aktueller Benutzer“ → „Alle Zertifikate in folgendem Speicher speichern“ → „Vertrauenswürdige Stammzertifizierungsstellen“. Danach den Browser neu starten.
   - Linux: nach `/usr/local/share/ca-certificates/marathon.crt` kopieren und `update-ca-certificates` ausführen.
 - **Externer Reverse-Proxy:** In den Einstellungen „Proxy verwenden“ einschalten, die IP-Adresse des Proxys unter „Proxy“ eintragen und ggf. die öffentliche Adresse anpassen; dann den Server neu starten. Läuft der Proxy auf einem anderen Rechner, in `config/marathon.toml` `host = "0.0.0.0"` setzen. Der Proxy muss `X-Forwarded-Proto` setzen, Anfragen länger als `poll_timeout_s` offen halten und den Live-Kanal ungepuffert durchreichen.
 - **Umleitung:** Anfragen, die Marathon über HTTP oder einen anderen Rechnernamen erreichen, werden auf die öffentliche Adresse umgeleitet.
-- **Worker** verbinden sich nur über `https://` und prüfen das Zertifikat gegen den Zertifikatsspeicher des Systems; mit `--ca-file <datei>` stattdessen nur gegen diese Datei. Die Prüfung lässt sich nicht abschalten. Der Server-Worker nutzt die öffentliche Adresse; mit dem mitgelieferten Proxy prüft er gegen dessen Stammzertifikat, sonst gegen den Zertifikatsspeicher des Systems.
+- **Worker** verbinden sich nur über `https://` und prüfen das Zertifikat gegen den Zertifikatsspeicher des Systems; mit `--ca-file <datei>` stattdessen nur gegen diese Datei. Die Prüfung lässt sich nicht abschalten. Der Worker-Client prüft gegen das beim Bauen eingebettete Stammzertifikat (ohne eingebettetes Zertifikat gegen den Zertifikatsspeicher des Systems). Der Server-Worker nutzt die öffentliche Adresse; mit dem mitgelieferten Proxy prüft er gegen dessen Stammzertifikat, sonst gegen den Zertifikatsspeicher des Systems.
 
 ## Engine und Worker
 
 - **Server-Worker:** startet mit `python run.py` als eigener Prozess und meldet sich wie jeder Worker beim Server an (Worker-ID `server-worker`, Name „Server-Worker“; der Name gilt bei der ersten Anmeldung, danach auf der Worker-Seite änderbar). Er ist ab Werk gestartet und wird wie jeder Worker auf der Worker-Seite eingestellt. Stürzt er ab, startet der Server ihn neu. Ausgaben: `.data/server-worker.log`.
-- **Zugang:** Worker melden sich mit dem Token aus `.data/worker.token` an; der Server legt die Datei beim ersten Bedarf an.
-- **Zuteilung:** Ein Worker macht höchstens einen Job gleichzeitig. Ein Job geht an den gestarteten, erreichbaren Worker ohne Job, bei dem der Modultyp in seiner Fähigkeiten-Liste am weitesten oben steht; bei gleichem Rang entscheidet der Name. Beispiel: Worker A [Datei kopieren, Datei verschieben], Worker B [Datei verschieben, Datei kopieren] → Kopieren vorrangig an A, Verschieben an B; ist A belegt, kopiert B. Laufende Workflows kommen reihum dran, im Workflow das oberste Asset zuerst. Ein Job bündelt bis zu so viele Assets desselben Moduls, wie dessen „Parallele Verarbeitung“ erlaubt; der Worker bearbeitet sie gleichzeitig und meldet das Ergebnis je Asset. Worker holen ihre Jobs über eine offen gehaltene Anfrage ab.
-- **Worker-Seite:** Starten / Stoppen in der Kopfleiste (für die Auswahl) oder direkt in der Zeile. Status „bereit“, „Wird gestoppt“ oder „gestoppt“; daneben „Online“ / „Offline“; die Spalte „Jobs“ zeigt die laufenden Jobs. Ein neuer Worker meldet sich „gestoppt“ an und bekommt erst nach „Starten“ Jobs. Bearbeiten: Name und Fähigkeiten als sortierbare Liste – weiter oben = höhere Priorität, nicht in der Liste = übernimmt diesen Modultyp nicht; wählbar sind nur Modultypen, die der Rechner meldet. Neue Worker haben ab Werk alle gemeldeten Modultypen in der Liste.
-- **Worker stoppen:** bricht alle laufenden Jobs des Workers ab; unfertige Ergebnisse werden verworfen, das Asset geht zurück an den Ausgang des letzten fertigen Moduls und wird neu verteilt. Der Abbruch zählt nicht als Versuch. Bis alle Jobs abgebrochen sind, zeigt der Worker „Wird gestoppt“ und lässt sich nicht starten.
+- **Zugang:** Jeder Worker-Client erhält bei seiner ersten Anmeldung ein eigenes Worker-Token; er ist an keinen Marathon-Nutzer gebunden. Der Server-Worker meldet sich mit dem Token aus `.data/worker.token` an; der Server legt die Datei beim ersten Bedarf an. Worker sprechen Worker-Protokoll 3; ältere Worker werden mit „Protokollversion nicht unterstützt“ abgelehnt.
+- **Zuteilung:** Ein Worker macht höchstens einen Job gleichzeitig. Ein Job geht an den gestarteten, zugelassenen, erreichbaren und verfügbaren Worker ohne Job, bei dem der Modultyp in seiner Fähigkeiten-Liste am weitesten oben steht; bei gleichem Rang entscheidet der Name. Beispiel: Worker A [Datei kopieren, Datei verschieben], Worker B [Datei verschieben, Datei kopieren] → Kopieren vorrangig an A, Verschieben an B; ist A belegt, kopiert B. Laufende Workflows kommen reihum dran, im Workflow das oberste Asset zuerst. Ein Job bündelt bis zu so viele Assets desselben Moduls, wie dessen „Parallele Verarbeitung“ erlaubt; der Worker bearbeitet sie gleichzeitig und meldet das Ergebnis je Asset. Worker holen ihre Jobs über eine offen gehaltene Anfrage ab.
+- **Worker-Seite:** „Starten“, „Stoppen“ und „Sofort-Aus“ in der Kopfleiste (für die Auswahl) oder direkt in der Zeile; Admins zusätzlich „Zulassen“, „Entfernen“ und „Bearbeiten“. Status „bereit“, „Wird gestoppt“, „Wird sofort gestoppt“ oder „gestoppt“; daneben „Online“ / „Offline“, die Spalte „Verfügbar“ zeigt die Verfügbarkeit samt Grund, die Spalte „Jobs“ die laufenden Jobs. Ein neuer Worker meldet sich „gestoppt“ an und bekommt erst nach „Starten“ Jobs. Bearbeiten: Name, Fähigkeiten als sortierbare Liste – weiter oben = höhere Priorität, nicht in der Liste = übernimmt diesen Modultyp nicht; wählbar sind nur Modultypen, die der Rechner meldet – und Verfügbarkeit (siehe [Verfügbarkeitsregeln](#verfügbarkeitsregeln)). Neue Worker-Clients starten mit leerer Fähigkeiten-Liste und bekommen erst Jobs, wenn ein Admin Fähigkeiten einträgt. Normale Nutzer sehen die Worker nur lesend; „Client herunterladen“ steht allen angemeldeten Nutzern zur Verfügung.
+- **Stoppen:** Der Worker bekommt keine neuen Jobs, laufende Jobs laufen sauber zu Ende; zugeteilte, noch nicht gestartete Jobs gehen sofort zurück. Status „Wird gestoppt“, ohne laufende Jobs „gestoppt“. „Starten“ während „Wird gestoppt“ setzt den Worker sofort wieder auf „bereit“, laufende Jobs bleiben.
+- **Sofort-Aus:** bricht alle laufenden Jobs des Workers ab; unfertige Ergebnisse werden verworfen, das Asset geht zurück an den Ausgang des letzten fertigen Moduls und wird neu verteilt. Der Abbruch zählt nicht als Versuch. Bis alle Jobs abgebrochen sind, zeigt der Worker „Wird sofort gestoppt“ und lässt sich nicht starten.
+- **Zulassen und Entfernen:** Mit `[worker_client] require_admin_approval = true` (Standard) bekommt ein neuer Worker-Client erst nach „Zulassen“ Jobs. „Entfernen“ (mit Bestätigung im Seitenpanel) geht nur ohne aktive Jobs; der Server-Worker lässt sich nicht entfernen. Ein entfernter Client verwirft seine Anmeldung, zeigt das im Tray und meldet sich beim nächsten Start als neuer Worker an.
 - **Workflow stoppen:** bricht laufende Jobs ab; das Asset geht zurück an den Ausgang des vorherigen Moduls. Bis alle Jobs abgebrochen sind, zeigt der Workflow „Wird gestoppt“ und lässt sich nicht starten. Status: „aktiv“ oder „gestoppt“.
 - **Zeitgesteuert:** Ein gestarteter zeitgesteuerter Workflow bleibt „aktiv“. Er wartet auf den nächsten Termin, läuft dann, bis kein Asset mehr aussteht oder in Arbeit ist, und wartet wieder. In der Wartezeit entstehen keine Jobs und der Watchfolder scannt nicht. Ein Lauf endet erst, wenn jeder Watchfolder seit Laufbeginn gescannt hat und keine Datei mehr auf Stabilität wartet.
 - **Ausfälle:** Meldet sich ein Worker 30 s nicht, gilt er als offline; startet er neu oder fällt er aus, wird sein Job erneut vergeben. Nach 3 unterbrochenen Versuchen am selben Modul ist das Asset fehlgeschlagen.
@@ -224,6 +232,78 @@ Die Seite „Einstellungen“ speichert in die Datenbank („Speichern“).
 | Mailversand: Testmail an | Empfängeradresse für „Testmail senden“; verwendet die gespeicherten Einstellungen | kein Standard |
 
 Änderungen unter „Proxy & HTTPS“ gelten nach einem Neustart des Servers. Unter „Einstellungen“ → „Server“ startet die Schaltfläche „Server neu starten“ den Server neu.
+
+## Worker-Client
+
+Der Worker-Client macht einen Windows-Rechner zum Worker. Er ist eine einzelne Exe, läuft im Benutzerkontext mit Tray-Symbol und baut nur ausgehende Verbindungen zum Server auf. Er braucht weder einen Marathon-Nutzer noch Adminrechte.
+
+### Worker-Client bauen und signieren
+
+- `python build.py --client` (nur unter Windows) baut `.data/client/MarathonWorker.exe`. Server-Adresse und Stammzertifikat des mitgelieferten Proxys werden in die Exe eingebettet. Läuft der Server, gilt die öffentliche Adresse aus der Datenbank, sonst der Startwert `[proxy] public_url` aus `config/marathon.toml`.
+- Nach einer Änderung der öffentlichen Adresse den Client neu bauen: Ein Client für eine andere Adresse wird nicht zum Download angeboten.
+- Signieren: In `config/marathon.toml` unter `[client_build] sign_command` den Signierbefehl als Liste eintragen, `{file}` steht für die Exe. Beispiel mit Azure Artifact Signing:
+
+  ```toml
+  [client_build]
+  sign_command = ["signtool", "sign", "/v", "/fd", "SHA256", "/tr", "http://timestamp.acs.microsoft.com", "/td", "SHA256", "/dlib", "C:\\Tools\\Azure.CodeSigning.Dlib.dll", "/dmdf", "C:\\Tools\\metadata.json", "{file}"]
+  ```
+
+  Ist die Liste leer, bleibt die Exe unsigniert und Windows zeigt beim Start eine Warnung.
+- Die Client-Pakete stehen in `requirements/client.txt` und `requirements/client-build.txt`; `build.py` installiert sie in `.build/client-venv`.
+
+### Herunterladen und installieren
+
+1. Auf der Worker-Seite „Client herunterladen“ wählen; die Datei heißt `MarathonWorker-Setup.exe`. Der Download unter `/api/v1/client/download` braucht keine Anmeldung.
+2. Die Datei auf dem Worker-Rechner starten und die Frage „Marathon-Worker auf diesem Rechner installieren?“ bestätigen.
+3. Der Client installiert sich nach `%LOCALAPPDATA%\MarathonWorker`, trägt sich in den Windows-Autostart ein, erscheint unter „Apps“ als „Marathon-Worker“, importiert das Stammzertifikat des mitgelieferten Proxys in den Zertifikatsspeicher des Benutzers und startet.
+4. Beim ersten Start meldet er sich beim Server an und erscheint auf der Worker-Seite als „gestoppt“. Ein Admin wählt „Zulassen“, trägt Fähigkeiten ein und wählt „Starten“.
+
+Der Client läuft je Benutzer nur einmal. Ein bereits laufender Client muss vor einer erneuten Installation oder Deinstallation über „Beenden“ im Tray-Menü geschlossen werden.
+
+**Deinstallieren:** unter Windows „Apps“ → „Marathon-Worker“ → „Deinstallieren“. Das entfernt Programm, Autostart-Eintrag und lokale Anmeldung; das Stammzertifikat bleibt im Zertifikatsspeicher. Auf der Worker-Seite entfernt ein Admin den Worker anschließend mit „Entfernen“.
+
+### Tray-Symbol
+
+- Die Farbe zeigt den Zustand: grün = bereit und verfügbar, orange = nicht verfügbar oder wird gestoppt, grau = gestoppt oder wartet auf Freigabe, rot = keine Verbindung zum Server.
+- Doppelklick oder „Worker-Einstellungen öffnen“ öffnet die Einstellungsseite dieses Workers im Browser.
+- „Status: …“ zeigt Zustand und Grund, z. B. „Bereit · 1 Job läuft“ oder „Wartet auf Freigabe“.
+- „Beenden“ schließt den Client; laufende Jobs werden abgebrochen und neu verteilt.
+- Ausgaben: `%LOCALAPPDATA%\MarathonWorker\logs\client.log`.
+
+### Steuerung am Rechner
+
+„Worker-Einstellungen öffnen“ holt vom Server einen Einmal-Link (60 s gültig) und öffnet die Seite „Worker-Einstellungen“ für genau diesen Worker, ohne Marathon-Anmeldung. Die Seite gilt danach `[worker_client] control_session_hours` lang (Standard 12 Stunden) in diesem Browser.
+
+- „Starten“, „Stoppen“ und „Sofort-Aus“ wie auf der Worker-Seite.
+- Verfügbarkeit einstellen und „Speichern“.
+- Fähigkeiten nur lesen; sie legt ein Admin fest.
+- Solange der Worker nicht zugelassen ist, steht dort „Dieser Worker wartet auf Freigabe durch einen Administrator“.
+
+### Verfügbarkeitsregeln
+
+Die Regeln stehen auf dem Server und werden auf der Worker-Seite (Admins) oder auf der Seite „Worker-Einstellungen“ gepflegt. Der Client prüft sie alle 5 s und meldet das Ergebnis mit der nächsten Anfrage an den Server (bis ca. 25 s später). Ohne Regeln ist der Worker immer verfügbar (Standard). Der Server-Worker ist immer verfügbar.
+
+| Regel | Bedeutung |
+|---|---|
+| Zeitplan „Nur zu festen Zeiten verfügbar“ | Zeitfenster je Wochentag nach der Uhrzeit des Rechners, `HH:MM`, Ende auch `24:00`; ein Fenster über Mitternacht (z. B. `19:00`–`07:00`) läuft in den Folgetag. Fenster eines Tages dürfen sich nicht überschneiden, auch nicht über Mitternacht; höchstens 10 Fenster je Tag. |
+| Programme „Nicht verfügbar, solange eines dieser Programme läuft“ | Ein Programmname je Zeile, ohne Pfad, z. B. `Resolve.exe`; Groß-/Kleinschreibung egal, `.exe` optional; höchstens 50. |
+| Leerlauf „Erst bei Leerlauf starten“ | Minuten ohne Tastatur und Maus sowie Höchstwerte für CPU, RAM und GPU (Mittelwert über diese Minuten). Ohne GPU-Sensor gilt die GPU-Bedingung als erfüllt. |
+
+Reihenfolge: zuerst der Zeitplan, dann die Programme, dann der Leerlauf. Der Leerlauf wird nur geprüft, wenn der Zeitplan es erlaubt und kein gesperrtes Programm läuft. Ist der Rechner die eingestellten Minuten ohne Eingabe und unter den Höchstwerten, wird der Worker verfügbar; danach macht ihn nur eine Tastatur- oder Mauseingabe wieder unverfügbar (die Last der eigenen Jobs zählt nicht), dann beginnt die Leerlauf-Beobachtung neu.
+
+Wird ein Worker unverfügbar, laufen seine Jobs sauber zu Ende; zugeteilte, noch nicht gestartete Jobs gehen zurück und zählen nicht als Versuch. Neue Jobs bekommt er erst wieder, wenn er verfügbar ist.
+
+### Zusatzprogramme
+
+Fachprogramme wie ffmpeg bezieht der Client vom Server, damit die Exe schlank bleibt.
+
+- Auf dem Server je Programm einen Ordner `.data/client-tools/<name>/` anlegen und die Dateien hineinlegen, z. B. `.data/client-tools/ffmpeg/bin/ffmpeg.exe`. Erlaubt sind Namen aus Kleinbuchstaben, Ziffern, `-` und `_` (bis 64 Zeichen); Dateien mit der Endung `.part` und Verknüpfungen werden ignoriert. Die Version ergibt sich aus dem Inhalt; eine geänderte Datei ist eine neue Version.
+- Der Client gleicht beim Start und alle 10 Minuten ab, lädt neue oder geänderte Programme nach `%LOCALAPPDATA%\MarathonWorker\tools\<name>\<version>\` und prüft jede Datei per SHA-256.
+- Module finden ein Programm über `job.tool("<name>")`. Für den Server-Worker gibt `python -m marathon.worker --tools-dir <ordner>` optional den Ablageort vor.
+
+### Updates
+
+Der Client kann sich selbst aktualisieren: Er lädt eine vom Server angebotene Version, prüft die Prüfsumme, lässt laufende Jobs auslaufen, startet neu und fällt auf die vorherige Version zurück, wenn die neue nicht sauber startet. Der Server bietet noch keine Versionen an („Version ausrollen“ ist noch nicht verfügbar); bis dahin eine neue Version herunterladen und erneut installieren.
 
 ## Workflows mit fehlerhaften Einstellungen
 
@@ -337,10 +417,11 @@ Die Datenbank-Tests starten eine eigene, temporäre PostgreSQL-Instanz mit den P
 ```
 build.py               Einrichten und Bauen
 run.py                 Starten
-config/marathon.toml   Server-, Datenbank-, Engine-, Server-Worker-, Ordner-Dialog- und Proxy-Einstellungen
-requirements/          Python-Abhängigkeiten (server.txt)
+config/marathon.toml   Server-, Datenbank-, Engine-, Server-Worker-, Ordner-Dialog-, Proxy-, Worker-Client- und Client-Bau-Einstellungen
+requirements/          Python-Abhängigkeiten (server.txt, client.txt, client-build.txt)
 marathon/common/       Gemeinsame Grundlage (Version)
 marathon/worker/       Worker-Laufzeit (python -m marathon.worker)
+marathon/client/       Worker-Client für Windows (Tray, Installation, Verfügbarkeit, Zusatzprogramme, Update)
 marathon/modules/      Module (je Ordner ein Modultyp, z. B. watchfolder/; _job.py Ausführungsvertrag, _files.py Datei-Helfer)
 marathon/server/       Server; static/ enthält die gebaute Oberfläche
   engine/              Engine: Weiterleiten, Jobs, Takt, Worker-Protokoll
