@@ -88,6 +88,14 @@ Vertrag: `docs/spec.md` §3.6 (nur Quelle `Server`); offene Punkte unten gehen v
 - [ ] Performance für große Ordner (5.000+ Dateien): Backend-Limit von 1.000 auf 10.000 angehoben (Hinweis bei Kappung) und virtualisiertes Rendering im Frontend
   - Offen: Virtualisierung selbst bauen (Spec: ohne externe Bibliothek) oder eine kleine Bibliothek zulassen?
 
+### Nacharbeit Worker-Client & Steuerung (später)
+
+Aus der Abnahme des Releases Worker-Client & Steuerung.
+
+- [ ] Downloadseite `https://<Marathon-Adresse>/download` ohne Anmeldung, mit der der Client heruntergeladen wird (nutzt `GET /api/v1/client/download`)
+  - Entschieden: Die Zertifikatswarnung des Browsers auf einem Rechner ohne Stammzertifikat wird hier vorerst hingenommen; der installierte Client importiert das Stammzertifikat danach selbst
+  - Offen: Inhalt der Seite (nur Schaltfläche oder zusätzlich kurze Installationsschritte) und Verhalten ohne gebautes Client-Paket
+
 ### Release Lokale Watchfolder & Rechnerwechsel
 
 Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quelle `Dieser Rechner`); offene Punkte unten gehen vor
@@ -229,4 +237,8 @@ Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee:
 ### Änderungen Martin (diesen Bereich immer im Doc belassen!)
 - [ ] Reihenfolge linkes Seitenmenü -> System: Nutzer, Worker, Einstellungen -- Einstellungen immer als letztes, auch wenn noch weitere Optionen dazukommen
 - [ ] Tooltips sollen überall keine Internas preisgeben (IP Adressen, Domain, Server) - immer neutrale Tooltips verwenden
-- [ ] Software (Client), soll gleich von Marathon-Seite downlodbar sein
+- [ ] Workersteuerung UI: Play und Stop werden zu einem Button mit wechselnden Symbol - Sofort bleibt als extra Button - bei Sofort Aus ist das Stop-Symbol zu weit oben und damit nicht mittig auf dem Button. Vergleiche mit dem Stop-Button. 
+ - [ ] Etwas unklar, was jetz die Staus bereit, online und verfügbar darstellen - lässt sich das reduzieren? Verfügbar stellen war als grünen Punkt dar statt "ja"
+ - [ ] feld "wird sofort gestopp" in worker übersicht tabelle oben braucht es nicht - sofort stoppen geht ja schnell
+ - [ ] Client Installer mit Marathon-M als Icon - beachte alle Icon-Größen (16x16 bis 256x256 oder was auch immer der Standard ist)
+

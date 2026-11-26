@@ -103,14 +103,14 @@ def test_tray_menu_status_tooltip_and_quit(monkeypatch):
     assert icon.icon.getpixel((32, 32)) == (40, 155, 75, 255)
     assert icon.menu.items[0].text == "Worker-Einstellungen öffnen"
     assert icon.menu.items[0].kwargs["default"] is True
-    assert icon.menu.items[1].text(icon, icon.menu.items[1]) == "Status: Bereit"
+    assert icon.menu.items[1].text(icon.menu.items[1]) == "Status: Bereit"
     assert icon.menu.items[1].kwargs["enabled"] is False
     assert icon.menu.items[2] is FakeMenu.SEPARATOR
     assert icon.menu.items[3].text == "Beenden"
 
     controller.set_status({"connected": False})
     assert icon.title == "Marathon-Worker – Keine Verbindung zum Server"
-    assert icon.menu.items[1].text(icon, icon.menu.items[1]) == "Status: Keine Verbindung zum Server"
+    assert icon.menu.items[1].text(icon.menu.items[1]) == "Status: Keine Verbindung zum Server"
     assert icon.icon.getpixel((32, 32)) == (205, 48, 48, 255)
 
     for state, color in (

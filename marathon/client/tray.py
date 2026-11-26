@@ -155,7 +155,7 @@ class TrayController:
             menu = pystray.Menu(
                 pystray.MenuItem("Worker-Einstellungen öffnen", self._open_settings, default=True),
                 pystray.MenuItem(
-                    lambda _icon, _item: f"Status: {status_text(self._status)}",
+                    lambda _item: f"Status: {status_text(self._status)}",
                     None,
                     enabled=False,
                 ),
