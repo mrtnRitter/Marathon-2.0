@@ -210,5 +210,7 @@ Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee:
  - [ ] Workereinstellungen UI überarbeiten und Rangfolge der Bedingungen klären
    - [ ] Tray-Icon updated sich zu langsam
    - [ ] Starten, Stoppen, Sofort Aus direkt über Tray-Menü
-   - [ ] 
+ - [ ] User nebst Mail auch mit Namen, wird bei der Anmeldung abgefragt
+ - [ ] Teilenlogik: alle, ausgewählte (dann lieber nach Namen, statt Mailadressen)
+ - [ ] 
 
