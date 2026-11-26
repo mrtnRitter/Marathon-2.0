@@ -10,14 +10,6 @@ Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was ein
 
 ## Abnahme offen
 
-### Release Worker-Steuerung
-
-Vertrag: `docs/spec.md` (Teil 2)
-
-- [ ] Neuer Worker meldet sich „gestoppt“ an; „Sofort-Aus“ (`stop-now`) bricht alle Jobs ab, Asset zurück an den letzten fertigen Ausgang, zählt nicht als Versuch (früheres `/stop`; „Stoppen“ ist seit Release Worker-Client & Steuerung das Auslaufen `stop-drain`)
-- [ ] Ein Worker macht nur einen Job; ein Job bündelt bis zu N Assets desselben Moduls, bearbeitet in N Strömen, Ergebnis je Asset; N = „Parallele Verarbeitung“ (1–16) bei Kopieren und Verschieben
-
-
 ### Release Engine
 
 Vertrag: `docs/spec.md` (Teil 2)
@@ -36,32 +28,6 @@ Vertrag: `docs/spec.md` (Teil 2)
 
 ### Release Worker-Client & Steuerung
 
-Vertrag: `docs/spec.md` §3.1 (`[worker_client]`, `[client_build]`), §3.2 (Migration `0011_worker_client`), §3.4 (ohne Rechner-Erkennung im Browser); Worker-Protokoll 3. Hinweis: Die Exe lässt sich nur unter Windows bauen und dort real testen (`python build.py --client`); geprüft wurde in automatischen Tests. Ohne Zertifikat in `[client_build] sign_command` bleibt sie unsigniert und Windows warnt beim Start.
-
-- [ ] Strikte Trennung von Nutzerkonto und Worker: eigenes Worker-Token je Rechner über `POST /api/v1/worker/enroll`, ohne Bindung an einen Nutzer
-  - Entschieden: `[worker_client] require_admin_approval = true` ab Werk; der Admin wählt „Zulassen“
-  - Entschieden: Neue Worker starten mit leerer Fähigkeiten-Liste; der Admin trägt sie ein, vorher keine Jobs
-  - Entschieden: Der Admin kann Worker entfernen („Entfernen“ mit Bestätigung), nur ohne aktive Jobs; der Server-Worker ist nicht entfernbar. Ein entfernter Client verwirft seine Anmeldung, zeigt das im Tray und meldet sich beim nächsten Start neu an
-  - Entschieden: Protokoll 2 wird abgelehnt („Protokollversion nicht unterstützt“), der Server-Worker spricht Protokoll 3
-- [ ] Windows-Tray-Client als eine einzelne Exe, die sich selbst installiert: `%LOCALAPPDATA%\MarathonWorker`, Autostart, Eintrag unter „Apps“ mit Deinstallation, ohne Adminrechte; Stammzertifikat des Proxys in den Zertifikatsspeicher des Benutzers (bleibt bei Deinstallation)
-  - Entschieden: Keine zweite Installer-Exe und kein fremdes Installer-Werkzeug; die heruntergeladene Exe fragt beim ersten Start „Marathon-Worker auf diesem Rechner installieren?“
-  - Entschieden: Server-Adresse und Stammzertifikat werden beim Bauen eingebettet und von der Signatur abgedeckt; Bau mit `python build.py --client` bei laufendem Server (sonst Startwert aus `config/marathon.toml`). Der Download lehnt eine Exe für eine andere als die aktuelle Adresse ab; nach Adresswechsel neu bauen
-  - Entschieden: Signieren über `[client_build] sign_command` (`{file}` = Exe), leer = unsigniert; Empfehlung Azure Artifact Signing (Beispiel in der README)
-  - Entschieden: Download `GET /api/v1/client/download` ohne Anmeldung; Schaltfläche „Client herunterladen“ auf der Worker-Seite für alle angemeldeten Nutzer
-  - Entschieden: Ohne eingebettetes Stammzertifikat prüft der Client gegen den Zertifikatsspeicher des Systems
-  - Entschieden: Tray-Menü „Worker-Einstellungen öffnen“ (auch Doppelklick), „Status: …“, „Beenden“; Tooltip und Statuszeile ohne Server-Adresse
-- [ ] Steuerung am Rechner ohne Marathon-Login: Einmal-Link (60 s) per Bestätigungs-`POST`, Seite „Worker-Einstellungen“ (`/worker-control`) mit „Starten“, „Stoppen“, „Sofort-Aus“ und Verfügbarkeit; gilt `control_session_hours` (12 Stunden)
-  - Entschieden: Fähigkeiten dort nur lesend; die Seite aktualisiert sich alle 5 s
-- [ ] Drei Steuerbefehle „Starten“ (Play), „Stoppen“ (Stop-Symbol weiß, Drain), „Sofort-Aus“ (Stop-Symbol rot); Endpunkte `start`, `stop-drain`, `stop-now`, `/stop` entfällt
-  - Entschieden: Status `draining` „Wird gestoppt“, `stopping` „Wird sofort gestoppt“
-  - Entschieden: „Starten“ während „Wird gestoppt“ → sofort „bereit“, laufende Jobs bleiben
-  - Entschieden: „Stoppen“ gibt zugeteilte, noch nicht gestartete Jobs sofort zurück
-- [ ] Verfügbarkeitsregeln zentral auf dem Server, ausgewertet im Client alle 5 s, gemeldet mit der nächsten Anfrage (bis ca. 25 s); Reihenfolge Zeitplan → Programme → Leerlauf
-  - Entschieden: Uhrzeit des Rechners; leere Regel = immer verfügbar = Standard; ohne GPU-Sensor gilt die GPU-Bedingung als erfüllt
-  - Entschieden: Zeitfenster `HH:MM`, Ende `24:00` erlaubt, über Mitternacht erlaubt, keine Überschneidungen am Tag (auch über Mitternacht), höchstens 10 je Tag; Programme ohne Pfad, Groß/Klein egal, `.exe` optional, höchstens 50
-  - Entschieden: Leerlauf = die eingestellten Minuten ohne Tastatur/Maus und Mittelwert der Last über diese Minuten unter den Höchstwerten; danach deaktiviert nur eine Eingabe, dann wieder Lastbeobachtung
-  - Entschieden: Verlust der Verfügbarkeit gibt zugeteilte, nicht gestartete Jobs zurück (kein Versuch); laufende Jobs laufen zu Ende
-  - Entschieden: Kennung geänderter Regeln `availability_revision` (+1 je Änderung); der Server-Worker ist immer verfügbar
 - [ ] Zusatzprogramme (z. B. ffmpeg) vom Server: Ablage `.data/client-tools/<name>/`, im Client `%LOCALAPPDATA%\MarathonWorker\tools\<name>\<version>\`; Module finden sie über `job.tool("<name>")`
   - Entschieden: Abgleich beim Start und alle 10 Minuten, jede Datei per SHA-256 geprüft; Version = Inhalts-Hash
 - [ ] Auto-Update im Client: Angebot laden, Prüfsumme prüfen, Jobs auslaufen lassen, Neustart über den Starter, Rückfall auf die vorherige Version, wenn die neue nicht sauber startet
@@ -241,4 +207,8 @@ Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee:
  - [ ] Etwas unklar, was jetz die Staus bereit, online und verfügbar darstellen - lässt sich das reduzieren? Verfügbar stellen war als grünen Punkt dar statt "ja"
  - [ ] feld "wird sofort gestopp" in worker übersicht tabelle oben braucht es nicht - sofort stoppen geht ja schnell
  - [ ] Client Installer mit Marathon-M als Icon - beachte alle Icon-Größen (16x16 bis 256x256 oder was auch immer der Standard ist)
+ - [ ] Workereinstellungen UI überarbeiten und Rangfolge der Bedingungen klären
+   - [ ] Tray-Icon updated sich zu langsam
+   - [ ] Starten, Stoppen, Sofort Aus direkt über Tray-Menü
+   - [ ] 
 
