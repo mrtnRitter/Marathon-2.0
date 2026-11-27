@@ -8,7 +8,8 @@ Bezeichner im Code englisch (`snake_case`), Texte für Nutzer deutsch und wörtl
 - **Teil 2** beschreibt den **bereits umgesetzten** Systemvertrag für Kern, Engine und Worker-Steuerung (Stand Migration `0009`, Worker-Protokoll 2; Abnahme offen).
 - **Teil 2a** beschreibt den Vertrag für den Release *HTTPS* (keine Migration, Worker-Protokoll unverändert).
 - **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Zugang & Nutzer: Migration `0010_users`, Worker-Protokoll unverändert; Worker-Client & Steuerung: Migration `0011_worker_client`, Worker-Protokoll 3, umgesetzt; übrige Releases: eigene Migrationen, noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
-- **Teil 4** beschreibt den Vertrag für den ersten Wurf des Releases *Modul-Builder* (Migration `0012_macros`, Worker-Protokoll unverändert; in Umsetzung).
+- **Teil 4** beschreibt den Vertrag für den ersten Wurf des Releases *Modul-Builder* (Migration `0012_macros`, Worker-Protokoll unverändert; umgesetzt, Abnahme offen).
+- **Teil 5** beschreibt den Vertrag für den Release *Freigaben & Besitz* (Migration `0013_access`, Worker-Protokoll unverändert; in Umsetzung). Er löst alle früheren Rechte-Regeln für Workflows und Module ab.
 
 ---
 
@@ -649,6 +650,8 @@ Grundsatz: Antworten verraten nie, ob ein Konto existiert oder eine Domain freig
 
 ### Workflow-Freigaben (`workflow_shares`)
 
+*Abgelöst durch Teil 5 (Freigaben & Besitz).*
+
 - Module sind bis zum Release Modul-Builder immer für alle Nutzer freigegeben; Modulsperren je Nutzer gibt es nicht.
 - Jeder Nutzer legt Workflows an; der Ersteller wird Eigentümer (`owner_user_id`). Duplizieren setzt voraus, dass der Nutzer den Workflow sehen darf; Eigentümer der Kopie ist der Nutzer.
 - Stufen je `(workflow_id, user_id)`:
@@ -886,7 +889,7 @@ Umfang: Modul-Builder als eigene Seite, Module aus Bausteinen ohne Code, Version
 - Laufzeit-ID eines Bausteins: `f"{instanz_id}.{baustein_id}"`; `.` kommt in Instanz- und Baustein-IDs (`^[A-Za-z0-9_-]{1,64}$`) nicht vor.
 - Laufzeitzeile: `name` = Name der Instanz, `description` = `""`, Position und `locked` der Instanz, dazu `instance_id`, `block_id`, `exits`.
 - Bausteine eines Moduls sind nur Modultypen (keine verschachtelten Module).
-- Rechte: Ändern, Löschen und Innenleben ansehen dürfen Eigentümer und Admins; Standardmodule (`owner_user_id NULL`) nur Admins. Alle anderen sehen nur Hülle und Einstellungen. Bis zum Schritt „Teilen“ stehen alle nicht gelöschten Module allen Nutzern in der Palette zur Verfügung.
+- *Rechte abgelöst durch Teil 5.* Bisher: Ändern, Löschen und Innenleben ansehen dürfen Eigentümer und Admins; Standardmodule (`owner_user_id NULL`) nur Admins. Alle anderen sehen nur Hülle und Einstellungen. Bis zum Schritt „Teilen“ stehen alle nicht gelöschten Module allen Nutzern in der Palette zur Verfügung.
 
 ## 4.2 Definition & Hülle (`marathon/server/macros/definition.py`, rein, ohne Datenbank)
 
@@ -991,6 +994,8 @@ Beim Serverstart legt `ensure_standard_macros(connection)` direkt nach `sync_mod
 
 ## 4.6 Modul-API (`/api/v1/macros`, angemeldete Nutzer)
 
+*Rechte, Löschen und Aktualisieren geändert durch §5.7.*
+
 - Listeneintrag: Hülle der aktuellen Version plus `owner` (`{id, email, display_name}` oder `null`), `can_edit`, `usage` (Anzahl Workflows, deren aktuelle Version das Modul verwendet), `updated_at`. Sortierung `sort_order`, `name`, `id`; gelöschte Module fehlen.
 - `GET /macros` → Liste.
 - `GET /macros/{id}` → Listeneintrag plus `definition`; 404 „Modul nicht gefunden“ (auch gelöscht), 403 „Keine Berechtigung für dieses Modul“ ohne `can_edit`.
@@ -1001,6 +1006,8 @@ Beim Serverstart legt `ensure_standard_macros(connection)` direkt nach `sync_mod
 - `PUT`, `DELETE` und `update-workflows` verlangen `can_edit` (sonst 403 wie oben).
 
 ## 4.7 Oberfläche
+
+*Rechte, „Standard“ und `can_edit` geändert durch §5.8.*
 
 - **Seitenleiste:** Eintrag „Module“ (Icon `blocks`, lucide `Blocks`) direkt nach „Workflows“, Route `/modules`, für alle Nutzer.
 - **Seite „Module“** (`/modules`): Schaltfläche „Neues Modul“ (→ `/modules/new`). Tabelle mit Name (mit Icon), Kategorie, Eigentümer („Standard“ bei `owner null`, sonst Anzeigename oder E-Mail), Version („v{n}“), Verwendet („1 Workflow“, sonst „{n} Workflows“, bei 0 „–“), Geändert. Zeilenklick öffnet `/modules/{id}` nur bei `can_edit`. Drei-Punkte-Menü „Löschen“ bei `can_edit` und `owner` nicht `null`, Rückfrage „Modul „{name}“ löschen?“, Fehlertext als Meldung. Ohne Einträge „Keine Module vorhanden“.
@@ -1021,3 +1028,150 @@ Beim Serverstart legt `ensure_standard_macros(connection)` direkt nach `sync_mod
 - Ein Modul aus „Kopieren“ → „Umbenennen“ verhält sich im Workflow wie dieselben zwei Standardmodule: gleiche Wege, Jobs, Versuche, Logs und Stopp-Verhalten; der Workflow zeigt es als ein Modul mit summierten Zählern.
 - Eine neue Modulversion ändert keinen Workflow, bis sie übernommen wird; der Update-Hinweis erscheint in jedem Workflow mit älterer Version.
 - Bausteine erscheinen nur im Builder, Module nur in der Workflow-Palette.
+
+---
+
+# Teil 5: Release Freigaben & Besitz (in Umsetzung, Migration `0013_access`, Worker-Protokoll unverändert)
+
+Ein Freigabesystem für alle teilbaren Objekte. Es ersetzt §3.3 „Workflow-Freigaben“, die Rechte in §4.1, `can_edit` in §4.5–§4.7, die Lösch- und Aktualisierungsregeln in §4.6 sowie die Anzeige „Standard“ in §4.7. Es gibt keine Sonderregeln je Objekttyp; Lücken werden hier gelöst.
+
+## 5.1 Modell
+
+- **Objekttypen** `object_types = ("workflow", "macro")` (Tabellen `workflows`, `macros`; Presets folgen später).
+- **Besitzer:** alle Admins (Rolle `admin`, inkl. Notfallzugang) immer, dazu höchstens ein **Nutzer-Besitzer** in `owner_user_id`; `NULL` = nur Admins. Admins können nie entzogen werden.
+- **Anzeige „Besitzer“:** Anzeigename, sonst E-Mail des Nutzer-Besitzers; ohne Nutzer-Besitzer „Admin“.
+- **Anlegen und Duplizieren:** durch einen Nutzer → `owner_user_id = user.id`; durch einen Admin → `NULL`. `ensure_standard_macros` legt `NULL` an. Neue Objekte sind privat.
+- **Freigaben** (`object_shares`): Empfänger ein Nutzer oder **Alle** (`user_id NULL`), Stufe `view` | `use` | `edit`. Kein Eintrag = privat.
+- **Stufen** `access_levels = ("view", "use", "edit", "owner")`, aufsteigend; jede Stufe enthält die darunter.
+- **Wirksame Stufe** eines Nutzers: Objekt fehlt → keine; Admin → `owner`; `owner_user_id = user.id` → `owner`; sonst die höhere aus eigener Freigabe und Freigabe für Alle; ohne beide → keine (Objekt unsichtbar). Serverinterne Aufrufe ohne Nutzer (`user None`) haben `owner`.
+- **Standardmodul** (Systemmodul): Modul ohne Nutzer-Besitzer mit Freigabe für Alle ab `use`. Abgeleitet, kein eigenes Merkmal, keine Sonderregel.
+- **Nutzer gelöscht:** `owner_user_id` wird `NULL` (Besitz geht an Admin); seine Freigaben und Sperren entfallen (`ON DELETE CASCADE`).
+- **Archivierte Module** (`archived_at`) behalten ihre Stufen; Modulliste, Palette, Builder und neue Instanzen behandeln sie als nicht vorhanden; bestehende Instanzen laufen in ihrer Version weiter.
+
+## 5.2 Rechte je Stufe
+
+| Stufe | Workflow | Modul |
+|---|---|---|
+| `view` | Workflow, Module, Assets, Logs, Status, Reports sehen; duplizieren | Hülle sehen (Name, Icon, Einstellungen, Ausgänge, Logs im Workflow); in der Modulliste |
+| `use` | zusätzlich starten, stoppen, Assets erneut verarbeiten (Quelle und Ziel) | zusätzlich in Workflows einfügen und Name und Einstellungen einer Instanz ändern; in der Palette |
+| `edit` | zusätzlich Metadaten, Zeitplan und Graph speichern, Module aktualisieren | zusätzlich im Builder öffnen und neue Versionen speichern (Innenleben); duplizieren |
+| `owner` | zusätzlich teilen, löschen, Verlauf sehen | zusätzlich teilen, löschen (archivieren), Verlauf sehen, „In allen meinen Workflows aktualisieren“ |
+| nur Admins | Nutzer-Besitzer setzen oder entfernen, fremde Bearbeitungssperren aufheben, Aktualisieren trotz Sperre erzwingen | wie Workflow |
+
+Fehler: ohne Zugriff `404` „Workflow nicht gefunden“ / „Modul nicht gefunden“; Stufe zu niedrig `403` „Keine Berechtigung für diesen Workflow“ / „Keine Berechtigung für dieses Modul“; Admin-Aktion `403` „Nur für Admins“.
+
+Unsichtbare Workflows erscheinen nirgends (Listen, Dashboard, Assets, Reports, Zähler, Namenslisten, Verwendung von Modulen). Worker zeigen nur die Anzahl ihrer Jobs. Worker, Nutzer und Einstellungen sind keine Objekte; dort gilt nur die Rolle.
+
+## 5.3 Modul im Workflow
+
+Die Modul-Stufe wird je Instanz über `macro_id` bestimmt, unabhängig von der Workflow-Stufe.
+
+| Modul-Stufe | Knoten | Name, Einstellungen | Logs, Meldungen | Builder |
+|---|---|---|---|---|
+| keine → **Blindmodul** | „Nicht freigegebenes Modul“, kein Icon; Zähler, Eingang, Ausgänge mit Beschriftung | verborgen, nicht änderbar | verborgen | – |
+| `view` | Name, Icon, Zähler, Ausgänge | lesen | sichtbar | – |
+| `use` | wie `view` | ändern (Workflow `edit`) | sichtbar | – |
+| `edit`, `owner` | wie `view` | ändern (Workflow `edit`) | sichtbar | „Im Builder öffnen“ |
+
+| Aktion im Workflow | Workflow-Stufe | Modul-Stufe |
+|---|---|---|
+| sehen, Zähler, Assets | `view` | – |
+| starten, stoppen, erneut verarbeiten | `use` | – |
+| verschieben, verbinden, sperren (`locked`), entfernen | `edit` | – |
+| Name, Beschreibung, Einstellungen einer Instanz ändern | `edit` | `use` |
+| Modul neu einfügen | `edit` | `use`, nicht archiviert |
+| Version aktualisieren | `edit` | – |
+| duplizieren (Blindmodule bleiben blind) | `view` | – |
+
+**Graph lesen** (`GET /workflows/{id}/graph`): Je Instanz `access` (Modul-Stufe oder `null`) und `blind` (`access` ist `null`); `can_edit` entfällt. Blindmodul: `type_id` `""`, `name` `""`, `description` `""`, `settings` `{}`, `hull` = `{"id": "", "version": macro_version, "name": "", "category": "", "icon": "", "description": "", "sort_order": 0, "has_input", "outputs": [{"id", "label", "description": ""}, zusätzlich "data": true wie in der Hülle], "settings": []}`; `macro_version`, `latest_version`, `update_available`, `position`, `locked` und `counters` wie sonst.
+
+**Graph speichern** (`save_graph(..., user: AuthUser | None = None)`, `user None` = intern ohne Prüfung): Eine Eingabe-Instanz ist *bestehend*, wenn ihre ID in der aktuellen Version steht und `type_id` leer ist oder deren `macro_id` entspricht; sonst *neu*.
+- Bestehend mit Modul-Stufe unter `use`: `type_id`, `name`, `description` und `settings` kommen aus der gespeicherten Instanz, Eingabewerte dafür werden ignoriert. Ändert sich `macro_version`, gilt `settings = remap_settings(gespeicherte Einstellungen, Hülle der neuen Version)[0]`. Fehlt `macro_version`, bleibt die gespeicherte Version. Ohne Modul-Stufe und mit unbekannter Version → `403` „Keine Berechtigung für dieses Modul“.
+- Neu: Modul-Stufe mindestens `use`, sonst `403` „Keine Berechtigung für dieses Modul“, auch bei unbekanntem Modul (Admins wie bisher `422` „Unbekanntes Modul: {type_id}“); archiviert wie bisher „Modul ist gelöscht: {type_id}“.
+- Alle übrigen Prüfungen wie in §4.5.
+
+**Aktivität** (`GET /workflows/{id}/modules/{module_id}/activity`): Blindmodul → `logs: []`, `logs_hidden: true`, sonst `logs_hidden: false`. Modul-Stufe unter `edit` → je Job `module_id` = Instanz-ID.
+
+**Asset-Detail** (`GET /assets/{id}`): Laufzeitmodul → Instanz über `workflow_modules.instance_id` derselben Version → `macro_id` über `workflow_instances`, über alle Versionen des Workflows; ergibt das mehrere Module, gilt die niedrigste Modul-Stufe (keine zuunterst). Für Laufzeitmodule eines Blindmoduls: `current_module` und `timeline[].module_name` = „Nicht freigegebenes Modul“; `log`-Zeilen entfallen; `messages[].text` mit diesem `module_id` = „Meldung eines nicht freigegebenen Moduls“. Modul-Stufe unter `edit`: `timeline[].output_label` = Beschriftung des Modul-Ausgangs aus `exits` der neuesten Version mit diesem Laufzeitmodul (Beschriftung aus der Definition der zugehörigen Instanz-Version), ist der Baustein-Ausgang nicht in `exits` → `null`. Laufzeitmodule ohne `instance_id` und Meldungen ohne `module_id` bleiben unverändert.
+
+**Asset-Listen** (`GET /assets`, Assets der Aktivität): `current_module` eines Blindmoduls (aktuelle Version) = „Nicht freigegebenes Modul“.
+
+**Graph-Auswirkung** (`POST /workflows/{id}/graph/impact`, `edit`): Eingaben laufen vorher durch die Modulrechte wie beim Speichern; `removed_modules[].name` eines Blindmoduls = „Nicht freigegebenes Modul“.
+
+**Modul-Liste** (`GET /macros`): Module ab `view`, je Eintrag `access` statt `can_edit`; `usage` zählt nur Workflows, die der Nutzer sehen darf. Die Palette zeigt Einträge ab `use`.
+
+## 5.4 Datenbank: Migration `0013_access` (auf Basis `0012`)
+
+| Tabelle | Spalten & Constraints |
+|---|---|
+| `object_shares` | `object_type TEXT NOT NULL` (`CHECK object_type IN ('workflow','macro')`), `object_id TEXT NOT NULL`, `user_id TEXT NULL` (FK `users.id` ON DELETE CASCADE), `access TEXT NOT NULL` (`CHECK access IN ('view','use','edit')`), `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`; eindeutiger Index `ux_object_shares_target` auf `(object_type, object_id, COALESCE(user_id, ''))`; Index `ix_object_shares_user_id` |
+| `edit_locks` | `object_type TEXT NOT NULL` (CHECK wie oben), `object_id TEXT NOT NULL`, `user_id TEXT NOT NULL` (FK `users.id` ON DELETE CASCADE), `token_hash TEXT NOT NULL`, `expires_at TIMESTAMPTZ NOT NULL`, `created_at TIMESTAMPTZ NOT NULL DEFAULT now()`; PK `(object_type, object_id)` |
+| `object_events` | `id BIGINT IDENTITY PK`, `object_type TEXT NOT NULL`, `object_id TEXT NOT NULL`, `ts TIMESTAMPTZ NOT NULL DEFAULT now()`, `actor_user_id TEXT NULL` (FK `users.id` ON DELETE SET NULL), `actor_name TEXT NOT NULL`, `text TEXT NOT NULL`; Index `ix_object_events_object` auf `(object_type, object_id, ts)` |
+| `asset_history` | neu `module_id TEXT NULL` (Laufzeitmodul, ohne Fremdschlüssel) |
+
+Datenübernahme: jede Zeile aus `workflow_shares` → `object_shares` (`object_type 'workflow'`, `access` `run` → `use`); danach wird `workflow_shares` entfernt. Jedes nicht archivierte Modul erhält eine Freigabe für Alle mit `use` (heutiges Verhalten bleibt). `object_shares` erhält die Live-Kanal-Trigger wie in `0010` (`marathon_notify_change()`), `edit_locks` und `object_events` nicht.
+
+`downgrade`: `workflow_shares` wie in `0010` neu anlegen und aus `object_shares` (`workflow`, `user_id` nicht `NULL`, `use` → `run`) füllen; die drei Tabellen und `asset_history.module_id` entfernen.
+
+Die Engine schreibt `asset_history.module_id` bei jeder Meldung mit Modulbezug (Laufzeit-ID des Moduls, an dem das Asset steht oder dessen Job die Meldung auslöst), sonst `NULL`.
+
+## 5.5 Freigaben, Besitzer, Verlauf (`/api/v1/access/{object_type}/{object_id}`)
+
+`object_type` im Pfad: `workflow` oder `macro`, sonst `404` „Unbekannter Objekttyp“. Archivierte Module → `404` „Modul nicht gefunden“. Die bisherigen Routen `/workflows/{id}/shares` und `/workflows/{id}/owner` entfallen.
+
+- `GET …/shares` (`owner`) → `{"owner": {id, email, display_name} | null, "shares": [{"user_id": str | null, "email", "display_name", "access"}]}`; zuerst Alle (`email ""`, `display_name` „Alle“), dann Nutzer nach E-Mail.
+- `PUT …/shares` (`owner`) `{"shares": [{"user_id": str | null, "access": "view" | "use" | "edit"}]}` ersetzt alle Freigaben; leere Liste = privat. `422` vor jeder Änderung: „Unbekannter Nutzer: {id}“ (auch Notfallkonto), „Der Besitzer kann nicht freigegeben werden“, „Nutzer doppelt: {id}“, „„Alle“ doppelt“, „Ungültige Freigabestufe: {access}“. Antwort wie `GET`.
+- `PUT …/owner` (nur Admins) `{"user_id": str | null}`; `null` = nur Admin; unbekannt → `422` „Unbekannter Nutzer: {id}“; eine Freigabe des neuen Nutzer-Besitzers entfällt. Antwort wie `GET …/shares`.
+- `GET …/events` (`owner`) → `{"events": [{"ts", "actor", "text"}]}`, neueste zuerst, höchstens 200.
+
+**Eingriffe der Admins** (`object_events`, `actor_name` = Anzeigename, sonst E-Mail, Notfallkonto „Notfallzugang“): geschrieben, wenn ein Admin an einem Objekt handelt, dessen `owner_user_id` gesetzt und nicht er selbst ist, sowie immer bei Besitzerwechsel und beim Aufheben einer fremden Sperre. Texte:
+- „Besitzer geändert: {alt} → {neu}“ (Anzeige wie „Besitzer“)
+- „Freigaben geändert“
+- „Bearbeitet“ (Metadaten, Graph, neue Modulversion)
+- „Gelöscht“
+- „Bearbeitungssperre von {name} aufgehoben“
+- „Modul „{name}“ auf v{n} aktualisiert“ (Aktualisieren aus dem Builder)
+
+Löschen eines Workflows entfernt seine Freigaben und Sperre; Verlaufseinträge bleiben.
+
+## 5.6 Bearbeitungssperre
+
+Konfiguration `config/marathon.toml`:
+
+```toml
+[edit_lock]
+ttl_s = 120   # Bearbeitungssperre verfällt nach so vielen Sekunden ohne Lebenszeichen (30–3600)
+```
+
+`EditLockConfig(ttl_s: int = 120)` in `ServerConfig.edit_lock`; Prüffehler „[edit_lock] ttl_s in {datei} muss eine ganze Zahl zwischen 30 und 3600 sein“. Lebenszeichen alle `heartbeat_s = max(5, ttl_s // 4)` Sekunden.
+
+- `POST …/lock` (`edit`), optional Header `X-Edit-Lock: <token>`: Hält der Token die Sperre → Verlängerung; ist keine oder nur eine abgelaufene Sperre da → neue Sperre mit neuem Token (32 Byte, gespeichert als SHA-256). Sonst `409` „Wird gerade bearbeitet von {name}“. Antwort `{"token", "expires_at", "heartbeat_s"}`. Jeder Browser-Tab hat eine eigene Sperre; ein zweiter Tab desselben Nutzers erhält ebenfalls `409`.
+- `GET …/lock` (`view`) → `{"holder": {id, email, display_name} | null, "expires_at": … | null}` (nur nicht abgelaufene Sperren).
+- `DELETE …/lock` mit Header `X-Edit-Lock` gibt die eigene Sperre frei (`204`, auch wenn sie nicht mehr besteht). `DELETE …/lock?force=true` (nur Admins) entfernt jede Sperre (`204`) und schreibt bei fremder Sperre den Verlaufseintrag.
+- **Speichern verlangt die Sperre:** `PUT /workflows/{id}`, `PUT /workflows/{id}/graph` und `PUT /macros/{id}` brauchen den Header `X-Edit-Lock` mit dem Token der aktuellen Sperre (auch abgelaufen, solange sie niemand übernommen hat), sonst `409` „Bearbeitungssperre fehlt oder wurde aufgehoben. Bitte neu laden.“ Die Versionsprüfung (`base_version`) bleibt zusätzlich.
+- Serverinterne Speicherungen (Aktualisieren aus dem Builder) brauchen keinen Token; eine nicht abgelaufene fremde Sperre überspringt den Workflow mit „Wird gerade bearbeitet von {name}“, bei `force` (nur Admins) wird sie vorher aufgehoben (Verlaufseintrag).
+
+## 5.7 Modul-API (Änderungen zu §4.6)
+
+- `GET /macros/{id}` (Definition) verlangt `edit`; `PUT /macros/{id}` verlangt `edit` und die Sperre.
+- `POST /macros` → Besitz nach §5.1, privat.
+- `DELETE /macros/{id}` (`owner`): archiviert immer; verwendende Workflows laufen in ihrer Version weiter. „Standardmodule können nicht gelöscht werden“ und „Modul wird in Workflows verwendet: …“ entfallen. Die Sperre des Moduls entfällt.
+- `outdated_workflows`: Workflows mit Workflow-Stufe `owner` (Admins: alle), deren aktuelle Version eine ältere Version des Moduls verwendet.
+- `POST /macros/{id}/update-workflows[?force=true]` verlangt Modul-Stufe `edit`; `force` nur für Admins (`403` „Nur für Admins“). Übersprungen zusätzlich „Wird gerade bearbeitet von {name}“.
+
+## 5.8 Oberfläche
+
+- **Stufen-Texte:** `view` „Ansicht“, `use` „Verwendung“, `edit` „Bearbeitung“, `owner` „Besitzer“. Eine zentrale Prüfung `has_access(access, minimum)` ersetzt alle Stufenlisten.
+- **Teilen-Dialog** (eine Komponente für Workflows und Module, Titel „Teilen“): Admins sehen „Besitzer“ (Auswahl „Admin“ und alle Nutzer des Verzeichnisses); Schalter „Teilen“ (aus = privat, beim Speichern werden alle Freigaben entfernt); eingeschaltet die Zeile „Alle“ und je Nutzer (Filter „Nach E-Mail filtern“) die Auswahl „–“, „Zur Ansicht“, „Zur Verwendung“, „Zur Bearbeitung“; Abschnitt „Verlauf“ (Zeit, Wer, Text; leer „Keine Einträge“). Aufruf über „Teilen“ für Besitzer in der Workflow-Liste, der Modul-Liste und im Builder-Kopf.
+- **Listen:** Spalte „Besitzer“ (Anzeige nach §5.1) und „Zugriff“ (Stufen-Text) in Workflows und Modulen; „Standard“ entfällt.
+- **Workflow-Editor:** Palette ab `use`. Blindmodul: Knoten „Nicht freigegebenes Modul“ ohne Icon mit Hinweis „Dieses Modul ist für Dich nicht zur Ansicht freigegeben“; Seitenpanel nur Hinweis, Zähler und „Aktualisieren“. Modul-Stufe `view`: Name und Einstellungen nur lesbar, Hinweis „Einstellungen ändern verlangt die Freigabe zur Verwendung“. Entfernen eines Blindmoduls fragt „Dieses Modul ist für Dich nicht freigegeben. Nach dem Entfernen kannst Du es nicht wieder einfügen. Entfernen?“. „Im Builder öffnen“ ab `edit`. „Aktualisieren“ eines Blindmoduls setzt nur `macro_version` = `latest_version`; die Einstellungen ordnet der Server beim Speichern zu.
+- **Sperre:** Wechsel in „Bearbeiten“, das Metadaten-Formular eines Workflows und der Builder holen die Sperre, senden Lebenszeichen und geben sie beim Verlassen frei. Bei `409` bleibt die Ansicht nur lesbar mit der Meldung „Wird gerade bearbeitet von {name}“; Admins erhalten „Sperre aufheben“ mit Rückfrage „Bearbeitungssperre von {name} aufheben? Nicht gespeicherte Änderungen gehen dort verloren.“ Schlägt eine Verlängerung oder ein Speichern mit der Sperr-Meldung fehl, wird die Ansicht nur lesbar und zeigt die Meldung.
+- **Builder „Workflows aktualisieren“:** Übersprungene wie bisher; Admins erhalten bei gesperrten Workflows „Gesperrte trotzdem aktualisieren“ (`force=true`).
+
+## 5.9 Abnahme
+
+- Jede Rechteprüfung in API, Abfragen und Oberfläche nutzt nur §5.1–§5.2; `workflow_shares` und `can_edit_macro` gibt es nicht mehr.
+- Ein Nutzer ohne Zugriff findet einen Workflow oder ein Modul nirgends, auch nicht in Zählern oder Namenslisten.
+- Ein Blindmodul verhält sich im Workflow wie jedes Modul (gleiche Wege, Zähler, Fehlerausgang), verrät aber weder Name, Icon, Einstellungen noch Logs.
+- Ein gelöschter Nutzer hinterlässt keine verwaisten Objekte; Admins sehen und ändern alles; jeder Eingriff in ein fremdes Objekt steht im Verlauf.
+- Zwei Personen können ein Objekt nie gleichzeitig bearbeiten; nach dem Aufheben einer Sperre kann der bisherige Bearbeiter nicht mehr speichern.

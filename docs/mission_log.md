@@ -3,8 +3,9 @@
 Laufendes Protokoll: Hier planen wir den nächsten Release und haken ab, was eingebaut und abgenommen wurde.
 
 - Ein Release ist ein kleiner, lauffähiger Schritt.
-- `[ ]` geplant · `[ ]` eingebaut, Abnahme offen · `[x]` eingebaut und abgenommen
+- `[ ]` offen · `[x]` eingebaut und abgenommen; ob ein Punkt schon eingebaut ist, zeigt der Abschnitt (*Abnahme offen* = eingebaut, *Geplant*/*Backlog* = noch nicht eingebaut)
 - Architektur & Vertrag: `docs/spec.md`
+- Abgleich mit dem Code: Stand Commit `c72820f` (add module-builder), 27.11.2026
 
 ---
 
@@ -33,13 +34,72 @@ Vertrag: `docs/spec.md` (Teil 2)
 - [ ] Auto-Update im Client: Angebot laden, Prüfsumme prüfen, Jobs auslaufen lassen, Neustart über den Starter, Rückfall auf die vorherige Version, wenn die neue nicht sauber startet
   - Entschieden: Der Server bietet noch keine Versionen an (Rollout im Backlog); bis dahin neue Version herunterladen und erneut installieren
 
+### Release Modul-Builder – erster Wurf
+
+Vertrag: `docs/spec.md` Teil 4 (Migration `0012_macros`, Worker-Protokoll unverändert). Leitidee: die umfassende Abstraktion – aus atomaren Bausteinen entstehen Makro-Systeme. Ersetzt die Teilworkflows (Sub) aus dem Backlog.
+
+- [ ] Modul-Builder als eigene Seite „Module“: links Bausteine, Mitte Flow, rechts Einstellungen; Module nur im Builder erzeugen
+  - Befund: Das Seitenpanel liegt unter dem Editor statt rechts → Fix im Release Modul-Builder – Fixes & Verfeinerung
+- [ ] Module ohne Code: Bausteine (Modultypen aus `marathon/modules/`) mit Eingang, Ausgängen, einstellbaren Einstellungen und Zählern
+- [ ] Code-Module bleiben Python im Repo; ein freier Code-Block ist verworfen (Ausführung beliebigen Codes auf allen Workern)
+- [ ] Nutzer sehen nur Modul und Einstellungen; Innenleben nur Ersteller und Admin im Builder; Sprung „Im Builder öffnen“ aus dem Workflow
+- [ ] Bestehende Modultypen werden Standardmodule (gehören dem Admin), bestehende Workflows werden migriert
+- [ ] Versionen: Workflows behalten ihre Version; Update-Hinweis im Workflow; Ersteller oder Admin aktualisiert auf Wunsch alle eigenen Workflows
+
 ---
 
 ## Geplant
 
 Reihenfolge = Umsetzungsreihenfolge. `Offen:` klären wir je Release Punkt für Punkt, bevor der Punkt umgesetzt wird; `Vorschlag:` ist eine Empfehlung, keine Entscheidung. Wo `docs/spec.md` (Teil 3) und ein offener Punkt sich widersprechen, gilt bis zur Klärung der offene Punkt.
 
-### Nächster Release: Datei- und Ordner-Dialog
+### Nächster Release: Freigaben & Besitz (Grundlage)
+
+Ein Freigabesystem für alle teilbaren Objekte; ersetzt alle bisherigen Teillösungen (`workflow_shares`, `can_edit_macro`, „alle Module für alle“, Standardmodul = ohne Eigentümer). Vertrag: `docs/spec.md` Teil 5 (Migration `0013_access`, Worker-Protokoll unverändert). In Umsetzung.
+
+- [ ] Formalisierung der freigabe und berechtigunegen (besitzer und admin dürfen ändern, andere nur nutzen) (Martin)
+- [ ] Ein Modell für alle Objekte: dieselbe Prüfung im Server, dieselben Fehlertexte, derselbe Teilen-Dialog
+- [ ] Freigabe beim Speichern: privat oder öffentlich; öffentliche Module können andere nur benutzen
+- [ ] Bearbeitungssperre für Workflows und Module
+- [ ] Logiklöcher aus dem Code-Abgleich:
+  - [ ] Nutzer löschen macht seine Module zu Standardmodulen: `owner_user_id NULL` bedeutet heute „Standard“ – danach nur noch für Admins änderbar und nicht mehr löschbar
+  - [ ] „Modul wird in Workflows verwendet: …“ und der Zähler „Verwendet“ nennen auch Workflows, die der Nutzer nicht sehen darf
+  - [ ] Ein fremder Workflow, der mein Modul verwendet, blockiert das Löschen meines Moduls dauerhaft
+  - [ ] „Alle aktualisieren“ erfasst nur eigene Workflows; eine neue Version eines Standardmoduls erreicht fremde Workflows nur über deren Editor
+  - [ ] Workflow-Graph, Aktivität, Asset-Detail und Reports liefern Name, Icon, Einstellungen und Logs jedes Moduls an jeden, der den Workflow sieht
+
+Entschieden:
+- Objekte mit Besitz und Freigaben: Workflows, Module, künftig Presets; Worker, Nutzer und Einstellungen bleiben reine Admin-Sache (Rolle, keine Freigabe)
+- Stufen: keine (privat) < `view` (Ansicht) < `use` (Verwendung) < `edit` (Bearbeitung) < Besitzer; „privat“ ist der Teilen-Hauptschalter, die übrigen bauen aufeinander auf; `run` wird `use`
+- Empfänger: einzelne Nutzer und „Alle“; keine Gruppen; wirksam ist die höhere von Nutzer- und Alle-Freigabe
+- Besitzer: alle Admins (inkl. Notfallzugang) immer, dazu höchstens ein Nutzer-Besitzer (`owner_user_id`); Anlage durch einen Nutzer → er ist Nutzer-Besitzer, Anlage durch einen Admin → nur „Admin“; Anzeige „Besitzer“ = Nutzer-Besitzer, sonst „Admin“
+- Besitzer dürfen alles (teilen, bearbeiten, löschen); nur Besitzer teilen; nur Admins setzen oder entfernen den Nutzer-Besitzer; Admins können nie entzogen werden
+- Nutzer gelöscht → `owner_user_id NULL` (nur Admin), seine Freigaben entfallen; neuen Nutzer-Besitzer setzt nur ein Admin
+- Standardmodul (Systemmodul) = Modul ohne Nutzer-Besitzer, für „Alle“ mindestens zur Verwendung freigegeben; abgeleitet, kein eigenes Merkmal
+- Module sind versioniert: Workflows behalten ihre Version, auch wenn das Modul geändert, gelöscht (archiviert) oder die Freigabe entzogen wird
+- Modul aktualisieren: im Workflow per Knopf an der Instanz (Workflow-Stufe `edit`); im Builder „in allen meinen Workflows“ (Besitzer; Admin = alle Workflows); im Bearbeiten gesperrte Workflows werden übersprungen und gemeldet
+- Bearbeitungssperre: Ein Objekt, das jemand bearbeitet, ist für alle anderen nur lesbar; Admins heben die Sperre auf, der bisherige Bearbeiter kann danach nicht mehr speichern
+- Unsichtbare Workflows erscheinen nirgends und fließen in keine Zahl ein; Worker zeigen nur die Anzahl ihrer Jobs, nicht woran sie arbeiten
+- Unsichtbare Module fehlen in Palette, Modulliste und Builder; im Workflow erscheinen sie als Blindmodul
+- Duplizieren verlangt, das Innenleben sehen zu dürfen: Workflow ab `view` (Blindmodule bleiben blind), Modul ab `edit`
+- Modulsperren je Nutzer entfallen; Lücken werden im Freigabesystem gelöst, keine Sonderregeln
+- Admins sehen und dürfen alles (auch Privates), damit nichts verloren geht und das System reparierbar bleibt
+- Modul verwenden = in Workflows einfügen und Name und Einstellungen der Instanz ändern; Modul bearbeiten = Innenleben im Builder ändern
+- Blindmodul (keine Modul-Freigabe): kein Name, kein Icon, Name nicht änderbar; Zähler, Ein- und Ausgänge mit Beschriftung sichtbar (Fehlerausgang erkennbar); Logs und Meldungen verborgen
+- Logs eines Moduls sieht, wer das Modul mindestens sehen darf – damit immer Admins und Modulbesitzer
+- Version eines Moduls aktualisieren reicht die Bearbeitung des Workflows; entfernte Blindmodule lassen sich nicht wieder einfügen (Rückfrage beim Entfernen)
+- Eingriffe der Admins in fremde Objekte stehen im Verlauf des Objekts
+- Matrix und Regeln: `docs/spec.md` §5.2–§5.3
+
+### Release Modul-Builder – Fixes & Verfeinerung
+
+Vertrag: `docs/spec.md` Teil 4; setzt Release Freigaben & Besitz voraus
+
+- [ ] Modul-Builder settings liegen nichts rechts, sondern unter editor - UI kaputt (Martin)
+  - Ursache: Das Seitenpanel steht in `ModuleBuilderPage.tsx` neben `BuilderCanvas` im spaltenweise angeordneten `.workflow-editor` statt in der Zeile `.module-builder-body`
+- [ ] Befunde aus Martins Test des ersten Wurfs
+  - Offen: Liste der Befunde (Bedienung, Darstellung, fehlende Funktionen)
+
+### Release Datei- und Ordner-Dialog
 
 Vertrag: `docs/spec.md` §3.6 (nur Quelle `Server`); offene Punkte unten gehen vor
 
@@ -61,6 +121,14 @@ Aus der Abnahme des Releases Worker-Client & Steuerung.
 - [ ] Downloadseite `https://<Marathon-Adresse>/download` ohne Anmeldung, mit der der Client heruntergeladen wird (nutzt `GET /api/v1/client/download`)
   - Entschieden: Die Zertifikatswarnung des Browsers auf einem Rechner ohne Stammzertifikat wird hier vorerst hingenommen; der installierte Client importiert das Stammzertifikat danach selbst
   - Offen: Inhalt der Seite (nur Schaltfläche oder zusätzlich kurze Installationsschritte) und Verhalten ohne gebautes Client-Paket
+- [ ] Client: installation zertificat: braucht es dass auch für den firmen reverse-proxy? Wenn ja, wird cert immer mit installiert, wenn nein, soll es optional im Installer sein (Marathon arbeitet mit einem Proxy - eigenen Proxy verwenden oder Proxy von Marathon (installaliert Zertifikat)). (Martin)
+- [ ] Workersteuerung UI: Play und Stop werden zu einem Button mit wechselnden Symbol - Sofort bleibt als extra Button - bei Sofort Aus ist das Stop-Symbol zu weit oben und damit nicht mittig auf dem Button. Vergleiche mit dem Stop-Button. (Martin)
+- [ ] Etwas unklar, was jetz die Staus bereit, online und verfügbar darstellen - lässt sich das reduzieren? Verfügbar stellen war als grünen Punkt dar statt "ja" (Martin)
+- [ ] feld "wird sofort gestopp" in worker übersicht tabelle oben braucht es nicht - sofort stoppen geht ja schnell (Martin)
+- [ ] Client Installer mit Marathon-M als Icon - beachte alle Icon-Größen (16x16 bis 256x256 oder was auch immer der Standard ist) (Martin)
+- [ ] Workereinstellungen UI überarbeiten und Rangfolge der Bedingungen klären (Martin)
+  - [ ] Tray-Icon updated sich zu langsam
+  - [ ] Starten, Stoppen, Sofort Aus direkt über Tray-Menü
 
 ### Release Lokale Watchfolder & Rechnerwechsel
 
@@ -106,32 +174,6 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
 - [ ] Quelle `Dieser Rechner` (Live-Listing über den ausgehenden Long-Poll des lokal erkannten Workers, abgesichert über `presence_token`; Admins dürfen zusätzlich beliebige Online-Worker wählen; Hinweis + Download-Link falls lokal kein Client läuft)
   - Offen: Verhalten, wenn der Worker gerade nicht antwortet (Zeitlimit 10 s, Meldungstext)
 
-### Release Modul-Builder
-
-Vertrag erster Wurf: `docs/spec.md` Teil 4 (Migration `0012_macros`, Worker-Protokoll unverändert). Leitidee: die umfassende Abstraktion – aus atomaren Bausteinen entstehen Makro-Systeme. Ersetzt die Teilworkflows (Sub) aus dem Backlog.
-
-Erster Wurf:
-
-- [ ] Modul-Builder als eigene Seite „Module“: links Bausteine, Mitte Flow, rechts Einstellungen; Module nur im Builder erzeugen
-- [ ] Module ohne Code: Bausteine (Modultypen aus `marathon/modules/`) mit Eingang, Ausgängen, einstellbaren Einstellungen und Zählern
-- [ ] Code-Module bleiben Python im Repo; ein freier Code-Block ist verworfen (Ausführung beliebigen Codes auf allen Workern)
-- [ ] Nutzer sehen nur Modul und Einstellungen; Innenleben nur Ersteller und Admin im Builder; Sprung „Im Builder öffnen“ aus dem Workflow
-- [ ] Bestehende Modultypen werden Standardmodule (gehören dem Admin), bestehende Workflows werden migriert
-- [ ] Versionen: Workflows behalten ihre Version; Update-Hinweis im Workflow; Ersteller oder Admin aktualisiert auf Wunsch alle eigenen Workflows
-
-Danach (Teilen, Feinschliff):
-
-- [ ] Freigabe beim Speichern: privat oder öffentlich; öffentliche Module können andere nur benutzen
-- [ ] Fremde Workflows mit meinen Modulen werden vom Ersteller manuell aktualisiert
-- Offen:
-  - Werden Module vom Admin in anderen Workflows immer automatisch aktualisiert? (Martin denkt nach)
-  - Modulsperren je Nutzer und Konsistenzschutz Modul-/Workflow-Freigabe (aus Zugang & Nutzer zurückgestellt)
-  - Verschachtelte Module (Modul aus Modulen)
-  - Begrenzte Ausdruckssprache für kleine Logik (Bedingungen, Namensmuster, Metadaten) ohne Datei-, Netz- oder Importzugriff
-  - Rollout von Code-Modulen über den Server (Backlog „Engine und Worker“)
-
----
-
 ## Backlog
 
 ### Engine und Worker
@@ -141,6 +183,8 @@ Danach (Teilen, Feinschliff):
 - [ ] Umstieg auf Linux & Pfadzuordnung je Worker (Server-Worker sieht `/mnt/...` statt `\\server\freigabe`)
 - [ ] Erreichbare Speicherorte je Worker: Jobs nur an Worker, die die Pfade erreichen – zusammen mit der Pfadzuordnung
 - [ ] Sammeljobs: Ein Modul sammelt mehrere Assets nach einer Regel (z. B. gleicher Schlüssel) und veröffentlicht einen Job; Teilergebnisse je Asset
+- [ ] Syntethisches Testprogramm für Server - ich kann parallel manuell den Worker killen, um dieses Verhalten zu prüfen (Martin)
+- [ ] Ecosystem für Serverupdates: es wird prod und dev umgebung geben. Beide Server dürfen sich nicht beeinflussen und worker müssen immer wissen, welchen server sie verwenden (prod!) - ich brauche ein system, um update für den server von dev auf prod auszurollen. Updates zu modulen (veränderungen, weitere module) sollten ohne server-downzeit erfolgen (Martin)
 
 ### Module
 
@@ -159,6 +203,10 @@ Danach (Teilen, Feinschliff):
   - [ ] Umbenennen: weitere Methoden
   - [ ] Prioliste: Metadaten je Eintrag bearbeiten, Verarbeitung nach Prio
   - [ ] Rechenintensive Module (Transcode, QC …) beim Einbau für den Server-Worker über die Fähigkeiten-Rangliste als letzte Wahl vorsehen
+- [ ] Menüpunkt "Presets" - kommt dann mit Transcode: eine gesammelte stelle über alle Presets mit Option, dort neue zu erstellen, bestehende zu verändern - ein modul, dass mit preset arbeitet, gibt in den Modulsettings gleich die option, aktuelle einstellungen als preset zu speichern (neues Preset, bestehendes Überschreiben). (Martin)
+- [ ] Modul-Builder: Verschachtelte Module (Modul aus Modulen)
+- [ ] Modul-Builder: Begrenzte Ausdruckssprache für kleine Logik (Bedingungen, Namensmuster, Metadaten) ohne Datei-, Netz- oder Importzugriff
+- [ ] Modul-Builder: Rollout von Code-Modulen über den Server (siehe „Engine und Worker“)
 
 ### Assets und Daten
 
@@ -182,6 +230,9 @@ Danach (Teilen, Feinschliff):
   - Offen: Screenshot oder Logauszug mitschicken?
 - [ ] Dashboard-Kennzahlen und Asset-Ansicht ausbauen
   - Offen: Welche weiteren Kennzahlen zeigt das Dashboard (z. B. Fehler, Durchsatz) und welche zusätzlichen Spalten/Filter braucht die Asset-Ansicht?
+- [ ] Reihenfolge linkes Seitenmenü -> System: Nutzer, Worker, Einstellungen -- Einstellungen immer als letztes, auch wenn noch weitere Optionen dazukommen (Martin; heute: Worker, Einstellungen, Nutzer)
+- [ ] Tooltips sollen überall keine Internas preisgeben (IP Adressen, Domain, Server) - immer neutrale Tooltips verwenden (Martin)
+- [ ] UI cleanup - Details kommen noch, ich muss mir erstmal alles ansehen - offen für empfehlung zu klaren rollen der UI Elementei (Seitenleisetn, obere Leiste, Tabellen - beispiel: starten ist einmal im oberen Menüband und einmal in der Tabelle - ist oberes Menüband immer global über Mehrfachauswahl? Machen wir das nur in der Tabelle, weil in der echten Welt nicht ständig x Worker ausgeschaltet werden, sondern ab und zu mal einer) (Martin)
 
 ### Reports
 
@@ -202,19 +253,7 @@ Danach (Teilen, Feinschliff):
   - Offen: Übernimmt den Zugang von außen ein übergeordneter Server / Reverse-Proxy?
 
 ### Änderungen Martin (diesen Bereich immer im Doc belassen!)
-- [ ] Reihenfolge linkes Seitenmenü -> System: Nutzer, Worker, Einstellungen -- Einstellungen immer als letztes, auch wenn noch weitere Optionen dazukommen
-- [ ] Tooltips sollen überall keine Internas preisgeben (IP Adressen, Domain, Server) - immer neutrale Tooltips verwenden
-- [ ] Workersteuerung UI: Play und Stop werden zu einem Button mit wechselnden Symbol - Sofort bleibt als extra Button - bei Sofort Aus ist das Stop-Symbol zu weit oben und damit nicht mittig auf dem Button. Vergleiche mit dem Stop-Button. 
- - [ ] Etwas unklar, was jetz die Staus bereit, online und verfügbar darstellen - lässt sich das reduzieren? Verfügbar stellen war als grünen Punkt dar statt "ja"
- - [ ] feld "wird sofort gestopp" in worker übersicht tabelle oben braucht es nicht - sofort stoppen geht ja schnell
- - [ ] Client Installer mit Marathon-M als Icon - beachte alle Icon-Größen (16x16 bis 256x256 oder was auch immer der Standard ist)
- - [ ] Workereinstellungen UI überarbeiten und Rangfolge der Bedingungen klären
-   - [ ] Tray-Icon updated sich zu langsam
-   - [ ] Starten, Stoppen, Sofort Aus direkt über Tray-Menü
- - [ ] Syntethisches Testprogramm für Server - ich kann parallel manuell den Worker killen, um dieses Verhalten zu prüfen
- - [ ] Ecosystem für Serverupdates: es wird prod und dev umgebung geben. Beide Server dürfen sich nicht beeinflussen und worker müssen immer wissen, welchen server sie verwenden (prod!) - ich brauche ein system, um update für den server von dev auf prod auszurollen. Updates zu modulen (veränderungen, weitere module) sollten ohne server-downzeit erfolgen
- - [ ] UI cleanup - Details kommen noch, ich muss mir erstmal alles ansehen - offen für empfehlung zu klaren rollen der UI Elementei (Seitenleisetn, obere Leiste, Tabellen - beispiel: starten ist einmal im oberen Menüband und einmal in der Tabelle - ist oberes Menüband immer global über Mehrfachauswahl? Machen wir das nur in der Tabelle, weil in der echten Welt nicht ständig x Worker ausgeschaltet werden, sondern ab und zu mal einer)
- - [ ] Client: installation zertificat: braucht es dass auch für den firmen reverse-proxy? Wenn ja, wird cert immer mit installiert, wenn nein, soll es optional im Installer sein (Marathon arbeitet mit einem Proxy - eigenen Proxy verwenden oder Proxy von Marathon (installaliert Zertifikat)).
- - [ ] Menüpunkt "Presets" - kommt dann mit Transcode: eine gesammelte stelle über alle Presets mit Option, dort neue zu erstellen, bestehende zu verändern - ein modul, dass mit preset arbeitet, gibt in den Modulsettings gleich die option, aktuelle einstellungen als preset zu speichern (neues Preset, bestehendes Überschreiben).
- - [ ] Formalisierung der freigabe und berechtigunegen (besitzer und admin dürfen ändern, andere nur nutzen)
- - [ ] Modul-Builder settings liegen nichts rechts, sondern unter editor - UI kaputt
+
+Eingang für neue Punkte; einsortierte Punkte tragen den Vermerk „(Martin)“.
+
+- [ ] 
