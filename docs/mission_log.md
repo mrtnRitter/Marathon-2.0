@@ -214,4 +214,7 @@ Danach (Teilen, Feinschliff):
  - [ ] Syntethisches Testprogramm für Server - ich kann parallel manuell den Worker killen, um dieses Verhalten zu prüfen
  - [ ] Ecosystem für Serverupdates: es wird prod und dev umgebung geben. Beide Server dürfen sich nicht beeinflussen und worker müssen immer wissen, welchen server sie verwenden (prod!) - ich brauche ein system, um update für den server von dev auf prod auszurollen. Updates zu modulen (veränderungen, weitere module) sollten ohne server-downzeit erfolgen
  - [ ] UI cleanup - Details kommen noch, ich muss mir erstmal alles ansehen - offen für empfehlung zu klaren rollen der UI Elementei (Seitenleisetn, obere Leiste, Tabellen - beispiel: starten ist einmal im oberen Menüband und einmal in der Tabelle - ist oberes Menüband immer global über Mehrfachauswahl? Machen wir das nur in der Tabelle, weil in der echten Welt nicht ständig x Worker ausgeschaltet werden, sondern ab und zu mal einer)
- - [ ] 
+ - [ ] Client: installation zertificat: braucht es dass auch für den firmen reverse-proxy? Wenn ja, wird cert immer mit installiert, wenn nein, soll es optional im Installer sein (Marathon arbeitet mit einem Proxy - eigenen Proxy verwenden oder Proxy von Marathon (installaliert Zertifikat)).
+ - [ ] Menüpunkt "Presets" - kommt dann mit Transcode: eine gesammelte stelle über alle Presets mit Option, dort neue zu erstellen, bestehende zu verändern - ein modul, dass mit preset arbeitet, gibt in den Modulsettings gleich die option, aktuelle einstellungen als preset zu speichern (neues Preset, bestehendes Überschreiben).
+ - [ ] Formalisierung der freigabe und berechtigunegen (besitzer und admin dürfen ändern, andere nur nutzen)
+ - [ ] Modul-Builder settings liegen nichts rechts, sondern unter editor - UI kaputt
