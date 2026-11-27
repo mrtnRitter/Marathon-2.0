@@ -11,6 +11,7 @@ import { get_module_activity } from '../../data/api'
 import type { Asset, Job, Worker } from '../../data/types'
 import { use_data } from '../../data/use_data'
 import { use_server_connected } from '../../data/use_connection'
+import { has_access } from '../../lib/access'
 import { format_relative } from '../../lib/format'
 import { asset_status_meta, job_status_meta, shown_worker_status, step_status_meta, worker_status_meta } from '../../theme/status'
 import type { ModuleNodeData } from './editor_types'
@@ -25,6 +26,9 @@ const job_columns: Column<Job>[] = [
   { key: 'asset_ids', label: 'Assets', render: row => row.asset_ids.length, align: 'right' },
 ]
 
+const blind_name = 'Nicht freigegebenes Modul'
+const blind_hint = 'Dieses Modul ist für Dich nicht zur Ansicht freigegeben'
+
 const asset_columns: Column<Asset>[] = [
   { key: 'name', label: 'Name' },
   { key: 'status', label: 'Gesamtstatus', render: row => <StatusBadge meta={asset_status_meta[row.status]} /> },
@@ -36,6 +40,7 @@ const asset_columns: Column<Asset>[] = [
 export function ModuleActivityPanel({ workflow_id, data, on_close, on_builder_open }: { workflow_id: string; data: ModuleNodeData; on_close: () => void; on_builder_open: () => void }) {
   const navigate = useNavigate()
   const [tab, set_tab] = useState('jobs')
+  const visible_tab = data.module.blind && tab === 'settings' ? 'jobs' : tab
   const connected = use_server_connected()
   const { data: activity, loading } = use_data(() => get_module_activity(workflow_id, data.module.id), [workflow_id, data.module.id], { live: ['jobs', 'job_assets', 'assets', 'workers', 'log_lines'] })
   const worker_columns = useMemo<Column<Worker>[]>(() => [
@@ -45,22 +50,22 @@ export function ModuleActivityPanel({ workflow_id, data, on_close, on_builder_op
     { key: 'client_version', label: 'Version' },
   ], [connected])
   return (
-    <SlidePanel open title={data.module.name} icon={data.module_type.icon} on_close={on_close} width={760} click_through body_class_name="module-activity-panel-body"
-      actions={data.module.can_edit ? [{ label: 'Im Builder öffnen', icon: 'blocks', on_click: on_builder_open }] : []}>
-      <Tabs active={tab} on_change={set_tab} items={[
+    <SlidePanel open title={data.module.blind ? blind_name : data.module.name} icon={data.module.blind ? undefined : data.module_type.icon} on_close={on_close} width={760} click_through body_class_name="module-activity-panel-body"
+      actions={has_access(data.module.access, 'edit') ? [{ label: 'Im Builder öffnen', icon: 'blocks', on_click: on_builder_open }] : []}>
+      <Tabs active={visible_tab} on_change={set_tab} items={[
         { id: 'jobs', label: 'Jobs', icon: 'activity', count: activity?.jobs.length },
         { id: 'assets', label: 'Assets', icon: 'files', count: activity?.assets.length },
         { id: 'workers', label: 'Worker', icon: 'server', count: activity?.workers.length },
         { id: 'logs', label: 'Logs', icon: 'cpu' },
-        { id: 'settings', label: 'Einstellungen', icon: 'settings' },
+        ...(!data.module.blind ? [{ id: 'settings', label: 'Einstellungen', icon: 'settings' }] : []),
       ]} />
-      <div className={`module-activity-body${tab === 'logs' ? ' logs-active' : ''}`}>
-        {tab === 'settings' ? <ModuleSettingsForm data={data} read_only /> : !activity ? (loading ? <div className="module-activity-loading"><Spinner active={loading} /></div> : <div className="loading">Lade</div>) : {
+      <div className={`module-activity-body${visible_tab === 'logs' ? ' logs-active' : ''}`}>
+        {visible_tab === 'settings' ? <ModuleSettingsForm data={data} read_only /> : !activity ? (loading ? <div className="module-activity-loading"><Spinner active={loading} /></div> : <div className="loading">Lade</div>) : {
           jobs: <DataTable columns={job_columns} rows={activity.jobs} row_key={row => row.id} empty_text="Keine Jobs an diesem Modul" />,
           assets: <DataTable columns={asset_columns} rows={activity.assets} row_key={row => row.id} on_row_open={row => navigate(`/assets/${row.id}`)} empty_text="Keine Assets an diesem Modul" />,
           workers: <DataTable columns={worker_columns} rows={activity.workers} row_key={row => row.id} empty_text="Keine Worker beteiligt" />,
-          logs: <LogView lines={activity.logs} live={data.module.counters.running > 0} module_log />,
-        }[tab]}
+          logs: activity.logs_hidden ? <p className="muted">{blind_hint}</p> : <LogView lines={activity.logs} live={data.module.counters.running > 0} module_log />,
+        }[visible_tab]}
       </div>
     </SlidePanel>
   )

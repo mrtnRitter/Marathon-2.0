@@ -7,6 +7,8 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
 from marathon.server.auth.sessions import AuthUser
+from marathon.server.db.edit_locks import active_foreign_lock, break_lock, lock_held_prefix
+from marathon.server.db.object_access import log_event, log_intervention
 from marathon.server.db.macro_writes import (
     load_definitions,
     load_macros,
@@ -38,29 +40,20 @@ class _SkipWorkflow(Exception):
 def _load_update_context(
     connection: Connection,
     macro_id: str,
-    user_id: str,
-) -> tuple[list[dict[str, str]], int, dict[str, Any]] | None:
+    user: AuthUser,
+) -> tuple[list[dict[str, str]], int, dict[str, Any], str] | None:
     """Load the user's outdated workflows and the current macro hull."""
     macro = load_macros(connection, [macro_id]).get(macro_id)
     if macro is None or macro["archived_at"] is not None:
         return None
-    user_row = connection.execute(text(
-        "SELECT id, email, display_name, role FROM users WHERE id = :user_id"
-    ), {"user_id": user_id}).mappings().one_or_none()
-    if user_row is None:
-        return None
-    user = AuthUser(
-        id=user_row["id"], email=user_row["email"], display_name=user_row["display_name"],
-        role=user_row["role"], session_id="",
-    )
     workflows = outdated_workflows(connection, macro_id, user)
     definition = load_definitions(connection, [(macro_id, macro["current_version"])]).get(
         (macro_id, macro["current_version"])
     )
     if definition is None:
-        return [], macro["current_version"], {}
+        return [], macro["current_version"], {}, ""
     hull = macro_hull(macro_id, macro["current_version"], definition, module_type_map(connection))
-    return workflows, macro["current_version"], hull
+    return workflows, macro["current_version"], hull, definition["name"]
 
 
 def _workflow_graph(connection: Connection, workflow_id: str, version: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -98,6 +91,9 @@ def _update_one_workflow(
     macro_id: str,
     macro_version: int,
     hull: dict[str, Any],
+    module_name: str,
+    user: AuthUser,
+    force: bool,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     """Update one outdated graph, returning either its update or skip result."""
     dropped_settings: set[str] = set()
@@ -108,6 +104,11 @@ def _update_one_workflow(
             ), {"id": workflow["id"]}).scalar_one_or_none()
             if current_version is None:
                 raise _SkipWorkflow("Workflow nicht gefunden")
+
+            lock = active_foreign_lock(connection, "workflow", workflow["id"])
+            foreign_lock = lock is not None and lock["user_id"] != user.id
+            if foreign_lock and not force:
+                raise _SkipWorkflow(lock_held_prefix + lock["name"])
 
             modules, connections = _workflow_graph(connection, workflow["id"], current_version)
             has_update = False
@@ -135,9 +136,28 @@ def _update_one_workflow(
             )
             if any(item["assets"] > 0 or item["jobs"] > 0 for item in impact["removed_modules"]):
                 raise _SkipWorkflow("Laufende Assets betroffen")
+
+            if foreign_lock and force:
+                broken = break_lock(connection, "workflow", workflow["id"])
+                if broken is not None and not broken["expired"] and broken["user_id"] != user.id:
+                    log_event(
+                        connection,
+                        user,
+                        "workflow",
+                        workflow["id"],
+                        f"Bearbeitungssperre von {broken['name']} aufgehoben",
+                    )
+
             saved_version = save_graph(connection, workflow["id"], current_version, modules, connections)
             if saved_version is None:
                 raise _SkipWorkflow("Workflow nicht gefunden")
+            log_intervention(
+                connection,
+                user,
+                "workflow",
+                workflow["id"],
+                f"Modul „{module_name}“ auf v{macro_version} aktualisiert",
+            )
         return {
             "id": workflow["id"],
             "name": workflow["name"],
@@ -158,14 +178,15 @@ def _update_one_workflow(
 def update_outdated_workflows(
     engine: Engine,
     macro_id: str,
-    user_id: str,
+    user: AuthUser,
+    force: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Upgrade outdated workflows owned by one user to the current macro version."""
+    """Upgrade outdated workflows visible to the user to the current macro version."""
     with engine.begin() as connection:
-        context = _load_update_context(connection, macro_id, user_id)
+        context = _load_update_context(connection, macro_id, user)
     if context is None:
         return {"updated": [], "skipped": []}
-    workflows, macro_version, hull = context
+    workflows, macro_version, hull, module_name = context
     if not hull:
         return {"updated": [], "skipped": []}
 
@@ -173,7 +194,7 @@ def update_outdated_workflows(
     skipped = []
     for workflow in workflows:
         updated_workflow, skipped_workflow = _update_one_workflow(
-            engine, workflow, macro_id, macro_version, hull
+            engine, workflow, macro_id, macro_version, hull, module_name, user, force
         )
         if updated_workflow is not None:
             updated.append(updated_workflow)

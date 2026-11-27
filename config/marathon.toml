@@ -33,3 +33,6 @@ control_session_hours = 12     # So lange gilt die Worker-Einstellungsseite nach
 
 [client_build]
 sign_command = []              # Befehl zum Signieren der Worker-Client-Exe als Liste, {file} = Pfad der Exe; leer = nicht signieren
+
+[edit_lock]
+ttl_s = 120   # Bearbeitungssperre verfällt nach so vielen Sekunden ohne Lebenszeichen (30–3600)

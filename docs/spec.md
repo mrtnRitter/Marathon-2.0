@@ -9,7 +9,7 @@ Bezeichner im Code englisch (`snake_case`), Texte für Nutzer deutsch und wörtl
 - **Teil 2a** beschreibt den Vertrag für den Release *HTTPS* (keine Migration, Worker-Protokoll unverändert).
 - **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Zugang & Nutzer: Migration `0010_users`, Worker-Protokoll unverändert; Worker-Client & Steuerung: Migration `0011_worker_client`, Worker-Protokoll 3, umgesetzt; übrige Releases: eigene Migrationen, noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
 - **Teil 4** beschreibt den Vertrag für den ersten Wurf des Releases *Modul-Builder* (Migration `0012_macros`, Worker-Protokoll unverändert; umgesetzt, Abnahme offen).
-- **Teil 5** beschreibt den Vertrag für den Release *Freigaben & Besitz* (Migration `0013_access`, Worker-Protokoll unverändert; in Umsetzung). Er löst alle früheren Rechte-Regeln für Workflows und Module ab.
+- **Teil 5** beschreibt den Vertrag für den Release *Freigaben & Besitz* (Migration `0013_access`, Worker-Protokoll unverändert; umgesetzt). Er löst alle früheren Rechte-Regeln für Workflows und Module ab.
 
 ---
 
@@ -1031,7 +1031,7 @@ Beim Serverstart legt `ensure_standard_macros(connection)` direkt nach `sync_mod
 
 ---
 
-# Teil 5: Release Freigaben & Besitz (in Umsetzung, Migration `0013_access`, Worker-Protokoll unverändert)
+# Teil 5: Release Freigaben & Besitz (umgesetzt, Migration `0013_access`, Worker-Protokoll unverändert)
 
 Ein Freigabesystem für alle teilbaren Objekte. Es ersetzt §3.3 „Workflow-Freigaben“, die Rechte in §4.1, `can_edit` in §4.5–§4.7, die Lösch- und Aktualisierungsregeln in §4.6 sowie die Anzeige „Standard“ in §4.7. Es gibt keine Sonderregeln je Objekttyp; Lücken werden hier gelöst.
 
@@ -1040,7 +1040,7 @@ Ein Freigabesystem für alle teilbaren Objekte. Es ersetzt §3.3 „Workflow-Fre
 - **Objekttypen** `object_types = ("workflow", "macro")` (Tabellen `workflows`, `macros`; Presets folgen später).
 - **Besitzer:** alle Admins (Rolle `admin`, inkl. Notfallzugang) immer, dazu höchstens ein **Nutzer-Besitzer** in `owner_user_id`; `NULL` = nur Admins. Admins können nie entzogen werden.
 - **Anzeige „Besitzer“:** Anzeigename, sonst E-Mail des Nutzer-Besitzers; ohne Nutzer-Besitzer „Admin“.
-- **Anlegen und Duplizieren:** durch einen Nutzer → `owner_user_id = user.id`; durch einen Admin → `NULL`. `ensure_standard_macros` legt `NULL` an. Neue Objekte sind privat.
+- **Anlegen und Duplizieren:** durch einen Nutzer → `owner_user_id = user.id`; durch einen Admin → `NULL`. `ensure_standard_macros` legt `NULL` an und gibt nur neu angelegte Module für Alle mit `use` frei (Standardmodul). Alle anderen neuen Objekte sind privat.
 - **Freigaben** (`object_shares`): Empfänger ein Nutzer oder **Alle** (`user_id NULL`), Stufe `view` | `use` | `edit`. Kein Eintrag = privat.
 - **Stufen** `access_levels = ("view", "use", "edit", "owner")`, aufsteigend; jede Stufe enthält die darunter.
 - **Wirksame Stufe** eines Nutzers: Objekt fehlt → keine; Admin → `owner`; `owner_user_id = user.id` → `owner`; sonst die höhere aus eigener Freigabe und Freigabe für Alle; ohne beide → keine (Objekt unsichtbar). Serverinterne Aufrufe ohne Nutzer (`user None`) haben `owner`.

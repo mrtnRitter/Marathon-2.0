@@ -1,0 +1,15 @@
+.edit-lock-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text);
+  background: var(--bg-panel);
+}
+
+.edit-lock-notice button {
+  flex: 0 0 auto;
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { dropped_message, upgrade_module } from '../src/lib/macro_upgrade.ts'
+import { dropped_message, upgrade_blind_module, upgrade_module } from '../src/lib/macro_upgrade.ts'
 import { remove_edges_with_missing_outputs, to_graph_input, to_nodes } from '../src/features/workflow-editor/graph_mapping.ts'
 
 const hull = {
@@ -76,4 +76,35 @@ test('remove_edges_with_missing_outputs drops only upgraded module edges with re
   const upgraded_hull = { outputs: [{ id: 'success' }] }
 
   assert.deepEqual(remove_edges_with_missing_outputs('instance-1', upgraded_hull.outputs, edges).map(edge => edge.id), ['kept', 'other'])
+})
+
+
+test('upgrade_blind_module advances only version metadata without mutating the module', () => {
+  const blind_module = {
+    ...module,
+    type_id: '',
+    settings: { secret: 'masked' },
+    hull: { id: '', version: 2, name: '', settings: [], outputs: [] },
+    latest_version: 5,
+    update_available: true,
+    blind: true,
+  }
+  const original = structuredClone(blind_module)
+  const result = upgrade_blind_module(blind_module)
+
+  assert.notEqual(result, blind_module)
+  assert.equal(result.macro_version, 5)
+  assert.equal(result.update_available, false)
+  assert.equal(result.settings, blind_module.settings)
+  assert.equal(result.hull, blind_module.hull)
+  assert.deepEqual(blind_module, original)
+})
+
+test('upgrade_blind_module returns an unchanged copy when latest_version is absent', () => {
+  const blind_module = { ...module, blind: true, latest_version: undefined }
+  delete blind_module.latest_version
+  const result = upgrade_blind_module(blind_module)
+
+  assert.notEqual(result, blind_module)
+  assert.deepEqual(result, blind_module)
 })

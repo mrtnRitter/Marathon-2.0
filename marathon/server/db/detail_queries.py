@@ -7,10 +7,10 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection
 
 from marathon.server.auth.sessions import AuthUser
-from marathon.server.db.macro_writes import can_edit_macro, load_definitions, load_macros, module_type_map
-from marathon.server.db.queries import list_assets, list_workers
+from marathon.server.db.macro_writes import load_definitions, load_macros, module_type_map
+from marathon.server.db.object_access import access_levels, access_filter_sql, object_access_map
+from marathon.server.db.queries import blind_message_text, blind_module_name, list_assets, list_workers
 from marathon.server.macros.definition import macro_hull
-from marathon.server.db.workflow_access import workflow_access_filter
 
 
 def get_graph(
@@ -91,31 +91,59 @@ def get_graph(
     for row in done_rows:
         counters_by_instance.setdefault(row["instance_id"], {})["done"] = row["done"]
 
+    module_access = object_access_map(
+        connection, user, "macro", (instance["macro_id"] for instance in instances)
+    )
     module_list = []
     for instance in instances:
         macro_id = instance["macro_id"]
         macro = macro_rows[macro_id]
         macro_version = instance["macro_version"]
         counters = counters_by_instance.get(instance["id"], {})
+        access = module_access.get(macro_id)
+        hull = macro_hull(
+            macro_id,
+            macro_version,
+            definitions[(macro_id, macro_version)],
+            module_types,
+        )
+        blind = access is None
+        if blind:
+            hull = {
+                "id": "",
+                "version": macro_version,
+                "name": "",
+                "category": "",
+                "icon": "",
+                "description": "",
+                "sort_order": 0,
+                "has_input": hull["has_input"],
+                "outputs": [
+                    {
+                        "id": output["id"],
+                        "label": output["label"],
+                        "description": "",
+                        **({"data": True} if output.get("data") is True else {}),
+                    }
+                    for output in hull["outputs"]
+                ],
+                "settings": [],
+            }
         module_list.append({
             "id": instance["id"],
-            "type_id": macro_id,
+            "type_id": "" if blind else macro_id,
             "macro_version": macro_version,
             "latest_version": macro["current_version"],
             "update_available": (
                 macro["current_version"] > macro_version and macro["archived_at"] is None
             ),
-            "can_edit": user is not None and can_edit_macro(macro["owner_user_id"], user),
-            "hull": macro_hull(
-                macro_id,
-                macro_version,
-                definitions[(macro_id, macro_version)],
-                module_types,
-            ),
-            "name": instance["name"],
-            "description": instance["description"],
+            "access": access,
+            "blind": blind,
+            "hull": hull,
+            "name": "" if blind else instance["name"],
+            "description": "" if blind else instance["description"],
             "position": {"x": instance["position_x"], "y": instance["position_y"]},
-            "settings": instance["settings"],
+            "settings": {} if blind else instance["settings"],
             "locked": instance["locked"],
             "counters": {
                 "waiting": counters.get("waiting", 0),
@@ -153,7 +181,8 @@ def get_module_activity(
 ) -> dict[str, Any] | None:
     """Return activity for a current module instance, or None when missing."""
     instance = connection.execute(text(
-        "SELECT workflow.current_version AS version FROM workflows AS workflow "
+        "SELECT workflow.current_version AS version, instance.macro_id "
+        "FROM workflows AS workflow "
         "JOIN workflow_instances AS instance ON instance.workflow_id = workflow.id "
         "AND instance.version = workflow.current_version "
         "WHERE workflow.id = :workflow_id AND instance.id = :module_id"
@@ -161,6 +190,8 @@ def get_module_activity(
     if instance is None:
         return None
 
+    module_access = object_access_map(connection, user, "macro", [instance["macro_id"]])
+    access = module_access.get(instance["macro_id"])
     runtime_ids = list(connection.execute(text(
         "SELECT id FROM workflow_modules WHERE workflow_id = :workflow_id "
         "AND version = :version AND instance_id = :module_id ORDER BY id"
@@ -192,21 +223,32 @@ def get_module_activity(
         worker_id = job.pop("worker_id")
         if worker_id is not None:
             worker_ids.add(worker_id)
+        if access not in ("edit", "owner"):
+            job["module_id"] = module_id
     workers = [worker for worker in list_workers(connection) if worker["id"] in worker_ids]
-    logs = connection.execute(text(
-        "SELECT ts, level, text, asset, worker FROM ("
-        "SELECT log.id, log.ts, log.level, log.text, asset.name AS asset, worker.name AS worker "
-        "FROM log_lines AS log LEFT JOIN assets AS asset ON asset.id = log.asset_id "
-        "LEFT JOIN jobs AS job ON job.id = log.job_id "
-        "LEFT JOIN workers AS worker ON worker.id = job.worker_id "
-        "WHERE log.workflow_id = :workflow_id AND (log.module_id = :module_id OR log.module_id IN :runtime_ids) "
-        "AND log.level IN ('warn', 'error') "
-        "ORDER BY log.ts DESC, log.id DESC LIMIT 500"
-        ") AS recent_logs ORDER BY ts, id"
-    ).bindparams(bindparam("runtime_ids", expanding=True)), {
-        "workflow_id": workflow_id, "module_id": module_id, "runtime_ids": runtime_ids,
-    }).mappings()
-    return {"jobs": jobs, "assets": assets, "workers": workers, "logs": [dict(row) for row in logs]}
+    logs = []
+    if access is not None:
+        rows = connection.execute(text(
+            "SELECT ts, level, text, asset, worker FROM ("
+            "SELECT log.id, log.ts, log.level, log.text, asset.name AS asset, worker.name AS worker "
+            "FROM log_lines AS log LEFT JOIN assets AS asset ON asset.id = log.asset_id "
+            "LEFT JOIN jobs AS job ON job.id = log.job_id "
+            "LEFT JOIN workers AS worker ON worker.id = job.worker_id "
+            "WHERE log.workflow_id = :workflow_id AND (log.module_id = :module_id OR log.module_id IN :runtime_ids) "
+            "AND log.level IN ('warn', 'error') "
+            "ORDER BY log.ts DESC, log.id DESC LIMIT 500"
+            ") AS recent_logs ORDER BY ts, id"
+        ).bindparams(bindparam("runtime_ids", expanding=True)), {
+            "workflow_id": workflow_id, "module_id": module_id, "runtime_ids": runtime_ids,
+        }).mappings()
+        logs = [dict(row) for row in rows]
+    return {
+        "jobs": jobs,
+        "assets": assets,
+        "workers": workers,
+        "logs": logs,
+        "logs_hidden": access is None,
+    }
 
 
 def _duration_seconds(
@@ -235,6 +277,20 @@ def _output_label(outputs: Any, output_id: str | None) -> str | None:
     return output_id
 
 
+
+def _macro_output_label(exits: Any, output_id: str | None, definition: Any) -> str | None:
+    """Resolve a runtime output through its instance definition."""
+    if output_id is None or not isinstance(exits, dict):
+        return None
+    macro_output_id = exits.get(output_id)
+    if macro_output_id is None:
+        return None
+    for output in definition.get("outputs", []):
+        if output.get("id") == macro_output_id:
+            return output.get("label")
+    return None
+
+
 def get_asset_detail(
     connection: Connection,
     asset_id: str,
@@ -242,7 +298,7 @@ def get_asset_detail(
     user: AuthUser | None = None,
 ) -> dict[str, Any] | None:
     """Return an accessible asset with its timeline, messages, and logs, or None."""
-    access_filter, parameters = workflow_access_filter(user)
+    access_filter, parameters = access_filter_sql(user, "workflow", "workflow")
     parameters["asset_id"] = asset_id
     asset_row = connection.execute(text(
         "SELECT asset.id, asset.workflow_id, asset.name, asset.status, asset.current_module_id, "
@@ -259,7 +315,7 @@ def get_asset_detail(
     if current_time.tzinfo is None:
         current_time = current_time.replace(tzinfo=timezone.utc)
 
-    timeline_rows = connection.execute(text(
+    timeline_rows = list(connection.execute(text(
         "SELECT job.module_id, COALESCE(module.name, job.module_id) AS module_name, job.id AS job_id, "
         "job.status, job.attempt, job.worker_id, worker.name AS worker, job_asset.output_id, module_type.outputs, "
         "job.created_at, job.started_at, job.finished_at "
@@ -271,32 +327,110 @@ def get_asset_detail(
         "AND module.version = workflow.current_version AND module.id = job.module_id "
         "LEFT JOIN module_types AS module_type ON module_type.id = module.type_id "
         "WHERE job_asset.asset_id = :asset_id ORDER BY job.created_at, job.id"
-    ), {"asset_id": asset_id}).mappings()
+    ), {"asset_id": asset_id}).mappings())
+    messages = list(connection.execute(text(
+        "SELECT ts, kind, text, module_id FROM asset_history "
+        "WHERE asset_id = :asset_id ORDER BY ts DESC, id DESC"
+    ), {"asset_id": asset_id}).mappings())
+    log_rows = list(connection.execute(text(
+        "SELECT log.ts, log.level, log.text, job.module_id "
+        "FROM log_lines AS log "
+        "JOIN job_assets AS job_asset ON job_asset.job_id = log.job_id "
+        "LEFT JOIN jobs AS job ON job.id = log.job_id "
+        "WHERE job_asset.asset_id = :asset_id ORDER BY log.ts, log.id"
+    ), {"asset_id": asset_id}).mappings())
+
+    runtime_ids = list(dict.fromkeys(
+        module_id for module_id in (
+            detail["current_module_id"],
+            *(row["module_id"] for row in timeline_rows),
+            *(row["module_id"] for row in messages),
+        ) if module_id is not None
+    ))
+    if runtime_ids:
+        module_rows = list(connection.execute(text(
+            "SELECT runtime.id AS runtime_id, runtime.version, runtime.exits, "
+            "instance.macro_id, instance.macro_version "
+            "FROM workflow_modules AS runtime "
+            "JOIN workflow_instances AS instance ON instance.workflow_id = runtime.workflow_id "
+            "AND instance.version = runtime.version AND instance.id = runtime.instance_id "
+            "WHERE runtime.workflow_id = :workflow_id AND runtime.instance_id IS NOT NULL "
+            "AND runtime.id IN :runtime_ids ORDER BY runtime.version DESC"
+        ).bindparams(bindparam("runtime_ids", expanding=True)), {
+            "workflow_id": detail["workflow_id"], "runtime_ids": runtime_ids,
+        }).mappings())
+    else:
+        module_rows = []
+
+    macro_ids = list(dict.fromkeys(row["macro_id"] for row in module_rows))
+    module_access = object_access_map(connection, user, "macro", macro_ids)
+    rows_by_runtime: dict[str, list[Any]] = {}
+    latest_by_runtime: dict[str, Any] = {}
+    for row in module_rows:
+        rows_by_runtime.setdefault(row["runtime_id"], []).append(row)
+        latest_by_runtime.setdefault(row["runtime_id"], row)
+
+    runtime_access: dict[str, str | None] = {}
+    for runtime_id, rows in rows_by_runtime.items():
+        levels = [module_access.get(row["macro_id"]) for row in rows]
+        runtime_access[runtime_id] = min(
+            levels, key=lambda level: access_levels.index(level) if level in access_levels else -1
+        )
+    definitions_needed = [
+        (row["macro_id"], row["macro_version"])
+        for runtime_id, row in latest_by_runtime.items()
+        if runtime_access[runtime_id] not in ("edit", "owner")
+    ]
+    definitions = load_definitions(connection, definitions_needed)
+
+    if detail["current_module_id"] in runtime_access and runtime_access[detail["current_module_id"]] is None:
+        detail["current_module"] = blind_module_name
+
     timeline = []
     for row in timeline_rows:
+        module_id = row["module_id"]
+        access = runtime_access.get(module_id)
         started_at = row["started_at"]
         duration = _duration_seconds(row["status"], started_at, row["finished_at"], current_time)
+        module_name = blind_module_name if module_id in runtime_access and access is None else row["module_name"]
+        if module_id in runtime_access and access not in ("edit", "owner"):
+            macro_instance = latest_by_runtime[module_id]
+            output_label = _macro_output_label(
+                macro_instance["exits"], row["output_id"],
+                definitions[(macro_instance["macro_id"], macro_instance["macro_version"])],
+            )
+        else:
+            output_label = _output_label(row["outputs"], row["output_id"])
         timeline.append({
-            "module_id": row["module_id"],
-            "module_name": row["module_name"],
+            "module_id": module_id,
+            "module_name": module_name,
             "job_id": row["job_id"],
             "status": row["status"],
             "attempts": row["attempt"],
             "worker": row["worker"] or "–",
             "started_at": started_at or row["created_at"],
             "duration_s": duration,
-            "output_label": _output_label(row["outputs"], row["output_id"]),
+            "output_label": output_label,
         })
 
-    messages = connection.execute(text(
-        "SELECT ts, kind, text FROM asset_history WHERE asset_id = :asset_id ORDER BY ts DESC, id DESC"
-    ), {"asset_id": asset_id}).mappings()
-    logs = connection.execute(text(
-        "SELECT log.ts, log.level, log.text FROM log_lines AS log "
-        "JOIN job_assets AS job_asset ON job_asset.job_id = log.job_id "
-        "WHERE job_asset.asset_id = :asset_id ORDER BY log.ts, log.id"
-    ), {"asset_id": asset_id}).mappings()
+    visible_logs = [
+        {key: row[key] for key in ("ts", "level", "text")}
+        for row in log_rows
+        if row["module_id"] not in runtime_access or runtime_access[row["module_id"]] is not None
+    ]
+    visible_messages = [
+        {
+            "ts": row["ts"],
+            "kind": row["kind"],
+            "text": (
+                blind_message_text
+                if row["module_id"] in runtime_access and runtime_access[row["module_id"]] is None
+                else row["text"]
+            ),
+        }
+        for row in messages
+    ]
     detail["timeline"] = timeline
-    detail["messages"] = [dict(row) for row in messages]
-    detail["log"] = [dict(row) for row in logs]
+    detail["messages"] = visible_messages
+    detail["log"] = visible_logs
     return detail

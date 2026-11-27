@@ -88,7 +88,7 @@ function BuilderFlow(props: Props) {
     <EditorModeContext.Provider value="edit">
       <EditorActionsContext.Provider value={empty_actions}>
         <div className="module-builder-body">
-          <aside className="module-builder-left">
+          <aside className="module-builder-left" aria-disabled={props.disabled} onDragStartCapture={event => { if (props.disabled) event.preventDefault() }}>
             <div className="module-builder-left-title"><Icon name="blocks" size={16} /><span>Bausteine</span></div>
             <ModulePalette module_types={props.module_types} placeholder="Bausteine suchen …" empty_text="Keine Bausteine vorhanden" />
           </aside>
@@ -98,9 +98,9 @@ function BuilderFlow(props: Props) {
               edges={edges}
               nodeTypes={node_types}
               onNodesChange={on_nodes_change}
-              onNodesDelete={deleted => props.on_remove_blocks(deleted.map(node => node.id))}
+              onNodesDelete={deleted => { if (!props.disabled) props.on_remove_blocks(deleted.map(node => node.id)) }}
               onEdgesChange={on_edges_change}
-              onEdgesDelete={on_edges_delete}
+              onEdgesDelete={deleted => { if (!props.disabled) on_edges_delete(deleted) }}
               onConnect={connection => { if (can_connect(connection)) props.on_connect(connection) }}
               isValidConnection={can_connect}
               onNodeClick={(_event, node) => props.on_select(node.id)}

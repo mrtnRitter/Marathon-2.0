@@ -105,20 +105,26 @@ Ist der Mailversand nicht eingerichtet, meldet erst die Auswahl von „Code send
 
 ### Nutzer und Rollen
 
-Admins verwalten Marathon vollständig. Normale Nutzer sehen weder „Einstellungen“ noch die Seite „Nutzer“ und sehen nur eigene oder freigegebene Workflows. Sie können Worker ansehen, aber nicht steuern oder bearbeiten.
+Admins verwalten Marathon vollständig. Normale Nutzer sehen weder „Einstellungen“ noch die Seite „Nutzer“ und sehen nur eigene oder freigegebene Workflows und Module. Sie können Worker ansehen, aber nicht steuern oder bearbeiten.
 
-Auf der Seite „Nutzer“ kann ein Admin die Rolle „Nutzer“ oder „Admin“ ändern. Die Zahl unter „Sitzungen“ öffnet die angemeldeten Geräte; „Alle abmelden“ widerruft die Sitzungen. Bei einer gesperrten Adresse lässt sich „Sperre aufheben“ wählen. Das gilt auch für den Notfallzugang. Dieser ist nicht herabstufbar oder löschbar, trägt den Hinweis „Notfallzugang“ und erscheint nicht im Teilen-Dialog. Geschützt bleibt sonst nur der letzte Admin: „Der letzte Admin kann nicht herabgestuft oder gelöscht werden“. Workflows eines gelöschten Nutzers bleiben ohne Eigentümer und sind nur für Admins sichtbar.
+Auf der Seite „Nutzer“ kann ein Admin die Rolle „Nutzer“ oder „Admin“ ändern. Die Zahl unter „Sitzungen“ öffnet die angemeldeten Geräte; „Alle abmelden“ widerruft die Sitzungen. Bei einer gesperrten Adresse lässt sich „Sperre aufheben“ wählen. Das gilt auch für den Notfallzugang. Dieser ist nicht herabstufbar oder löschbar, trägt den Hinweis „Notfallzugang“ und erscheint nicht im Teilen-Dialog. Geschützt bleibt sonst nur der letzte Admin: „Der letzte Admin kann nicht herabgestuft oder gelöscht werden“. Workflows und Module eines gelöschten Nutzers gehen an „Admin“ über und sind nur für Admins sichtbar.
 
-### Workflows teilen
+### Teilen und Besitz
 
-Eigentümer und Admins öffnen im Workflow den Dialog „Teilen“. Für jeden Nutzer gibt es diese Stufen:
+Workflows und Module gehören dem Nutzer, der sie anlegt oder dupliziert. Legt ein Admin sie an, ist der Besitzer „Admin“ (nur Admins). Admins haben immer vollen Zugriff. Neue Workflows und Module sind privat.
 
-- „Privat (kein Zugriff)“: kein Zugriff auf den Workflow.
-- „Teilen zur Ansicht“: Workflow, Module, Assets, Logs und Status ansehen; nicht bearbeiten oder speichern, nicht starten oder stoppen, keinen Zeitplan ändern und nicht erneut verarbeiten.
-- „Teilen zur Ausführung“: alles aus der Ansicht, zusätzlich starten, stoppen und erneut verarbeiten; nicht bearbeiten oder speichern und keinen Zeitplan ändern.
-- „Teilen zur Bearbeitung und Ausführung“: zusätzlich bearbeiten, speichern und den Zeitplan ändern.
+Besitzer und Admins öffnen „Teilen“ in der Workflow-Liste, in der Modul-Liste oder im Builder-Kopf. Der Schalter „Teilen“ aus = privat (beim Speichern entfallen alle Freigaben). Eingeschaltet gibt es die Zeile „Alle“ und je Nutzer (Filter „Nach E-Mail filtern“) „–“, „Zur Ansicht“, „Zur Verwendung“ oder „Zur Bearbeitung“. Nur Admins wählen den „Besitzer“. „Verlauf“ zeigt Eingriffe von Admins und Besitzerwechsel. Die Listen zeigen die Spalten „Besitzer“ und „Zugriff“.
 
-Nur Admins können im Teilen-Dialog den „Eigentümer“ setzen. Nach dem Löschen eines Eigentümers sind dessen Workflows ohne Eigentümer und nur für Admins sichtbar.
+| Stufe | Workflow | Modul |
+|---|---|---|
+| Ansicht | Workflow, Module, Assets, Logs, Status und Reports sehen; duplizieren | in der Modul-Liste; Name, Icon, Einstellungen, Ausgänge und Logs im Workflow sehen |
+| Verwendung | zusätzlich starten, stoppen, Assets erneut verarbeiten | zusätzlich in Workflows einfügen (Palette), Name und Einstellungen einer Instanz ändern |
+| Bearbeitung | zusätzlich Metadaten, Zeitplan und Graph speichern, Module aktualisieren | zusätzlich im Builder öffnen, neue Versionen speichern, duplizieren |
+| Besitzer | zusätzlich teilen, löschen, Verlauf sehen | zusätzlich teilen, löschen, Verlauf sehen, Workflows aktualisieren |
+
+- **Standardmodule** legt der Server beim Start an; sie gehören „Admin“ und sind für Alle zur Verwendung freigegeben. Migration `0013_access` gibt alle bestehenden Module für Alle zur Verwendung frei und übernimmt die bisherigen Workflow-Freigaben („Ausführung“ wird „Verwendung“).
+- **Nicht freigegebenes Modul:** Enthält ein freigegebener Workflow ein Modul ohne Freigabe für Dich, zeigt der Editor „Nicht freigegebenes Modul“ ohne Name, Icon, Einstellungen und Logs. Es läuft normal weiter. Nach dem Entfernen lässt es sich nicht wieder einfügen.
+- **Bearbeitungssperre:** „Bearbeiten“ im Editor, das Metadaten-Formular eines Workflows und der Builder sperren das Objekt für andere. Diese sehen es nur lesbar mit „Wird gerade bearbeitet von {name}“. Ohne Lebenszeichen (z. B. geschlossener Tab) verfällt die Sperre nach `[edit_lock] ttl_s`. Admins können sie mit „Sperre aufheben“ lösen; nicht gespeicherte Änderungen des Bearbeiters gehen dann verloren.
 
 ### Entwicklungsmodus (Live-Vorschau)
 
@@ -174,6 +180,7 @@ Datei `config/marathon.toml`:
 | `[proxy] trusted_proxies` | IP-Adressen externer Reverse-Proxys; bei `builtin = true` gilt `127.0.0.1` automatisch | `[]` |
 | `[worker_client] require_admin_approval` | `true` = einen neu angemeldeten Worker-Client muss ein Admin einmal mit „Zulassen“ freigeben; `false` = sofort zugelassen | `true` |
 | `[worker_client] control_session_hours` | So lange gilt die Worker-Einstellungsseite nach „Worker-Einstellungen öffnen“ (1–168 Stunden) | `12` |
+| `[edit_lock] ttl_s` | Bearbeitungssperre verfällt nach so vielen Sekunden ohne Lebenszeichen (30–3600) | `120` |
 | `[client_build] sign_command` | Befehl zum Signieren der Worker-Client-Exe als Liste, `{file}` = Pfad der Exe; leer = nicht signieren | `[]` |
 
 `[server_worker] skills`, `[folder_dialog] server_address` und die `[proxy]`-Einträge sind Standardwerte: Sie gehen beim Start mit `python run.py` in die Datenbank, solange dort noch kein Wert steht. Danach gilt die Datenbank, geändert wird in der Oberfläche (Worker-Seite bzw. Einstellungen). `host` und `port` gelten immer aus der Datei, ebenso `[worker_client]` und `[client_build]`.
@@ -400,23 +407,23 @@ Liste von Einträgen mit Namen, z. B. „Kollektion Defa“, „Kollektion Cinte
 
 Seite „Module“ in der Seitenleiste:
 
-- Liste aller Module mit Kategorie, Eigentümer („Standard“ bei Standardmodulen), Version, Anzahl verwendender Workflows und letzter Änderung.
-- „Neues Modul“ öffnet den Builder. Ein Klick auf eine Zeile öffnet das Modul im Builder, wenn Du es bearbeiten darfst (eigene Module; Admins: alle, auch Standardmodule).
-- „Löschen“ im Drei-Punkte-Menü geht nur, solange kein Workflow das Modul verwendet. Standardmodule lassen sich nicht löschen.
+- Liste aller für Dich sichtbaren Module mit Kategorie, Besitzer, Zugriff, Version, Anzahl verwendender Workflows und letzter Änderung.
+- „Neues Modul“ öffnet den Builder. Ein Klick auf eine Zeile öffnet das Modul im Builder, wenn Du es bearbeiten darfst (ab „Bearbeitung“).
+- „Teilen“ und „Löschen“ im Drei-Punkte-Menü für Besitzer. „Löschen“ archiviert das Modul; verwendende Workflows laufen in ihrer Version weiter.
 
 Builder:
 
 - Links die Bausteine mit Suche, in der Mitte der Flow, rechts das Seitenpanel. Bausteine werden wie Module im Workflow platziert und verbunden.
 - Ohne Auswahl zeigt das Seitenpanel das Modul: Name, Kategorie, Icon, Beschreibung, „Eingang“ (Baustein, an dem Assets eintreten, oder „Kein Eingang (Quelle)“), „Ausgänge“ und „Zuordnung“. Unter „Zuordnung“ wählst Du je freiem Baustein-Ausgang den Modul-Ausgang oder „– endet hier“.
 - Mit gewähltem Baustein: Name und Einstellungen als feste Werte. „Im Modul einstellbar“ macht eine Einstellung im Workflow einstellbar, mit eigener Beschriftung und eigenem Hilfetext.
-- „Speichern“ legt jedes Mal eine neue Version an. Verwenden eigene Workflows noch eine ältere Version, erscheint „Workflows aktualisieren“: „Alle aktualisieren“ übernimmt die neue Version in alle eigenen Workflows. Übersprungen werden Workflows mit Assets oder Jobs in entfallenden Bausteinen („Laufende Assets betroffen“) und Workflows, deren Graph mit der neuen Version ungültig wäre.
+- „Speichern“ legt jedes Mal eine neue Version an. Verwenden eigene Workflows noch eine ältere Version, erscheint „Workflows aktualisieren“: „Alle aktualisieren“ übernimmt die neue Version in alle Workflows, die Dir gehören (Admins: alle). Übersprungen werden Workflows mit Assets oder Jobs in entfallenden Bausteinen („Laufende Assets betroffen“) Workflows, deren Graph mit der neuen Version ungültig wäre, und gerade bearbeitete Workflows („Wird gerade bearbeitet von {name}“). Admins können gesperrte mit „Gesperrte trotzdem aktualisieren“ einbeziehen.
 - „Zurück“ führt zur Seite „Module“; ungespeicherte Änderungen werden vorher abgefragt.
 
 Im Workflow:
 
-- Die Palette zeigt nur Module. Jede platzierte Instanz bleibt auf ihrer Version, bis sie aktualisiert wird.
+- Die Palette zeigt nur Module, die für Dich zur Verwendung freigegeben sind. Jede platzierte Instanz bleibt auf ihrer Version, bis sie aktualisiert wird.
 - Gibt es eine neue Version, zeigt der Knoten „Neue Version verfügbar“. Im Seitenpanel übernimmt „Aktualisieren“ die neue Version; Einstellungen mit gleichem Schlüssel bleiben, entfallene werden gemeldet. Wirksam wird das erst mit „Speichern“.
-- Eigentümer und Admins öffnen ein Modul über „Im Builder öffnen“ im Seitenpanel. Alle anderen sehen nur Modul und Einstellungen.
+- „Im Builder öffnen“ im Seitenpanel ab „Bearbeitung“. Mit „Ansicht“ sind Name und Einstellungen einer Instanz nur lesbar.
 - Die Zähler einer Instanz fassen alle ihre Bausteine zusammen.
 
 Grenzen:

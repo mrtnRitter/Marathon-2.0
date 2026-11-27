@@ -9,6 +9,7 @@ import { use_data } from '../data/use_data'
 import { useState } from 'react'
 import { AssetTimeline } from '../features/assets/AssetTimeline'
 import { format_datetime, format_metadata } from '../lib/format'
+import { has_access } from '../lib/access'
 import { asset_status_meta, message_kind_color, step_status_meta } from '../theme/status'
 import './AssetDetailPage.css'
 
@@ -18,9 +19,9 @@ export function AssetDetailPage() {
   const { data: asset, loading, reload } = use_data(() => get_asset_detail(asset_id), [asset_id], { live: ['assets', 'asset_history', 'jobs', 'job_assets', 'log_lines'] })
   const [reprocess_open, set_reprocess_open] = useState(false)
   const { data: workflow } = use_data(() => (asset ? get_workflow(asset.workflow_id) : Promise.resolve(null)), [asset?.workflow_id], { live: ['workflows'] })
-  const can_reprocess = Boolean(workflow && ['admin', 'owner', 'edit', 'run'].includes(workflow.access))
-  const can_edit = Boolean(workflow && ['admin', 'owner', 'edit'].includes(workflow.access))
-  const can_manage = Boolean(workflow && ['admin', 'owner'].includes(workflow.access))
+  const can_reprocess = Boolean(workflow && has_access(workflow.access, 'use'))
+  const can_edit = Boolean(workflow && has_access(workflow.access, 'edit'))
+  const can_manage = Boolean(workflow && has_access(workflow.access, 'owner'))
 
   if (!asset) {
     return (

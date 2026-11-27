@@ -1,10 +1,16 @@
 .share-dialog-owner { margin-bottom: var(--space-5); }
+.share-dialog-toggle { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); }
 .share-dialog-filter { margin-bottom: var(--space-4); }
 .share-dialog-users { display: flex; flex-direction: column; }
 .share-dialog-user { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 1.15fr); align-items: center; gap: var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
 .share-dialog-user-info { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .share-dialog-user-info strong, .share-dialog-user-info span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .share-dialog-user-info span { color: var(--text-muted); font-size: var(--font-size-sm); }
+.share-dialog-history { margin-top: var(--space-6); overflow-x: auto; }
+.share-dialog-history h3 { margin: 0 0 var(--space-3); }
+.share-dialog-history table { width: 100%; border-collapse: collapse; text-align: left; }
+.share-dialog-history th, .share-dialog-history td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); vertical-align: top; }
+.share-dialog-history th:first-child, .share-dialog-history td:first-child { white-space: nowrap; }
 @media (max-width: 620px) {
   .share-dialog-user { grid-template-columns: 1fr; gap: var(--space-2); }
 }

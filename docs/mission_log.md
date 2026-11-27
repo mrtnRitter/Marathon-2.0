@@ -256,4 +256,5 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
 
 Eingang für neue Punkte; einsortierte Punkte tragen den Vermerk „(Martin)“.
 
+- [ ] Datenmodell Assets (ein Asset ist die Hülle für Dateien und Metadaten) -> großer Punkt: die greifen Module auf Dateien und Metadaten zu, insbesonder wie wird das im UI nachvollziehbar und verständlich? 
 - [ ] 

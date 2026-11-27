@@ -2,6 +2,7 @@
 
 # IMPORTS
 import re
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -10,10 +11,12 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 
+from marathon.server.auth.sessions import AuthUser
 from marathon.server.db.macro_writes import load_definitions, load_macros, module_type_map
+from marathon.server.db.object_access import access_levels, object_access_map
 from marathon.server.db.workflow_checks import invalid_modules, workflow_issues
 from marathon.server.macros.definition import macro_hull
-from marathon.server.macros.expand import expand_graph
+from marathon.server.macros.expand import expand_graph, remap_settings
 from marathon.server.engine.jobs import remove_missing_modules, request_pause
 from marathon.server.schedule import ScheduleError, next_occurrence, normalize_interval
 
@@ -21,6 +24,10 @@ from marathon.server.schedule import ScheduleError, next_occurrence, normalize_i
 # EXCEPTIONS
 class WorkflowValidationError(ValueError):
     """Raised when workflow or graph input fails domain validation."""
+
+
+class WorkflowModuleForbidden(Exception):
+    """Raised when a graph save exceeds the actor module access level."""
 
 
 class WorkflowConflict(Exception):
@@ -437,12 +444,97 @@ def delete_workflow(connection: Connection, workflow_id: str) -> bool:
     return deleted is not None
 
 
+def apply_module_rights(
+    connection: Connection,
+    workflow_id: str,
+    modules: list[dict[str, Any]],
+    user: AuthUser | None,
+) -> list[dict[str, Any]]:
+    """Return copied modules with edits constrained by macro access."""
+    if user is None:
+        return deepcopy(modules)
+
+    current_version = connection.execute(
+        text("SELECT current_version FROM workflows WHERE id = :id"), {"id": workflow_id}
+    ).scalar_one_or_none()
+    if current_version is None:
+        return deepcopy(modules)
+
+    saved_rows = connection.execute(
+        text(
+            "SELECT id, macro_id, macro_version, name, description, settings "
+            "FROM workflow_instances WHERE workflow_id = :id AND version = :version"
+        ),
+        {"id": workflow_id, "version": current_version},
+    ).mappings()
+    saved_by_id = {row["id"]: dict(row) for row in saved_rows}
+
+    classified = []
+    macro_ids = []
+    for module in modules:
+        saved = saved_by_id.get(module.get("id"))
+        is_existing = saved is not None and (
+            "type_id" not in module or module["type_id"] in ("", saved["macro_id"])
+        )
+        effective_saved = saved if is_existing else None
+        macro_id = effective_saved["macro_id"] if effective_saved is not None else module.get("type_id", "")
+        classified.append((module, effective_saved, macro_id))
+        macro_ids.append(macro_id)
+
+    access_by_id = object_access_map(connection, user, "macro", macro_ids)
+    result: list[dict[str, Any]] = []
+    remaps: list[tuple[int, tuple[str, int], str | None, Any]] = []
+    for module, saved, macro_id in classified:
+        adjusted = deepcopy(module)
+        access = access_by_id.get(macro_id)
+        if saved is None:
+            if access in access_levels[1:]:
+                result.append(adjusted)
+                continue
+            if access == "view" or not user.is_admin:
+                raise WorkflowModuleForbidden("Keine Berechtigung für dieses Modul")
+            result.append(adjusted)
+            continue
+
+        adjusted["type_id"] = saved["macro_id"]
+        if access in access_levels[1:]:
+            result.append(adjusted)
+            continue
+
+        adjusted["name"] = deepcopy(saved["name"])
+        adjusted["description"] = deepcopy(saved["description"])
+        adjusted["settings"] = deepcopy(saved["settings"])
+        requested_version = adjusted.get("macro_version")
+        if requested_version is None:
+            adjusted["macro_version"] = saved["macro_version"]
+        elif requested_version != saved["macro_version"]:
+            key = (saved["macro_id"], requested_version)
+            remaps.append((len(result), key, access, deepcopy(saved["settings"])))
+        result.append(adjusted)
+
+    if not remaps:
+        return result
+
+    definitions = load_definitions(connection, [key for _, key, _, _ in remaps])
+    module_types = module_type_map(connection) if definitions else {}
+    for index, (macro_id, version), access, settings in remaps:
+        definition = definitions.get((macro_id, version))
+        if definition is None:
+            if access is None:
+                raise WorkflowModuleForbidden("Keine Berechtigung für dieses Modul")
+            continue
+        hull = macro_hull(macro_id, version, definition, module_types)
+        result[index]["settings"] = remap_settings(settings, hull)[0]
+    return result
+
+
 def save_graph(
     connection: Connection,
     workflow_id: str,
     base_version: int,
     modules: list[dict[str, Any]],
     connections: list[dict[str, Any]],
+    user: AuthUser | None = None,
 ) -> int | None:
     """Validate and save a new immutable instance and runtime graph version."""
     connection.execute(text("SET LOCAL lock_timeout = '10s'"))
@@ -457,6 +549,7 @@ def save_graph(
     if current_version != base_version:
         raise WorkflowConflict
 
+    modules = apply_module_rights(connection, workflow_id, modules, user)
     instances, instance_connections, runtime_modules, runtime_connections = resolve_graph(
         connection, workflow_id, modules, connections
     )

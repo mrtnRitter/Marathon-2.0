@@ -18,6 +18,7 @@ from marathon.server.api.deps import app_engine, current_user
 from marathon.server.config import (
     AuthConfig,
     ConfigError,
+    EditLockConfig,
     EngineConfig,
     ServerWorkerConfig,
     WorkerClientConfig,
@@ -200,6 +201,7 @@ def create_app(
     auth_config: AuthConfig | None = None,
     mail_sender: MailSender | None = None,
     worker_client: WorkerClientConfig | None = None,
+    edit_lock: EditLockConfig | None = None,
 ) -> FastAPI:
     """Build the versioned API and UI without opening a database connection."""
     app = FastAPI(
@@ -219,6 +221,7 @@ def create_app(
     app.state.engine_config = engine_config or EngineConfig()
     app.state.worker_token = worker_token
     app.state.worker_client = worker_client if worker_client is not None else WorkerClientConfig()
+    app.state.edit_lock = edit_lock if edit_lock is not None else EditLockConfig()
     app.state.run_engine = run_engine
     app.state.live_hub = LiveHub()
     app.state.run_live = run_live

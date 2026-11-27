@@ -9,12 +9,13 @@ from time import monotonic, sleep
 import pytest
 from fastapi.testclient import TestClient
 
-from auth_helpers import sign_in
+from auth_helpers import create_test_user, edit_lock_headers, sign_in
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
 from marathon.server.api.workflows import ModuleInput
 from marathon.server.app import create_app
+from marathon.server.auth.sessions import AuthUser
 from marathon.server.db import workflow_writes
 from marathon.server.db.workflow_writes import WorkflowValidationError, create_workflow, update_workflow
 
@@ -114,6 +115,7 @@ def test_create_update_and_delete_workflow(api_client):
     updated = api_client.put(
         f"/api/v1/workflows/{workflow['id']}",
         json={"name": "Beta", "description": "Neue Beschreibung"},
+        headers=edit_lock_headers(api_client, "workflow", workflow["id"]),
     )
     assert updated.status_code == 200
     assert updated.json()["name"] == "Beta"
@@ -146,7 +148,9 @@ def test_workflow_name_validation(api_client):
     assert duplicate.json()["detail"] == "Ein Workflow mit diesem Namen existiert bereits"
 
     same_name = api_client.put(
-        f"/api/v1/workflows/{created.json()['id']}", json={"name": "Alpha"}
+        f"/api/v1/workflows/{created.json()['id']}",
+        json={"name": "Alpha"},
+        headers=edit_lock_headers(api_client, "workflow", created.json()["id"]),
     )
     assert same_name.status_code == 200
     assert same_name.json()["name"] == "Alpha"
@@ -182,7 +186,11 @@ def test_save_graph_creates_new_version(api_client, db_engine):
             }
         ],
     }
-    saved = api_client.put(f"/api/v1/workflows/{workflow['id']}/graph", json=graph_body)
+    saved = api_client.put(
+        f"/api/v1/workflows/{workflow['id']}/graph",
+        json=graph_body,
+        headers=edit_lock_headers(api_client, "workflow", workflow["id"]),
+    )
     assert saved.status_code == 200
     graph = saved.json()
     assert graph["version"] == 2
@@ -236,6 +244,7 @@ def test_save_graph_roundtrips_priolist_settings(api_client, db_engine):
     saved = api_client.put(
         f"/api/v1/workflows/{workflow['id']}/graph",
         json={"base_version": 1, "modules": [{**_module("m-prio", "priolist", name="Prioliste"), "settings": settings}], "connections": []},
+        headers=edit_lock_headers(api_client, "workflow", workflow["id"]),
     )
     assert saved.status_code == 200
     graph = api_client.get(f"/api/v1/workflows/{workflow['id']}/graph")
@@ -246,9 +255,10 @@ def test_save_graph_roundtrips_priolist_settings(api_client, db_engine):
 def test_save_graph_conflict(api_client, db_engine):
     workflow = api_client.post("/api/v1/workflows", json={"name": "Konflikt"}).json()
     body = {"base_version": 1, "modules": [], "connections": []}
-    first = api_client.put(f"/api/v1/workflows/{workflow['id']}/graph", json=body)
+    headers = edit_lock_headers(api_client, "workflow", workflow["id"])
+    first = api_client.put(f"/api/v1/workflows/{workflow['id']}/graph", json=body, headers=headers)
     assert first.status_code == 200
-    second = api_client.put(f"/api/v1/workflows/{workflow['id']}/graph", json=body)
+    second = api_client.put(f"/api/v1/workflows/{workflow['id']}/graph", json=body, headers=headers)
     assert second.status_code == 409
     assert second.json()["detail"] == "Workflow wurde zwischenzeitlich geändert. Bitte neu laden."
     with db_engine.connect() as connection:
@@ -311,6 +321,7 @@ def test_save_graph_validation(api_client, db_engine, modules, connections, expe
     response = api_client.put(
         f"/api/v1/workflows/{workflow['id']}/graph",
         json={"base_version": 1, "modules": modules, "connections": connections},
+        headers=edit_lock_headers(api_client, "workflow", workflow["id"]),
     )
     assert response.status_code == 422
     assert response.json()["detail"] == expected_detail
@@ -519,6 +530,7 @@ def test_workflow_schedule_is_returned_for_list_and_detail(api_client, db_engine
     updated = api_client.put(
         f"/api/v1/workflows/{workflow['id']}",
         json={"name": "Zeitplan behalten", "description": "", "schedule": expected},
+        headers=edit_lock_headers(api_client, "workflow", workflow["id"]),
     )
     assert updated.status_code == 200
     assert updated.json()["schedule"] == expected
@@ -609,7 +621,11 @@ def test_put_without_schedule_clears_it(api_client, db_engine):
     with db_engine.begin() as connection:
         connection.execute(text("UPDATE workflows SET active = true, schedule_waiting = true, run_started_at = now() WHERE id = :id"), {"id": workflow_id})
 
-    response = api_client.put(f"/api/v1/workflows/{workflow_id}", json={"name": "Zeitplan gelöscht"})
+    response = api_client.put(
+        f"/api/v1/workflows/{workflow_id}",
+        json={"name": "Zeitplan gelöscht"},
+        headers=edit_lock_headers(api_client, "workflow", workflow_id),
+    )
 
     assert response.status_code == 200
     assert response.json()["schedule"] is None
@@ -637,7 +653,8 @@ def test_put_same_schedule_keeps_next_run(api_client, db_engine):
             {"next_run_at": fixed_next_run, "run_started_at": run_started_at, "id": workflow_id},
         )
 
-    unchanged = api_client.put(f"/api/v1/workflows/{workflow_id}", json=body)
+    headers = edit_lock_headers(api_client, "workflow", workflow_id)
+    unchanged = api_client.put(f"/api/v1/workflows/{workflow_id}", json=body, headers=headers)
     assert unchanged.status_code == 200
     unchanged_next_run = datetime.fromisoformat(unchanged.json()["schedule"]["next_run_at"].replace("Z", "+00:00"))
     assert unchanged_next_run == fixed_next_run
@@ -646,7 +663,7 @@ def test_put_same_schedule_keeps_next_run(api_client, db_engine):
         "name": "Zeitplan erhalten",
         "schedule": {"every": 2, "unit": "hours", "start": "2020-01-01T00:00:00Z"},
     }
-    changed = api_client.put(f"/api/v1/workflows/{workflow_id}", json=changed_body)
+    changed = api_client.put(f"/api/v1/workflows/{workflow_id}", json=changed_body, headers=headers)
     assert changed.status_code == 200
     changed_next_run = datetime.fromisoformat(changed.json()["schedule"]["next_run_at"].replace("Z", "+00:00"))
     assert changed_next_run > datetime.now(timezone.utc)
@@ -729,7 +746,11 @@ def test_duplicate_workflow_copies_metadata_and_graph(api_client, db_engine):
             }
         ],
     }
-    saved = api_client.put(f"/api/v1/workflows/{source['id']}/graph", json=graph_body)
+    saved = api_client.put(
+        f"/api/v1/workflows/{source['id']}/graph",
+        json=graph_body,
+        headers=edit_lock_headers(api_client, "workflow", source["id"]),
+    )
     assert saved.status_code == 200
     source_graph = saved.json()
 
@@ -828,3 +849,214 @@ def test_duplicate_unknown_workflow_returns_404(api_client):
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Workflow nicht gefunden"
+
+
+@pytest.fixture
+def workflow_access_context(api_client, db_engine):
+    """Provide a regular user alongside the workflow API client."""
+    with db_engine.begin() as connection:
+        member = create_test_user(connection, "workflow-member@test.local")
+        recipient = create_test_user(connection, "workflow-recipient@test.local")
+    admin = AuthUser("test-admin", "admin@test.local", "Test Admin", "admin", "test-session")
+    return api_client.app, api_client, db_engine, admin, member, recipient
+
+
+def _share_workflow(client, workflow_id, user_id, access):
+    response = client.put(
+        f"/api/v1/access/workflow/{workflow_id}/shares",
+        json={"shares": [{"user_id": user_id, "access": access}]},
+    )
+    assert response.status_code == 200, response.text
+
+
+def _workflow_owner(db_engine, workflow_id):
+    with db_engine.connect() as connection:
+        return connection.execute(
+            text("SELECT owner_user_id FROM workflows WHERE id = :id"), {"id": workflow_id}
+        ).scalar_one()
+
+
+def test_workflow_metadata_and_graph_require_the_current_edit_lock(workflow_access_context):
+    _, client, _, _, _, _ = workflow_access_context
+    workflow = client.post("/api/v1/workflows", json={"name": "Lockpflicht"}).json()
+    workflow_id = workflow["id"]
+    metadata = {"name": "Lockpflicht neu", "description": ""}
+    graph = {"base_version": 1, "modules": [], "connections": []}
+
+    for path, body in ((f"/api/v1/workflows/{workflow_id}", metadata),
+                       (f"/api/v1/workflows/{workflow_id}/graph", graph)):
+        missing = client.put(path, json=body)
+        assert missing.status_code == 409
+        assert missing.json()["detail"] == "Bearbeitungssperre fehlt oder wurde aufgehoben. Bitte neu laden."
+        wrong = client.put(path, json=body, headers={"X-Edit-Lock": "falscher-token"})
+        assert wrong.status_code == 409
+        assert wrong.json()["detail"] == "Bearbeitungssperre fehlt oder wurde aufgehoben. Bitte neu laden."
+
+    headers = edit_lock_headers(client, "workflow", workflow_id)
+    assert client.put(f"/api/v1/workflows/{workflow_id}", json=metadata, headers=headers).status_code == 200
+    graph["base_version"] = 1
+    assert client.put(f"/api/v1/workflows/{workflow_id}/graph", json=graph, headers=headers).status_code == 200
+
+
+def test_forced_lock_release_invalidates_workflow_save_token(workflow_access_context):
+    _, client, _, _, _, _ = workflow_access_context
+    workflow = client.post("/api/v1/workflows", json={"name": "Sperre aufgehoben"}).json()
+    headers = edit_lock_headers(client, "workflow", workflow["id"])
+    released = client.delete(f"/api/v1/access/workflow/{workflow['id']}/lock?force=true")
+    assert released.status_code == 204
+
+    response = client.put(
+        f"/api/v1/workflows/{workflow['id']}",
+        json={"name": "Darf nicht speichern", "description": ""},
+        headers=headers,
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Bearbeitungssperre fehlt oder wurde aufgehoben. Bitte neu laden."
+
+
+def test_graph_save_requires_module_use_and_accepts_module_use(workflow_access_context):
+    app, client, db_engine, _, member, _ = workflow_access_context
+    _insert_module_types(db_engine)
+    workflow = client.post("/api/v1/workflows", json={"name": "Modulrechte speichern"}).json()
+    _share_workflow(client, workflow["id"], member.id, "edit")
+    with db_engine.begin() as connection:
+        connection.execute(text(
+            "DELETE FROM object_shares WHERE object_type = 'macro' AND object_id = 'step'"
+        ))
+    sign_in(app, member)
+    headers = edit_lock_headers(client, "workflow", workflow["id"])
+    body = {"base_version": 1, "modules": [_module("neu", "step")], "connections": []}
+
+    denied = client.put(f"/api/v1/workflows/{workflow['id']}/graph", json=body, headers=headers)
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "Keine Berechtigung für dieses Modul"
+
+    with db_engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO object_shares (object_type, object_id, user_id, access) "
+            "VALUES ('macro', 'step', :user_id, 'use')"
+        ), {"user_id": member.id})
+    allowed = client.put(f"/api/v1/workflows/{workflow['id']}/graph", json=body, headers=headers)
+    assert allowed.status_code == 200
+
+
+def test_graph_impact_masks_blind_removed_modules_and_checks_new_modules(workflow_access_context):
+    app, client, db_engine, _, member, _ = workflow_access_context
+    _insert_module_types(db_engine)
+    workflow = client.post("/api/v1/workflows", json={"name": "Impact-Blindmodul"}).json()
+    workflow_id = workflow["id"]
+    initial = {"base_version": 1, "modules": [_module("blind", "step", "Geheim")], "connections": []}
+    saved = client.put(
+        f"/api/v1/workflows/{workflow_id}/graph",
+        json=initial,
+        headers=edit_lock_headers(client, "workflow", workflow_id),
+    )
+    assert saved.status_code == 200
+    _share_workflow(client, workflow_id, member.id, "edit")
+    with db_engine.begin() as connection:
+        connection.execute(text(
+            "DELETE FROM object_shares WHERE object_type = 'macro' AND object_id = 'step'"
+        ))
+        connection.execute(text(
+            "INSERT INTO assets (id, workflow_id, name, status, current_module_id) "
+            "VALUES ('impact-asset', :workflow_id, 'Impact-Asset', 'in_progress', 'blind.main')"
+        ), {"workflow_id": workflow_id})
+    sign_in(app, member)
+    removed = client.post(
+        f"/api/v1/workflows/{workflow_id}/graph/impact",
+        json={"base_version": 2, "modules": [], "connections": []},
+    )
+    assert removed.status_code == 200
+    assert removed.json()["removed_modules"][0]["name"] == "Nicht freigegebenes Modul"
+
+    denied = client.post(
+        f"/api/v1/workflows/{workflow_id}/graph/impact",
+        json={"base_version": 2, "modules": [_module("neu", "step")], "connections": []},
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"] == "Keine Berechtigung für dieses Modul"
+
+
+def test_create_and_duplicate_assign_owner_by_actor_role(workflow_access_context):
+    app, client, db_engine, admin, member, _ = workflow_access_context
+    sign_in(app, member)
+    created = client.post("/api/v1/workflows", json={"name": "Nutzerbesitz"})
+    assert created.status_code == 201
+    user_copy = client.post(f"/api/v1/workflows/{created.json()['id']}/duplicate")
+    assert user_copy.status_code == 201
+    assert _workflow_owner(db_engine, created.json()["id"]) == member.id
+    assert _workflow_owner(db_engine, user_copy.json()["id"]) == member.id
+
+    sign_in(app, admin)
+    admin_created = client.post("/api/v1/workflows", json={"name": "Adminbesitz"})
+    assert admin_created.status_code == 201
+    admin_copy = client.post(f"/api/v1/workflows/{admin_created.json()['id']}/duplicate")
+    assert admin_copy.status_code == 201
+    assert _workflow_owner(db_engine, admin_created.json()["id"]) is None
+    assert _workflow_owner(db_engine, admin_copy.json()["id"]) is None
+    with db_engine.connect() as connection:
+        for workflow_id in (created.json()["id"], user_copy.json()["id"], admin_created.json()["id"], admin_copy.json()["id"]):
+            assert connection.execute(text(
+                "SELECT COUNT(*) FROM object_shares WHERE object_type = 'workflow' AND object_id = :id"
+            ), {"id": workflow_id}).scalar_one() == 0
+
+
+def test_use_can_start_and_stop_but_view_cannot(workflow_access_context):
+    app, client, _, _, member, _ = workflow_access_context
+    workflow = client.post("/api/v1/workflows", json={"name": "Stufen"}).json()
+    _share_workflow(client, workflow["id"], member.id, "use")
+    sign_in(app, member)
+    path = f"/api/v1/workflows/{workflow['id']}/active"
+    assert client.put(path, json={"active": True}).status_code == 200
+    assert client.put(path, json={"active": False}).status_code == 200
+
+    sign_in(app, AuthUser("test-admin", "admin@test.local", "Test Admin", "admin", "test-session"))
+    _share_workflow(client, workflow["id"], member.id, "view")
+    sign_in(app, member)
+    assert client.put(path, json={"active": True}).status_code == 403
+    assert client.put(path, json={"active": False}).status_code == 403
+
+
+def test_admin_intervention_events_and_delete_cleanup(workflow_access_context):
+    app, client, db_engine, admin, member, recipient = workflow_access_context
+    sign_in(app, member)
+    foreign = client.post("/api/v1/workflows", json={"name": "Fremd"}).json()
+    sign_in(app, admin)
+    headers = edit_lock_headers(client, "workflow", foreign["id"])
+    edited = client.put(
+        f"/api/v1/workflows/{foreign['id']}",
+        json={"name": "Fremd bearbeitet", "description": ""},
+        headers=headers,
+    )
+    assert edited.status_code == 200
+    with db_engine.begin() as connection:
+        events = connection.execute(text(
+            "SELECT text FROM object_events WHERE object_type = 'workflow' AND object_id = :id ORDER BY id"
+        ), {"id": foreign["id"]}).scalars().all()
+    assert events == ["Bearbeitet"]
+
+    own = client.post("/api/v1/workflows", json={"name": "Admin eigen"}).json()
+    own_update = client.put(
+        f"/api/v1/workflows/{own['id']}",
+        json={"name": "Admin eigen neu", "description": ""},
+        headers=edit_lock_headers(client, "workflow", own["id"]),
+    )
+    assert own_update.status_code == 200
+    with db_engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT COUNT(*) FROM object_events WHERE object_type = 'workflow' AND object_id = :id"
+        ), {"id": own["id"]}).scalar_one() == 0
+
+    _share_workflow(client, foreign["id"], recipient.id, "view")
+    assert client.delete(f"/api/v1/workflows/{foreign['id']}").status_code == 204
+    with db_engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT COUNT(*) FROM object_shares WHERE object_type = 'workflow' AND object_id = :id"
+        ), {"id": foreign["id"]}).scalar_one() == 0
+        assert connection.execute(text(
+            "SELECT COUNT(*) FROM edit_locks WHERE object_type = 'workflow' AND object_id = :id"
+        ), {"id": foreign["id"]}).scalar_one() == 0
+        delete_event = connection.execute(text(
+            "SELECT text FROM object_events WHERE object_type = 'workflow' AND object_id = :id ORDER BY id DESC LIMIT 1"
+        ), {"id": foreign["id"]}).scalar_one()
+    assert delete_event == "Gelöscht"

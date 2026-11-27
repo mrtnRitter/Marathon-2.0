@@ -8,6 +8,7 @@ from sqlalchemy import text
 from auth_helpers import create_test_user, sign_in
 from marathon.server.app import create_app
 from marathon.server.auth.sessions import AuthUser
+from marathon.server.db.edit_locks import acquire_lock
 
 
 # FIXTURES
@@ -101,23 +102,74 @@ def _module(instance_id: str, macro_id: str, *, settings: dict | None = None) ->
     }
 
 
+def _acquire_lock(client: TestClient, object_type: str, object_id: str) -> str:
+    response = client.post(f"/api/v1/access/{object_type}/{object_id}/lock")
+    assert response.status_code == 200, response.text
+    return response.json()["token"]
+
+
+def _release_lock(client: TestClient, object_type: str, object_id: str, token: str) -> None:
+    response = client.delete(
+        f"/api/v1/access/{object_type}/{object_id}/lock",
+        headers={"X-Edit-Lock": token},
+    )
+    assert response.status_code == 204, response.text
+
+
 def _save_graph(
     client: TestClient,
     workflow_id: str,
     modules: list[dict],
     connections: list[dict] | None = None,
 ) -> None:
-    response = client.put(f"/api/v1/workflows/{workflow_id}/graph", json={
-        "base_version": 1, "modules": modules, "connections": connections or [],
-    })
-    assert response.status_code == 200, response.text
+    token = _acquire_lock(client, "workflow", workflow_id)
+    try:
+        response = client.put(
+            f"/api/v1/workflows/{workflow_id}/graph",
+            json={"base_version": 1, "modules": modules, "connections": connections or []},
+            headers={"X-Edit-Lock": token},
+        )
+        assert response.status_code == 200, response.text
+    finally:
+        _release_lock(client, "workflow", workflow_id, token)
 
 
 def _set_macro_version(client: TestClient, macro_id: str, definition: dict) -> None:
-    response = client.put(f"/api/v1/macros/{macro_id}", json={
-        "base_version": 1, "definition": definition,
-    })
-    assert response.status_code == 200, response.text
+    token = _acquire_lock(client, "macro", macro_id)
+    try:
+        response = client.put(
+            f"/api/v1/macros/{macro_id}",
+            json={"base_version": 1, "definition": definition},
+            headers={"X-Edit-Lock": token},
+        )
+        assert response.status_code == 200, response.text
+    finally:
+        _release_lock(client, "macro", macro_id, token)
+
+
+def _set_macro_share(db_engine, macro_id: str, user_id: str, access: str | None) -> None:
+    with db_engine.begin() as connection:
+        connection.execute(text(
+            "DELETE FROM object_shares WHERE object_type = 'macro' "
+            "AND object_id = :macro_id AND user_id = :user_id"
+        ), {"macro_id": macro_id, "user_id": user_id})
+        if access is not None:
+            connection.execute(text(
+                "INSERT INTO object_shares (object_type, object_id, user_id, access) "
+                "VALUES ('macro', :macro_id, :user_id, :access)"
+            ), {"macro_id": macro_id, "user_id": user_id, "access": access})
+
+
+def _acquire_database_lock(db_engine, user: AuthUser, workflow_id: str) -> None:
+    with db_engine.begin() as connection:
+        acquire_lock(connection, user, "workflow", workflow_id, None, 600)
+
+
+def _has_workflow_lock(db_engine, workflow_id: str) -> bool:
+    with db_engine.connect() as connection:
+        return connection.execute(text(
+            "SELECT 1 FROM edit_locks WHERE object_type = 'workflow' AND object_id = :id"
+        ), {"id": workflow_id}).scalar_one_or_none() is not None
 
 
 # TESTS
@@ -216,15 +268,17 @@ def test_invalid_output_skips_only_that_workflow(macro_update_context):
 def test_update_permissions_missing_modules_and_workflow_owner_scope(macro_update_context):
     client, app, db_engine, admin, other_user = macro_update_context
     macro_id = _create_macro(client)
+    _set_macro_share(db_engine, macro_id, other_user.id, "use")
     admin_workflow = _create_workflow(client, "Eigener veralteter Workflow")
     _save_graph(client, admin_workflow, [_module("mine", macro_id, settings={"a": 1, "b": 2})])
 
     sign_in(app, other_user)
     foreign_workflow = _create_workflow(client, "Fremder Eigentümer")
     _save_graph(client, foreign_workflow, [_module("foreign", macro_id, settings={"a": 1, "b": 2})])
+    _set_macro_share(db_engine, macro_id, other_user.id, None)
     forbidden = client.post(f"/api/v1/macros/{macro_id}/update-workflows")
-    assert forbidden.status_code == 403
-    assert forbidden.json()["detail"] == "Keine Berechtigung für dieses Modul"
+    assert forbidden.status_code == 404
+    assert forbidden.json()["detail"] == "Modul nicht gefunden"
 
     sign_in(app, admin)
     _set_macro_version(client, macro_id, _definition(settings=("a",)))
@@ -233,7 +287,10 @@ def test_update_permissions_missing_modules_and_workflow_owner_scope(macro_updat
     updated = client.post(f"/api/v1/macros/{macro_id}/update-workflows")
     assert updated.status_code == 200, updated.text
     assert updated.json() == {
-        "updated": [{"id": admin_workflow, "name": "Eigener veralteter Workflow", "dropped_settings": ["b"]}],
+        "updated": [
+            {"id": admin_workflow, "name": "Eigener veralteter Workflow", "dropped_settings": ["b"]},
+            {"id": foreign_workflow, "name": "Fremder Eigentümer", "dropped_settings": ["b"]},
+        ],
         "skipped": [],
     }
 
@@ -253,4 +310,123 @@ def test_update_permissions_missing_modules_and_workflow_owner_scope(macro_updat
         ), {
             "admin_id": admin_workflow, "foreign_id": foreign_workflow, "current_id": current_workflow,
         }).all())
-    assert versions == {admin_workflow: 3, foreign_workflow: 2, current_workflow: 2}
+    assert versions == {admin_workflow: 3, foreign_workflow: 3, current_workflow: 2}
+
+
+
+def test_foreign_lock_skips_only_locked_workflow_without_force(macro_update_context):
+    client, _, db_engine, _, other_user = macro_update_context
+    macro_id = _create_macro(client)
+    locked_id = _create_workflow(client, "Gesperrt")
+    available_id = _create_workflow(client, "Weiter aktualisieren")
+    _save_graph(client, locked_id, [_module("locked", macro_id)])
+    _save_graph(client, available_id, [_module("available", macro_id)])
+    _set_macro_version(client, macro_id, _definition(settings=("a",)))
+    _acquire_database_lock(db_engine, other_user, locked_id)
+
+    response = client.post(f"/api/v1/macros/{macro_id}/update-workflows")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "updated": [{"id": available_id, "name": "Weiter aktualisieren", "dropped_settings": []}],
+        "skipped": [{
+            "id": locked_id,
+            "name": "Gesperrt",
+            "reason": f"Wird gerade bearbeitet von {other_user.email}",
+        }],
+    }
+    assert _has_workflow_lock(db_engine, locked_id)
+    with db_engine.connect() as connection:
+        versions = dict(connection.execute(text(
+            "SELECT id, current_version FROM workflows WHERE id IN (:locked_id, :available_id)"
+        ), {"locked_id": locked_id, "available_id": available_id}).all())
+    assert versions == {locked_id: 2, available_id: 3}
+
+
+def test_force_breaks_foreign_lock_logs_both_interventions_and_preserves_own_lock(macro_update_context):
+    client, app, db_engine, admin, other_user = macro_update_context
+    macro_id = _create_macro(client)
+    _set_macro_share(db_engine, macro_id, other_user.id, "use")
+    own_workflow = _create_workflow(client, "Eigener Workflow")
+    _save_graph(client, own_workflow, [_module("mine", macro_id)])
+
+    sign_in(app, other_user)
+    foreign_workflow = _create_workflow(client, "Fremder Workflow")
+    _save_graph(client, foreign_workflow, [_module("theirs", macro_id)])
+    sign_in(app, admin)
+    _set_macro_version(client, macro_id, _definition(name="Update-Modul neu", settings=("a",)))
+    _acquire_database_lock(db_engine, other_user, foreign_workflow)
+    _acquire_database_lock(db_engine, admin, own_workflow)
+
+    response = client.post(f"/api/v1/macros/{macro_id}/update-workflows?force=true")
+
+    assert response.status_code == 200, response.text
+    assert {item["id"] for item in response.json()["updated"]} == {own_workflow, foreign_workflow}
+    assert response.json()["skipped"] == []
+    assert not _has_workflow_lock(db_engine, foreign_workflow)
+    assert _has_workflow_lock(db_engine, own_workflow)
+    with db_engine.connect() as connection:
+        events = dict(connection.execute(text(
+            "SELECT object_id, array_agg(text ORDER BY id) FROM object_events "
+            "WHERE object_type = 'workflow' AND object_id IN (:own_id, :foreign_id) GROUP BY object_id"
+        ), {"own_id": own_workflow, "foreign_id": foreign_workflow}).all())
+    assert events == {
+        foreign_workflow: [
+            f"Bearbeitungssperre von {other_user.email} aufgehoben",
+            "Modul „Update-Modul neu“ auf v2 aktualisiert",
+        ],
+    }
+
+
+def test_force_keeps_foreign_lock_when_running_assets_skip_workflow(macro_update_context):
+    client, _, db_engine, _, other_user = macro_update_context
+    macro_id = _create_macro(client, _definition(include_rename=True))
+    workflow_id = _create_workflow(client, "Aktives Asset mit Sperre")
+    _save_graph(client, workflow_id, [_module("m1", macro_id)])
+    with db_engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO assets (id, workflow_id, name, status, current_module_id, step_status) "
+            "VALUES ('asset-force-rename', :workflow_id, 'Rename', 'in_progress', 'm1.rename', 'running')"
+        ), {"workflow_id": workflow_id})
+    _set_macro_version(client, macro_id, _definition(settings=("a",), include_success=True))
+    _acquire_database_lock(db_engine, other_user, workflow_id)
+
+    response = client.post(f"/api/v1/macros/{macro_id}/update-workflows?force=true")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "updated": [],
+        "skipped": [{
+            "id": workflow_id,
+            "name": "Aktives Asset mit Sperre",
+            "reason": "Laufende Assets betroffen",
+        }],
+    }
+    assert _has_workflow_lock(db_engine, workflow_id)
+    with db_engine.connect() as connection:
+        assert connection.execute(text(
+            "SELECT count(*) FROM object_events WHERE object_type = 'workflow' AND object_id = :id"
+        ), {"id": workflow_id}).scalar_one() == 0
+
+
+def test_macro_update_access_levels_and_force_require_admin(macro_update_context):
+    client, app, db_engine, _, other_user = macro_update_context
+    macro_id = _create_macro(client)
+    sign_in(app, other_user)
+
+    no_access = client.post(f"/api/v1/macros/{macro_id}/update-workflows")
+    assert no_access.status_code == 404
+    assert no_access.json()["detail"] == "Modul nicht gefunden"
+
+    for access in ("use", "view"):
+        _set_macro_share(db_engine, macro_id, other_user.id, access)
+        denied = client.post(f"/api/v1/macros/{macro_id}/update-workflows")
+        assert denied.status_code == 403
+        assert denied.json()["detail"] == "Keine Berechtigung für dieses Modul"
+
+    _set_macro_share(db_engine, macro_id, other_user.id, "edit")
+    allowed = client.post(f"/api/v1/macros/{macro_id}/update-workflows")
+    assert allowed.status_code == 200, allowed.text
+    forced = client.post(f"/api/v1/macros/{macro_id}/update-workflows?force=true")
+    assert forced.status_code == 403
+    assert forced.json()["detail"] == "Nur für Admins"

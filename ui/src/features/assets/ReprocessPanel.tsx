@@ -3,6 +3,7 @@ import { SlidePanel } from '../../components/SlidePanel'
 import { notify } from '../../components/Toast'
 import { get_workflows, reprocess_assets } from '../../data/api'
 import { use_data } from '../../data/use_data'
+import { has_access } from '../../lib/access'
 
 interface Props {
   open: boolean
@@ -52,7 +53,7 @@ export function ReprocessPanel({ open, asset_ids, current_workflow_ids, on_close
           <select id="reprocess-target-workflow" className="input" value={target} onChange={event => set_target(event.target.value)}>
             <option value="">Gleicher Workflow (von vorn)</option>
             {workflows
-              .filter(workflow => !current_workflow_id_set.has(workflow.id) && ['admin', 'owner', 'edit', 'run'].includes(workflow.access))
+              .filter(workflow => !current_workflow_id_set.has(workflow.id) && has_access(workflow.access, 'use'))
               .map(workflow => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}
           </select>
           <div className="form-field-help">{help}</div>

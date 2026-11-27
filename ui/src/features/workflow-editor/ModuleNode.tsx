@@ -5,6 +5,8 @@ import { module_counter_meta, output_color } from '../../theme/status'
 import { EditorActionsContext, EditorModeContext, type ModuleFlowNode } from './editor_types'
 
 const short_label = { discovered: 'erfasst', waiting: 'wartet', running: 'läuft', done: 'erledigt', failed: 'Fehler' }
+const blind_hint = 'Dieses Modul ist für Dich nicht zur Ansicht freigegeben'
+const blind_name = 'Nicht freigegebenes Modul'
 
 /** Module box: input on top, labeled outputs at the bottom, live counters in monitor mode. */
 export function ModuleNode({ data, selected }: NodeProps<ModuleFlowNode>) {
@@ -14,8 +16,11 @@ export function ModuleNode({ data, selected }: NodeProps<ModuleFlowNode>) {
   const update_node_internals = useUpdateNodeInternals()
   const previous_connection_state = useRef(connection_in_progress)
   const { module, module_type } = data
-  const counter_keys = module_type.id === 'wait' ? ['running', 'done', 'failed'] as const : module_type.id === 'watchfolder' ? ['discovered', 'waiting'] as const : ['waiting', 'running', 'done', 'failed'] as const
-  const description = module.description?.trim() ?? ''
+  const blind = module.blind === true
+  const counter_keys = blind && module.counters.discovered > 0
+    ? ['discovered', 'waiting', 'running', 'done', 'failed'] as const
+    : module_type.id === 'wait' ? ['running', 'done', 'failed'] as const : module_type.id === 'watchfolder' ? ['discovered', 'waiting'] as const : ['waiting', 'running', 'done', 'failed'] as const
+  const description = blind ? '' : module.description?.trim() ?? ''
   const running = module.counters.running > 0
   const lock_icon = <Icon name="lock" size={13} />
   useEffect(() => {
@@ -42,11 +47,11 @@ export function ModuleNode({ data, selected }: NodeProps<ModuleFlowNode>) {
       ) : null}
       {module_type.has_input && <Handle type="target" id="in" position={Position.Top} className={`module-handle module-input-handle${connection_in_progress ? ' connecting' : ''}`} isConnectable={mode === 'edit' && !module.locked} isConnectableStart={false} isConnectableEnd={mode === 'edit' && !module.locked} />}
       <div className="module-node-head">
-        <span className="module-node-icon"><Icon name={module_type.icon} size={16} /></span>
+        {!blind && <span className="module-node-icon"><Icon name={module_type.icon} size={16} /></span>}
         <div className="module-node-title">
-          <div className="module-node-name" title={module.name}>{module.name}{module.update_available && <span className="issue-mark" title="Neue Version verfügbar" aria-label="Neue Version verfügbar"><Icon name="alert" size={14} /></span>}</div>
-          <div className="module-node-type">{module_type.name}</div>
-          {description && <div className="module-node-desc" title={description}>{description}</div>}
+          <div className="module-node-name" title={blind ? blind_hint : module.name}>{blind ? blind_name : module.name}{module.update_available && <span className="issue-mark" title="Neue Version verfügbar" aria-label="Neue Version verfügbar"><Icon name="alert" size={14} /></span>}</div>
+          {!blind && <div className="module-node-type">{module_type.name}</div>}
+          {!blind && description && <div className="module-node-desc" title={description}>{description}</div>}
         </div>
       </div>
       {mode === 'monitor' && (

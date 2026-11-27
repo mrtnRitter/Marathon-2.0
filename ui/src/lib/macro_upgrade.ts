@@ -18,6 +18,12 @@ export function upgrade_module(module: WorkflowModule, hull: MacroHull): { modul
   }
 }
 
+export function upgrade_blind_module(module: WorkflowModule): WorkflowModule {
+  return module.latest_version === undefined
+    ? { ...module }
+    : { ...module, macro_version: module.latest_version, update_available: false }
+}
+
 export function dropped_message(dropped: string[]): string | null {
   return dropped.length === 0 ? null : `Entfallene Einstellungen: ${dropped.join(', ')}`
 }

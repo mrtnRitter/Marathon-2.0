@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from auth_helpers import sign_in
+from auth_helpers import edit_lock_headers, sign_in
 from sqlalchemy import text
 
 from marathon.modules import load_catalog
@@ -16,10 +16,21 @@ from marathon.server.db.macro_writes import ensure_standard_macros
 from marathon.server.scheduler import run_schedule_tick
 
 
+_EDIT_LOCK_HEADERS: dict[tuple[int, str], dict[str, str]] = {}
+
+
+def _workflow_edit_lock_headers(client, workflow_id: str) -> dict[str, str]:
+    key = (id(client), workflow_id)
+    if key not in _EDIT_LOCK_HEADERS:
+        _EDIT_LOCK_HEADERS[key] = edit_lock_headers(client, "workflow", workflow_id)
+    return _EDIT_LOCK_HEADERS[key]
+
+
 # FIXTURES
 @pytest.fixture
 def api_client(db_engine, tmp_path):
     """Provide a client with the current module catalog installed."""
+    _EDIT_LOCK_HEADERS.clear()
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
     with db_engine.begin() as connection:
         connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('test-admin', 'admin@test.local', 'Test Admin', 'admin')"))
@@ -47,6 +58,7 @@ def _save_watchfolder(api_client, name="Issues", path=""):
             }],
             "connections": [],
         },
+        headers=_workflow_edit_lock_headers(api_client, workflow["id"]),
     )
     return workflow["id"], response
 
@@ -117,6 +129,7 @@ def test_save_invalid_pauses_active_workflow(api_client, db_engine, tmp_path):
             }],
             "connections": [],
         },
+        headers=_workflow_edit_lock_headers(api_client, workflow_id),
     )
 
     assert saved.status_code == 200, saved.json()

@@ -7,7 +7,7 @@ from sqlalchemy.engine import Engine
 
 from marathon.server.api.deps import current_user, get_engine
 from marathon.server.auth.sessions import AuthUser
-from marathon.server.db.workflow_access import require_workflow_access
+from marathon.server.db.object_access import require_access
 from marathon.server.db.detail_queries import get_asset_detail, get_graph, get_module_activity
 
 
@@ -22,7 +22,7 @@ def get_workflow_graph(
 ) -> dict[str, Any]:
     """Return the current workflow graph or a not-found response."""
     with engine.connect() as connection:
-        require_workflow_access(connection, user, workflow_id, "view")
+        require_access(connection, user, "workflow", workflow_id, "view")
         graph = get_graph(connection, workflow_id, user)
     if graph is None:
         raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
@@ -38,7 +38,7 @@ def get_workflow_module_activity(
 ) -> dict[str, Any]:
     """Return activity for a current workflow module or a not-found response."""
     with engine.connect() as connection:
-        require_workflow_access(connection, user, workflow_id, "view")
+        require_access(connection, user, "workflow", workflow_id, "view")
         activity = get_module_activity(connection, workflow_id, module_id, user)
     if activity is None:
         raise HTTPException(status_code=404, detail="Modul nicht gefunden")

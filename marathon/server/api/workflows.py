@@ -4,27 +4,28 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy import text
+from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from pydantic import BaseModel, Field, StrictBool
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from marathon.server.api.deps import current_user, get_engine
 from marathon.server.auth.sessions import AuthUser
 from marathon.server.db.detail_queries import get_graph
 from marathon.server.engine.jobs import graph_impact
-from marathon.server.db.queries import get_workflow
-from marathon.server.db.workflow_access import (
-    list_workflow_shares,
-    replace_workflow_shares,
-    require_workflow_access,
-    set_workflow_owner,
-    user_exists,
-    workflow_owner_id,
+from marathon.server.db.edit_locks import LockMissing, lock_missing_text, require_lock
+from marathon.server.db.object_access import (
+    delete_object_access,
+    log_intervention,
+    object_access_map,
+    require_access,
 )
+from marathon.server.db.queries import blind_module_name, get_workflow
 from marathon.server.db.workflow_writes import (
+    apply_module_rights,
     resolve_graph,
     WorkflowConflict,
+    WorkflowModuleForbidden,
     WorkflowNotStartable,
     WorkflowPausing,
     WorkflowValidationError,
@@ -58,25 +59,6 @@ class ActiveInput(BaseModel):
     """Strict boolean payload for changing a workflow active state."""
 
     active: StrictBool
-
-
-class ShareInput(BaseModel):
-    """One user and access level in a workflow share replacement."""
-
-    user_id: str
-    access: str
-
-
-class SharesInput(BaseModel):
-    """Complete workflow share list replacement."""
-
-    shares: list[ShareInput]
-
-
-class OwnerInput(BaseModel):
-    """New workflow owner identifier."""
-
-    user_id: str
 
 
 class PositionInput(BaseModel):
@@ -134,7 +116,7 @@ def post_workflow(
                 payload.description,
                 payload.schedule.model_dump() if payload.schedule else None,
                 datetime.now(timezone.utc),
-                owner_user_id=user.id,
+                owner_user_id=None if user.is_admin else user.id,
             )
             workflow = get_workflow(connection, workflow_id, user)
     except WorkflowValidationError as exc:
@@ -151,9 +133,12 @@ def post_duplicate_workflow(
     """Duplicate a workflow and return its metadata in the same transaction."""
     try:
         with engine.begin() as connection:
-            require_workflow_access(connection, user, workflow_id, "view")
+            require_access(connection, user, "workflow", workflow_id, "view")
             duplicate_id = duplicate_workflow(
-                connection, workflow_id, datetime.now(timezone.utc), owner_user_id=user.id
+                connection,
+                workflow_id,
+                datetime.now(timezone.utc),
+                owner_user_id=None if user.is_admin else user.id,
             )
             if duplicate_id is None:
                 raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
@@ -167,13 +152,18 @@ def post_duplicate_workflow(
 def put_workflow(
     workflow_id: str,
     payload: WorkflowInput,
+    edit_lock: str | None = Header(default=None, alias="X-Edit-Lock"),
     user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
     """Update workflow metadata and return it within the write transaction."""
     try:
         with engine.begin() as connection:
-            require_workflow_access(connection, user, workflow_id, "edit")
+            require_access(connection, user, "workflow", workflow_id, "edit")
+            try:
+                require_lock(connection, "workflow", workflow_id, edit_lock)
+            except LockMissing as exc:
+                raise HTTPException(status_code=409, detail=lock_missing_text) from exc
             updated = update_workflow(
                 connection,
                 workflow_id,
@@ -184,6 +174,7 @@ def put_workflow(
             )
             if not updated:
                 raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+            log_intervention(connection, user, "workflow", workflow_id, "Bearbeitet")
             workflow = get_workflow(connection, workflow_id, user)
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -200,7 +191,7 @@ def put_workflow_active(
     """Set a workflow's active state and return its metadata."""
     try:
         with engine.begin() as connection:
-            require_workflow_access(connection, user, workflow_id, "run")
+            require_access(connection, user, "workflow", workflow_id, "use")
             updated = set_workflow_active(connection, workflow_id, payload.active)
             if not updated:
                 raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
@@ -223,7 +214,9 @@ def delete_workflow_by_id(
 ) -> Response:
     """Delete a workflow and its dependent data, returning an empty 204 response."""
     with engine.begin() as connection:
-        require_workflow_access(connection, user, workflow_id, "owner")
+        require_access(connection, user, "workflow", workflow_id, "owner")
+        log_intervention(connection, user, "workflow", workflow_id, "Gelöscht")
+        delete_object_access(connection, "workflow", workflow_id)
         deleted = delete_workflow(connection, workflow_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
@@ -234,28 +227,37 @@ def delete_workflow_by_id(
 def put_workflow_graph(
     workflow_id: str,
     payload: GraphInput,
+    edit_lock: str | None = Header(default=None, alias="X-Edit-Lock"),
     user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
     """Save a new graph version and return it from the same transaction."""
     try:
         with engine.begin() as connection:
-            require_workflow_access(connection, user, workflow_id, "edit")
+            require_access(connection, user, "workflow", workflow_id, "edit")
+            try:
+                require_lock(connection, "workflow", workflow_id, edit_lock)
+            except LockMissing as exc:
+                raise HTTPException(status_code=409, detail=lock_missing_text) from exc
             new_version = save_graph(
                 connection,
                 workflow_id,
                 payload.base_version,
                 [module.model_dump() for module in payload.modules],
-                [graph_connection.model_dump() for graph_connection in payload.connections],
+                [item.model_dump() for item in payload.connections],
+                user=user,
             )
             if new_version is None:
                 raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+            log_intervention(connection, user, "workflow", workflow_id, "Bearbeitet")
             graph = get_graph(connection, workflow_id, user=user)
     except WorkflowConflict as exc:
         raise HTTPException(
             status_code=409,
             detail="Workflow wurde zwischenzeitlich geändert. Bitte neu laden.",
         ) from exc
+    except WorkflowModuleForbidden as exc:
+        raise HTTPException(status_code=403, detail="Keine Berechtigung für dieses Modul") from exc
     except WorkflowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return graph
@@ -270,19 +272,27 @@ def post_workflow_graph_impact(
 ) -> dict[str, Any]:
     """Return impact for removed runtime modules, grouped by module instance."""
     with engine.begin() as connection:
-        require_workflow_access(connection, user, workflow_id, "edit")
+        require_access(connection, user, "workflow", workflow_id, "edit")
         exists = connection.execute(
             text("SELECT id FROM workflows WHERE id = :id FOR SHARE"), {"id": workflow_id}
         ).scalar_one_or_none()
         if exists is None:
             raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
         try:
-            _, _, runtime_modules, runtime_connections = resolve_graph(
+            modules = apply_module_rights(
                 connection,
                 workflow_id,
                 [module.model_dump() for module in payload.modules],
+                user,
+            )
+            _, _, runtime_modules, runtime_connections = resolve_graph(
+                connection,
+                workflow_id,
+                modules,
                 [item.model_dump() for item in payload.connections],
             )
+        except WorkflowModuleForbidden as exc:
+            raise HTTPException(status_code=403, detail="Keine Berechtigung für dieses Modul") from exc
         except WorkflowValidationError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -295,87 +305,42 @@ def post_workflow_graph_impact(
                 for item in runtime_connections
             ],
         )
-        current_modules = connection.execute(text(
-            "SELECT runtime.id, COALESCE(runtime.instance_id, runtime.id) AS instance_id, "
-            "COALESCE(instance.name, runtime.name) AS instance_name "
-            "FROM workflow_modules AS runtime "
-            "LEFT JOIN workflow_instances AS instance ON instance.workflow_id = runtime.workflow_id "
-            "AND instance.version = runtime.version AND instance.id = runtime.instance_id "
-            "WHERE runtime.workflow_id = :id AND runtime.version = "
-            "(SELECT current_version FROM workflows WHERE id = :id)"
-        ), {"id": workflow_id}).mappings()
+        current_modules = connection.execute(
+            text(
+                "SELECT runtime.id, COALESCE(runtime.instance_id, runtime.id) AS instance_id, "
+                "COALESCE(instance.name, runtime.name) AS instance_name, instance.macro_id "
+                "FROM workflow_modules AS runtime "
+                "LEFT JOIN workflow_instances AS instance ON instance.workflow_id = runtime.workflow_id "
+                "AND instance.version = runtime.version AND instance.id = runtime.instance_id "
+                "WHERE runtime.workflow_id = :id AND runtime.version = "
+                "(SELECT current_version FROM workflows WHERE id = :id)"
+            ),
+            {"id": workflow_id},
+        ).mappings()
         instance_by_runtime_id = {
-            row["id"]: (row["instance_id"], row["instance_name"])
+            row["id"]: (row["instance_id"], row["instance_name"], row["macro_id"])
             for row in current_modules
         }
+        removed_modules = impact["removed_modules"]
+        macro_ids = [
+            instance_by_runtime_id[item["id"]][2]
+            for item in removed_modules
+            if item["id"] in instance_by_runtime_id
+            and instance_by_runtime_id[item["id"]][2] is not None
+        ]
+        module_access = object_access_map(connection, user, "macro", macro_ids)
         grouped = {}
-        for removed in impact["removed_modules"]:
-            instance_id, instance_name = instance_by_runtime_id.get(
-                removed["id"], (removed["id"], removed["name"])
+        for removed in removed_modules:
+            instance_id, instance_name, macro_id = instance_by_runtime_id.get(
+                removed["id"], (removed["id"], removed["name"], None)
             )
-            item = grouped.setdefault(instance_id, {
-                "id": instance_id, "name": instance_name, "assets": 0, "jobs": 0,
-            })
+            if macro_id is not None and module_access.get(macro_id) is None:
+                instance_name = blind_module_name
+            item = grouped.setdefault(
+                instance_id,
+                {"id": instance_id, "name": instance_name, "assets": 0, "jobs": 0},
+            )
             item["assets"] += removed["assets"]
             item["jobs"] += removed["jobs"]
         impact["removed_modules"] = list(grouped.values())
         return impact
-
-
-@router.get("/workflows/{workflow_id}/shares")
-def get_workflow_shares(
-    workflow_id: str,
-    user: AuthUser = Depends(current_user),
-    engine: Engine = Depends(get_engine),
-) -> dict[str, Any]:
-    """Return shares for a workflow owned by the current user or an admin."""
-    with engine.connect() as connection:
-        require_workflow_access(connection, user, workflow_id, "owner")
-        return {"shares": list_workflow_shares(connection, workflow_id)}
-
-
-@router.put("/workflows/{workflow_id}/shares")
-def put_workflow_shares(
-    workflow_id: str,
-    payload: SharesInput,
-    user: AuthUser = Depends(current_user),
-    engine: Engine = Depends(get_engine),
-) -> dict[str, Any]:
-    """Replace all workflow shares and return the resulting list."""
-    with engine.begin() as connection:
-        require_workflow_access(connection, user, workflow_id, "owner")
-        owner_id = workflow_owner_id(connection, workflow_id)
-        seen: set[str] = set()
-        shares = []
-        for share in payload.shares:
-            if share.user_id in seen:
-                raise HTTPException(status_code=422, detail=f"Nutzer doppelt: {share.user_id}")
-            seen.add(share.user_id)
-            if share.user_id == owner_id:
-                raise HTTPException(status_code=422, detail="Der Eigentümer kann nicht freigegeben werden")
-            if not user_exists(connection, share.user_id):
-                raise HTTPException(status_code=422, detail=f"Unbekannter Nutzer: {share.user_id}")
-            if share.access not in ("view", "run", "edit"):
-                raise HTTPException(status_code=422, detail=f"Ungültige Freigabestufe: {share.access}")
-            shares.append({"user_id": share.user_id, "access": share.access})
-        replace_workflow_shares(connection, workflow_id, shares)
-        return {"shares": list_workflow_shares(connection, workflow_id)}
-
-
-@router.put("/workflows/{workflow_id}/owner")
-def put_workflow_owner(
-    workflow_id: str,
-    payload: OwnerInput,
-    user: AuthUser = Depends(current_user),
-    engine: Engine = Depends(get_engine),
-) -> dict[str, Any]:
-    """Set a workflow owner; this route is restricted to administrators."""
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Nur für Admins")
-    with engine.begin() as connection:
-        if not user_exists(connection, payload.user_id):
-            raise HTTPException(status_code=422, detail=f"Unbekannter Nutzer: {payload.user_id}")
-        require_workflow_access(connection, user, workflow_id, "owner")
-        set_workflow_owner(connection, workflow_id, payload.user_id)
-        workflow = get_workflow(connection, workflow_id, user)
-    return workflow

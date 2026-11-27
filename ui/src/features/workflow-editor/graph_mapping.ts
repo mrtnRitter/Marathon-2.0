@@ -35,12 +35,11 @@ export function lock_edges(edges: Edge[], locked_module_ids: Set<string>): Edge[
 
 export function to_nodes(graph: WorkflowGraph, module_types: MacroSummary[]): ModuleFlowNode[] {
   return graph.modules.map(module => {
-    const macro = module_types.find(type => type.id === module.type_id)
+    const macro = module.blind ? undefined : module_types.find(type => type.id === module.type_id)
     const hull = module.hull ?? macro
     const resolved_module = {
       ...module,
       ...(hull ? { hull } : {}),
-      can_edit: module.can_edit ?? macro?.can_edit,
     }
     const module_type: ModuleType = hull ?? {
       id: module.type_id,
@@ -122,8 +121,9 @@ export function new_module(module_type: MacroSummary, position: { x: number; y: 
     settings: Object.fromEntries(module_type.settings.flatMap(spec => (spec.default === undefined ? [] : [[spec.key, spec.default]]))),
     counters: { waiting: 0, running: 0, done: 0, failed: 0, discovered: 0 },
     locked: false,
+    access: module_type.access,
+    blind: false,
     macro_version: module_type.version,
-    can_edit: module_type.can_edit,
     hull: module_type,
   }
 }

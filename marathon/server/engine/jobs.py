@@ -121,10 +121,19 @@ def _log(
     )
 
 
-def _history(connection: Connection, asset_id: str, kind: str, message: str) -> None:
+def _history(
+    connection: Connection,
+    asset_id: str,
+    kind: str,
+    message: str,
+    module_id: str | None,
+) -> None:
     connection.execute(
-        text("INSERT INTO asset_history (asset_id, kind, text) VALUES (:asset_id, :kind, :text)"),
-        {"asset_id": asset_id, "kind": kind, "text": message},
+        text(
+            "INSERT INTO asset_history (asset_id, module_id, kind, text) "
+            "VALUES (:asset_id, :module_id, :kind, :text)"
+        ),
+        {"asset_id": asset_id, "module_id": module_id, "kind": kind, "text": message},
     )
 
 
@@ -196,7 +205,7 @@ def _interrupt_locked_job(
             text("UPDATE assets SET attempts = :attempt, updated_at = :now WHERE id = :id"),
             {"attempt": attempt, "now": now, "id": asset_id},
         )
-        _history(connection, asset_id, "error", message)
+        _history(connection, asset_id, "error", message, job["module_id"])
         _log(connection, job["workflow_id"], job["module_id"], job["id"], "warn", message, asset_id)
         if attempt >= max_attempts:
             fail_asset(connection, asset_id, f"Nach {attempt} unterbrochenen Versuchen fehlgeschlagen")
@@ -215,7 +224,7 @@ def _apply_error(
     module = graph.modules.get(job["module_id"]) if graph is not None else None
     _log(connection, job["workflow_id"], job["module_id"], job["id"], "error", error, asset_id)
     if module is not None and "error" in module.outputs:
-        _history(connection, asset_id, "error", error)
+        _history(connection, asset_id, "error", error, job["module_id"])
         route_asset(connection, asset_id, graph, job["module_id"], "error")
     else:
         fail_asset(connection, asset_id, error)
@@ -263,7 +272,7 @@ def _spawn_asset(
         },
     )
     for message in spawned.get("log", []):
-        _history(connection, asset_id, "info", str(message))
+        _history(connection, asset_id, "info", str(message), job["module_id"])
     route_asset(connection, asset_id, graph, job["module_id"], spawned["output"])
 
 
@@ -289,7 +298,7 @@ def _apply_result_to_asset(
     for message in result.get("log", []):
         message = str(message)
         _log(connection, job["workflow_id"], job["module_id"], job["id"], level, message, asset["id"])
-        _history(connection, asset["id"], level, message)
+        _history(connection, asset["id"], level, message, job["module_id"])
 
     path = result.get("asset_path")
     if path is not None:
@@ -306,7 +315,7 @@ def _apply_result_to_asset(
             ),
             {"id": asset["id"], "now": now},
         )
-        _history(connection, asset["id"], "success", f"Erledigt an „{module.name}“")
+        _history(connection, asset["id"], "success", f"Erledigt an „{module.name}“", module.id)
     else:
         route_asset(connection, asset["id"], graph, job["module_id"], output)
 
@@ -632,7 +641,7 @@ def _interrupt_result_asset(
         text("UPDATE assets SET attempts = :attempt, updated_at = :now WHERE id = :id"),
         {"attempt": attempt, "now": now, "id": asset["id"]},
     )
-    _history(connection, asset["id"], "error", message)
+    _history(connection, asset["id"], "error", message, job["module_id"])
     _log(connection, job["workflow_id"], job["module_id"], job["id"], "warn", message, asset["id"])
     if attempt >= max_attempts:
         fail_asset(connection, asset["id"], f"Nach {attempt} unterbrochenen Versuchen fehlgeschlagen")

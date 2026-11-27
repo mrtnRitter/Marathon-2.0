@@ -5,7 +5,13 @@ import { Button } from '../../components/Toolbar'
 import type { FieldValue, WorkflowModule } from '../../data/types'
 import { parse_extensions, setting_errors } from '../../lib/module_settings'
 import type { ModuleNodeData } from './editor_types'
-import { output_color } from '../../theme/status'
+import { has_access } from '../../lib/access'
+import { module_counter_meta, output_color } from '../../theme/status'
+
+const blind_name = 'Nicht freigegebenes Modul'
+const blind_hint = 'Dieses Modul ist für Dich nicht zur Ansicht freigegeben'
+const view_hint = 'Einstellungen ändern verlangt die Freigabe zur Verwendung'
+const short_label = { discovered: 'erfasst', waiting: 'wartet', running: 'läuft', done: 'erledigt', failed: 'Fehler' }
 
 interface Props {
   data: ModuleNodeData
@@ -108,6 +114,11 @@ export function ModuleSettingsForm({ data, on_change, read_only = false, width }
 export function ModuleSettingsPanel({ data, on_change, on_upgrade, on_builder_open, read_only = false, width, on_width_change }: Props) {
   const drag = useRef<{ pointer_id: number; start_x: number; start_width: number } | null>(null)
   const [resizing, set_resizing] = useState(false)
+  const blind = data.module.blind === true
+  const settings_read_only = read_only || !has_access(data.module.access, 'use')
+  const counter_keys = data.module.counters.discovered > 0
+    ? ['discovered', 'waiting', 'running', 'done', 'failed'] as const
+    : ['waiting', 'running', 'done', 'failed'] as const
 
   const end_drag = (event: PointerEvent<HTMLDivElement>) => {
     if (drag.current?.pointer_id !== event.pointerId) return
@@ -138,9 +149,9 @@ export function ModuleSettingsPanel({ data, on_change, on_upgrade, on_builder_op
         onLostPointerCapture={end_drag}
       />
       <header className="module-settings-header">
-        <span className="module-node-icon"><Icon name={data.module_type.icon} size={14} /></span>
-        <span>{data.module.name}</span>
-        {read_only && <Icon name="lock" size={14} />}
+        {!blind && <span className="module-node-icon"><Icon name={data.module_type.icon} size={14} /></span>}
+        <span>{blind ? blind_name : data.module.name}</span>
+        {!blind && read_only && <Icon name="lock" size={14} />}
       </header>
       <div className="module-settings-body">
         {!read_only && data.module.update_available && data.module.latest_version !== undefined && on_upgrade && (
@@ -149,8 +160,25 @@ export function ModuleSettingsPanel({ data, on_change, on_upgrade, on_builder_op
             <Button label="Aktualisieren" icon="reprocess" on_click={on_upgrade} />
           </div>
         )}
-        {data.module.can_edit && on_builder_open && <Button label="Im Builder öffnen" icon="workflow" on_click={on_builder_open} />}
-        <ModuleSettingsForm data={data} on_change={on_change} read_only={read_only} width={width} />
+        {blind ? (
+          <>
+            <p className="muted">{blind_hint}</p>
+            <div className="module-node-counters" style={{ gridTemplateColumns: `repeat(${counter_keys.length}, 1fr)` }}>
+              {counter_keys.map(key => (
+                <div key={key} className="module-counter" style={{ color: module_counter_meta[key].color }} title={module_counter_meta[key].label}>
+                  <b>{data.module.counters[key]}</b>
+                  <span>{short_label[key]}</span>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <>
+            {has_access(data.module.access, 'edit') && on_builder_open && <Button label="Im Builder öffnen" icon="workflow" on_click={on_builder_open} />}
+            {data.module.access === 'view' && <p className="muted">{view_hint}</p>}
+            <ModuleSettingsForm data={data} on_change={on_change} read_only={settings_read_only} width={width} />
+          </>
+        )}
       </div>
     </aside>
   )

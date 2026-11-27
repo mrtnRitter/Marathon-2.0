@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from marathon.server.auth.sessions import AuthUser
-from marathon.server.db.workflow_access import workflow_access_filter
+from marathon.server.db.object_access import access_filter_sql
 
 
 _job_statuses = ("open", "assigned", "running", "cancelling", "succeeded", "failed", "cancelled", "interrupted")
@@ -22,7 +22,7 @@ def job_status_report(
 ) -> dict[str, Any] | None:
     """Return visible job-status counts by workflow for a half-open time range."""
     counts_by_workflow: dict[str, dict[str, Any]] = {}
-    access_filter, parameters = workflow_access_filter(user)
+    access_filter, parameters = access_filter_sql(user, "workflow", "workflow")
     parameters = {**parameters, "start": start, "end": end}
     filters = [access_filter]
     if workflow_id is not None:

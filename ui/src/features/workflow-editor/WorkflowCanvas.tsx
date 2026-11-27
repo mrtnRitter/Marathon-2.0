@@ -9,14 +9,19 @@ import { Button } from '../../components/Toolbar'
 import { SlidePanel } from '../../components/SlidePanel'
 import { Icon } from '../../components/Icon'
 import { notify } from '../../components/Toast'
-import { get_graph_impact, get_macros, get_workflow_graph, save_workflow_graph } from '../../data/api'
+import { ApiError, get_graph_impact, get_macros, get_workflow_graph, save_workflow_graph } from '../../data/api'
 import { create_reload_gate, subscribe_live } from '../../data/live'
 import type { GraphImpact, GraphInput, MacroSummary, WorkflowGraph, WorkflowModule } from '../../data/types'
 import { has_setting_errors } from '../../lib/module_settings'
 import { impact_lines } from '../../lib/graph_impact'
-import { dropped_message, upgrade_module } from '../../lib/macro_upgrade'
+import { dropped_message, upgrade_blind_module, upgrade_module } from '../../lib/macro_upgrade'
 import { merge_counters } from './live_counters'
 import { use_data } from '../../data/use_data'
+import { use_edit_lock } from '../../data/use_edit_lock'
+import { EditLockNotice } from '../../components/EditLockNotice'
+import { has_access, is_lock_conflict } from '../../lib/access'
+import { lock_held_prefix, type EditLockState } from '../../lib/edit_lock'
+import { filter_usable_module_types } from './editor_access'
 import { EditorActionsContext, EditorModeContext, drag_mime, type EditorMode, type ModuleFlowNode, type ModuleNodeData } from './editor_types'
 import { apply_lock, create_edge, create_node, locked_ids, lock_edges, lock_targets, new_module, remove_edges_with_missing_outputs, to_edges, to_graph_input, to_nodes, view_nodes } from './graph_mapping'
 import { is_valid_connection as check_valid_connection, reconnectable_edge_ids } from './connections'
@@ -77,6 +82,14 @@ const minimap_color = (node: ModuleFlowNode) =>
 
 export function WorkflowCanvas({ workflow_id, initial_mode, can_edit, on_saved }: { workflow_id: string; initial_mode?: EditorMode; can_edit: boolean; on_saved?: () => void }) {
   const [mode, set_mode] = useState<EditorMode>(can_edit ? initial_mode ?? 'monitor' : 'monitor')
+  const [save_lock_lost, set_save_lock_lost] = useState<EditLockState | null>(null)
+  const { state: hook_lock_state, token: hook_lock_token, retry: retry_lock } = use_edit_lock('workflow', workflow_id, can_edit && mode === 'edit')
+  const lock_state = save_lock_lost ?? hook_lock_state
+  const lock_token = save_lock_lost ? null : hook_lock_token
+  const change_mode = (next_mode: EditorMode) => {
+    if (next_mode === 'edit' && mode !== 'edit') set_save_lock_lost(null)
+    set_mode(next_mode)
+  }
   useEffect(() => { if (!can_edit) set_mode('monitor') }, [can_edit])
   const { data, reload } = use_data(() => Promise.all([get_workflow_graph(workflow_id), get_macros()]), [workflow_id])
   if (!data) return <div className="loading">Lade Workflow</div>
@@ -84,12 +97,12 @@ export function WorkflowCanvas({ workflow_id, initial_mode, can_edit, on_saved }
   if (!graph) return <div className="loading">Kein Graph für diesen Workflow</div>
   return (
     <ReactFlowProvider>
-      <Editor key={`${workflow_id}-${graph.version}`} graph={graph} module_types={module_types} mode={mode} can_edit={can_edit} on_mode_change={set_mode} on_saved={() => { reload(); on_saved?.() }} on_stale={reload} />
+      <Editor key={`${workflow_id}-${graph.version}`} graph={graph} module_types={module_types} mode={mode} can_edit={can_edit} lock_state={lock_state} lock_token={lock_token} on_lock_retry={retry_lock} on_lock_lost={set_save_lock_lost} on_mode_change={change_mode} on_saved={() => { reload(); on_saved?.() }} on_stale={reload} />
     </ReactFlowProvider>
   )
 }
 
-function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved, on_stale }: { graph: WorkflowGraph; module_types: MacroSummary[]; mode: EditorMode; can_edit: boolean; on_mode_change: (mode: EditorMode) => void; on_saved: () => void; on_stale: () => void }) {
+function Editor({ graph, module_types, mode, can_edit, lock_state, lock_token, on_lock_retry, on_lock_lost, on_mode_change, on_saved, on_stale }: { graph: WorkflowGraph; module_types: MacroSummary[]; mode: EditorMode; can_edit: boolean; lock_state: EditLockState; lock_token: string | null; on_lock_retry: () => void; on_lock_lost: (state: EditLockState) => void; on_mode_change: (mode: EditorMode) => void; on_saved: () => void; on_stale: () => void }) {
   const navigate = useNavigate()
   const [settings_width, set_settings_width] = useState(read_settings_width)
   useEffect(() => {
@@ -110,9 +123,17 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
   const store = useStoreApi<ModuleFlowNode, Edge>()
   const selection_rect = useStore(state => state.userSelectionRect)
   const transform = useStore(state => state.transform)
-  const editing = can_edit && mode === 'edit'
+  const lock_token_ref = useRef<string | null>(null)
+  lock_token_ref.current = can_edit && mode === 'edit' && lock_state.status === 'held' ? lock_token : null
+  const editing = lock_token_ref.current !== null
+  const usable_module_types = useMemo(() => filter_usable_module_types(module_types, has_access), [module_types])
+  const record_lock_loss = (error: unknown) => {
+    if (error instanceof ApiError && error.status === 409 && is_lock_conflict(error.detail)) {
+      on_lock_lost({ status: 'lost', token: null, expires_at: null, message: error.detail, conflict: error.detail.startsWith(lock_held_prefix) })
+    }
+  }
   const open_builder = (module: WorkflowModule) => {
-    if (!module.can_edit) return
+    if (!has_access(module.access, 'edit')) return
     if (dirty && !window.confirm('Ungespeicherte Änderungen verwerfen?')) return
     navigate(`/modules/${encodeURIComponent(module.type_id)}`)
   }
@@ -179,7 +200,9 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
   const inspected_node = nodes.find(node => node.id === inspected_id && node.data.module.locked)
 
   const save_graph_input = async (input: GraphInput) => {
-    await save_workflow_graph(graph.workflow_id, input)
+    const current_token = lock_token_ref.current
+    if (!current_token) return
+    await save_workflow_graph(graph.workflow_id, input, current_token)
     set_impact(null)
     set_pending_graph_input(null)
     notify(invalid.length > 0 ? 'Gespeichert. Einstellungen prüfen – so lässt sich der Workflow nicht starten' : 'Gespeichert')
@@ -187,7 +210,7 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
   }
 
   const save = async () => {
-    if (saving) return
+    if (saving || !lock_token_ref.current) return
     const input = to_graph_input(graph.version, nodes, edges)
     set_saving(true)
     try {
@@ -198,7 +221,8 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
         return
       }
       await save_graph_input(input)
-    } catch {
+    } catch (error) {
+      record_lock_loss(error)
       // The request already displays the error.
     } finally {
       set_saving(false)
@@ -206,11 +230,12 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
   }
 
   const confirm_save = async () => {
-    if (!pending_graph_input || saving) return
+    if (!pending_graph_input || saving || !lock_token_ref.current) return
     set_saving(true)
     try {
       await save_graph_input(pending_graph_input)
-    } catch {
+    } catch (error) {
+      record_lock_loss(error)
       // The request already displays the error.
     } finally {
       set_saving(false)
@@ -233,6 +258,7 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
   }
 
   const toggle_lock = (module_id: string) => {
+    if (!editing) return
     const { ids, locked } = lock_targets(nodes, module_id)
     if (ids.length === 0) return
     const target_ids = new Set(ids)
@@ -259,15 +285,18 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
   )
 
   const on_connect = useCallback((connection: Connection) => {
+    if (!editing) return
     set_edges(current => addEdge(create_edge(connection), current))
     set_dirty(true)
-  }, [set_edges])
+  }, [editing, set_edges])
 
   const on_reconnect_start = useCallback((_event: ReactMouseEvent, edge: Edge) => {
+    if (!editing) return
     reconnecting_edge_id.current = edge.id
-  }, [])
+  }, [editing])
 
   const on_reconnect = useCallback((old_edge: Edge, connection: Connection) => {
+    if (!editing) return
     const current_edge = edges.find(edge => edge.id === old_edge.id)
     if (!current_edge) return
     const unchanged = current_edge.source === connection.source
@@ -280,17 +309,18 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
       return edge ? reconnectEdge(edge, connection, current) : current
     })
     set_dirty(true)
-  }, [edges, set_edges])
+  }, [editing, edges, set_edges])
 
   const on_reconnect_end = useCallback((_event: MouseEvent | TouchEvent, edge: Edge, _handle_type: 'source' | 'target', connection_state: FinalConnectionState) => {
     const started_edge_id = reconnecting_edge_id.current
     reconnecting_edge_id.current = null
-    if (started_edge_id !== edge.id || connection_state.isValid === true || !edges.some(item => item.id === edge.id)) return
+    if (!editing || started_edge_id !== edge.id || connection_state.isValid === true || !edges.some(item => item.id === edge.id)) return
     set_edges(current => current.filter(item => item.id !== edge.id))
     set_dirty(true)
-  }, [edges, set_edges])
+  }, [editing, edges, set_edges])
 
   const on_before_delete: OnBeforeDelete<ModuleFlowNode, Edge> = async ({ nodes: delete_nodes, edges: delete_edges }) => {
+    if (!editing) return false
     const current_locked_ids = locked_ids(nodes)
     const adjacent_to_locked = new Set(edges.flatMap(edge => {
       if (current_locked_ids.has(edge.source)) return [edge.target]
@@ -303,12 +333,14 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
       notify('Module mit Verbindung zu gesperrten Modulen werden nicht gelöscht')
     }
     if (safe_nodes.length === 0 && safe_edges.length === 0) return false
+    if (safe_nodes.some(node => node.data.module.blind) && !window.confirm('Dieses Modul ist für Dich nicht freigegeben. Nach dem Entfernen kannst Du es nicht wieder einfügen. Entfernen?')) return false
     return { nodes: safe_nodes, edges: safe_edges }
   }
 
   const on_drop = (event: DragEvent) => {
     event.preventDefault()
-    const module_type = module_types.find(type => type.id === event.dataTransfer.getData(drag_mime))
+    if (!editing) return
+    const module_type = usable_module_types.find(type => type.id === event.dataTransfer.getData(drag_mime))
     if (!module_type) return
     const position = screenToFlowPosition({ x: event.clientX, y: event.clientY })
     set_nodes(current => [...current, create_node(new_module(module_type, position, current.length), module_type)])
@@ -316,11 +348,21 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
   }
 
   const apply_settings = (module: WorkflowModule) => {
+    if (!editing) return
     set_nodes(current => current.map(node => (node.id === module.id ? { ...node, data: { ...node.data, module } } : node)))
     set_dirty(true)
   }
 
   const apply_upgrade = (module: WorkflowModule) => {
+    if (!editing) return
+    if (module.blind) {
+      const upgraded_module = upgrade_blind_module(module)
+      set_nodes(current => current.map(node => node.id === module.id
+        ? { ...node, data: { ...node.data, module: upgraded_module } }
+        : node))
+      set_dirty(true)
+      return
+    }
     const hull = module_types.find(item => item.id === module.type_id)
     if (!hull) return
     const result = upgrade_module(module, hull)
@@ -355,6 +397,7 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
     <EditorActionsContext.Provider value={{ toggle_lock }}>
       <EditorModeContext.Provider value={mode}>
         <div className="workflow-editor">
+          {mode === 'edit' && <EditLockNotice object_type="workflow" object_id={graph.workflow_id} state={lock_state} on_retry={on_lock_retry} />}
           <div className="workflow-editor-bar">
             <div className="mode-switch" role="tablist">
               {(can_edit ? ['monitor', 'edit'] as const : ['monitor'] as const).map(item => (
@@ -376,7 +419,7 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
             </div>
           </div>
           <div className="workflow-editor-body">
-            {editing && <ModulePalette module_types={module_types} />}
+            {editing && <ModulePalette module_types={usable_module_types} />}
             <div className="workflow-editor-canvas" onDragOver={event => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' }} onDrop={editing ? on_drop : undefined}>
               <ReactFlow
                 colorMode="dark"
@@ -385,13 +428,15 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
                 nodeTypes={node_types}
                 onNodesChange={changes => {
                   const filtered_changes = ignore_select_changes(store.getState().userSelectionRect) ? changes.filter(change => change.type !== 'select') : changes
-                  on_nodes_change(filtered_changes)
-                  if (editing && filtered_changes.some(change => change.type !== 'select' && change.type !== 'dimensions')) set_dirty(true)
+                  const allowed_changes = editing ? filtered_changes : filtered_changes.filter(change => change.type === 'select' || change.type === 'dimensions')
+                  on_nodes_change(allowed_changes)
+                  if (editing && allowed_changes.some(change => change.type !== 'select' && change.type !== 'dimensions')) set_dirty(true)
                 }}
                 onEdgesChange={changes => {
                   const filtered_changes = ignore_select_changes(store.getState().userSelectionRect) ? changes.filter(change => change.type !== 'select') : changes
-                  on_edges_change(filtered_changes)
-                  if (filtered_changes.some(change => change.type === 'remove')) set_dirty(true)
+                  const allowed_changes = editing ? filtered_changes : filtered_changes.filter(change => change.type === 'select')
+                  on_edges_change(allowed_changes)
+                  if (editing && allowed_changes.some(change => change.type === 'remove')) set_dirty(true)
                 }}
                 onConnect={on_connect}
                 onReconnectStart={on_reconnect_start}
@@ -435,7 +480,7 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
         <SlidePanel open={impact !== null} title={<><span className="issue-mark"><Icon name="alert" size={16} /></span> Warnung</>} on_close={close_impact}
           actions={[
             { label: 'Abbrechen', icon: 'close', on_click: close_impact, disabled: saving },
-            { label: 'Speichern', icon: 'save', primary: true, on_click: confirm_save, disabled: saving || pending_graph_input === null },
+            { label: 'Speichern', icon: 'save', primary: true, on_click: confirm_save, disabled: saving || pending_graph_input === null || !editing },
           ]}>
           {impact && impact_lines(impact).map((line, index) => <p key={index}>{line}</p>)}
         </SlidePanel>

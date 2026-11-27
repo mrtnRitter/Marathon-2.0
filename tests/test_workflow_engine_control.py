@@ -7,16 +7,27 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from auth_helpers import sign_in
+from auth_helpers import edit_lock_headers, sign_in
 from sqlalchemy import text
 
 from marathon.server.app import create_app
+
+
+_EDIT_LOCK_HEADERS: dict[tuple[int, str], dict[str, str]] = {}
+
+
+def _workflow_edit_lock_headers(client, workflow_id: str) -> dict[str, str]:
+    key = (id(client), workflow_id)
+    if key not in _EDIT_LOCK_HEADERS:
+        _EDIT_LOCK_HEADERS[key] = edit_lock_headers(client, "workflow", workflow_id)
+    return _EDIT_LOCK_HEADERS[key]
 
 
 # TEST HELPERS
 @pytest.fixture
 def api_client(db_engine, tmp_path):
     """Provide an API client backed by the isolated test database."""
+    _EDIT_LOCK_HEADERS.clear()
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
     with db_engine.begin() as connection:
         connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('test-admin', 'admin@test.local', 'Test Admin', 'admin')"))
@@ -68,6 +79,7 @@ def _save_graph(api_client, workflow_id: str, base_version: int, modules: list[d
     response = api_client.put(
         f"/api/v1/workflows/{workflow_id}/graph",
         json={"base_version": base_version, "modules": modules, "connections": connections or []},
+        headers=_workflow_edit_lock_headers(api_client, workflow_id),
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -181,6 +193,7 @@ def test_save_invalid_active_workflow_stops(api_client, db_engine):
     response = api_client.put(
         f"/api/v1/workflows/{workflow['id']}/graph",
         json={"base_version": 2, "modules": [_module("m1", "wait", settings={"wait_s": 0})], "connections": []},
+        headers=_workflow_edit_lock_headers(api_client, workflow["id"]),
     )
 
     assert response.status_code == 200

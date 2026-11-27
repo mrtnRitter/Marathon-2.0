@@ -1,13 +1,16 @@
 """API-wide session and administrator access checks."""
 
 import re
+from datetime import datetime, timezone
 from threading import Timer
 
 from fastapi.testclient import TestClient
 
-from auth_helpers import sign_in
+from auth_helpers import create_test_user, sign_in
 from marathon.server.app import create_app
 from marathon.server.auth.sessions import AuthUser
+from records import insert_records
+from sqlalchemy import text
 
 
 _EXCEPTIONS = {
@@ -142,3 +145,59 @@ def test_events_require_a_session(db_engine):
         response = _request(client, "GET", "/api/v1/events", app)
     assert response.status_code == 401
     assert response.json() == {"detail": "Nicht angemeldet"}
+
+
+
+def test_legacy_workflow_share_and_owner_routes_are_removed(db_engine):
+    app = create_app(engine=db_engine)
+    sign_in(app, AuthUser("test-admin", "admin@test.local", "Test Admin", "admin", "test-session"))
+    with TestClient(app) as client:
+        for method, path in (
+            ("get", "/api/v1/workflows/wf-a/shares"),
+            ("put", "/api/v1/workflows/wf-a/shares"),
+            ("put", "/api/v1/workflows/wf-a/owner"),
+        ):
+            response = client.put(path, json={"shares": []}) if method == "put" else client.get(path)
+            assert response.status_code in (404, 405)
+
+
+def test_reprocess_requires_use_on_source_and_target(db_engine):
+    insert_records(db_engine, datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc))
+    with db_engine.begin() as connection:
+        admin = create_test_user(connection, "reprocess-admin@test.local", "admin")
+        member = create_test_user(connection, "reprocess-member@test.local")
+        connection.execute(text(
+            "INSERT INTO object_shares (object_type, object_id, user_id, access) "
+            "VALUES ('workflow', 'wf-a', :user_id, 'view'), ('workflow', 'wf-b', :user_id, 'view')"
+        ), {"user_id": member.id})
+    app = create_app(engine=db_engine)
+    sign_in(app, member)
+    with TestClient(app) as client:
+        source_denied = client.post("/api/v1/assets/reprocess", json={"asset_ids": ["a-failed"]})
+        assert source_denied.status_code == 403
+
+        sign_in(app, admin)
+        shares = client.put(
+            "/api/v1/access/workflow/wf-a/shares",
+            json={"shares": [{"user_id": member.id, "access": "use"}]},
+        )
+        assert shares.status_code == 200
+        sign_in(app, member)
+        target_denied = client.post(
+            "/api/v1/assets/reprocess",
+            json={"asset_ids": ["a-failed"], "target_workflow_id": "wf-b"},
+        )
+        assert target_denied.status_code == 403
+
+        sign_in(app, admin)
+        shares = client.put(
+            "/api/v1/access/workflow/wf-b/shares",
+            json={"shares": [{"user_id": member.id, "access": "use"}]},
+        )
+        assert shares.status_code == 200
+        sign_in(app, member)
+        allowed = client.post(
+            "/api/v1/assets/reprocess",
+            json={"asset_ids": ["a-failed"], "target_workflow_id": "wf-b"},
+        )
+        assert allowed.status_code == 200

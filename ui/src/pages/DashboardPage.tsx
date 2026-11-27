@@ -9,6 +9,7 @@ import { StatusTabs } from '../components/StatusTabs'
 import { Button } from '../components/Toolbar'
 import { get_dashboard } from '../data/api'
 import { set_workflows_active, use_pausing_notice } from '../lib/workflows'
+import { has_access } from '../lib/access'
 import type { Worker, Workflow } from '../data/types'
 import { use_data } from '../data/use_data'
 import { use_server_connected } from '../data/use_connection'
@@ -19,7 +20,7 @@ function WorkflowRow({ workflow, on_changed }: { workflow: Workflow; on_changed:
   const navigate = useNavigate()
   const [busy, set_busy] = useState(false)
   const open = (tab: string) => navigate(`/workflows/${workflow.id}/${tab}`)
-  const can_run = ['admin', 'owner', 'edit', 'run'].includes(workflow.access)
+  const can_run = has_access(workflow.access, 'use')
   const toggle = async () => {
     if (!can_run || busy) return
     set_busy(true)

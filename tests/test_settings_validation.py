@@ -6,7 +6,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from auth_helpers import sign_in
+from auth_helpers import edit_lock_headers, sign_in
 from sqlalchemy import text
 
 from marathon.modules import load_catalog
@@ -50,6 +50,7 @@ def _save_watchfolder_settings(api_client, settings):
             ],
             "connections": [],
         },
+        headers=edit_lock_headers(api_client, "workflow", workflow["id"]),
     )
     return workflow["id"], response
 
@@ -135,6 +136,7 @@ def test_type_without_validator_is_unchanged(api_client, db_engine):
             ],
             "connections": [],
         },
+        headers=edit_lock_headers(api_client, "workflow", workflow["id"]),
     )
     assert response.status_code == 200, response.json()
     assert response.json()["version"] == 2

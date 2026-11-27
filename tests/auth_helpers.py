@@ -1,5 +1,6 @@
 """Test-only authentication helpers for API requests."""
 
+from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -26,3 +27,10 @@ def create_test_user(connection: Connection, email: str, role: str = "user") -> 
         {"id": user_id, "email": normalized_email, "role": role},
     )
     return AuthUser(user_id, normalized_email, "", role, "test-session")
+
+
+def edit_lock_headers(client: Any, object_type: str, object_id: str) -> dict[str, str]:
+    """Acquire an edit lock and return its request header."""
+    response = client.post(f"/api/v1/access/{object_type}/{object_id}/lock")
+    assert response.status_code == 200, response.text
+    return {"X-Edit-Lock": response.json()["token"]}

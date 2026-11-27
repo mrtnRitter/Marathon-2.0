@@ -10,6 +10,7 @@ import { use_data } from '../data/use_data'
 import { AssetList } from '../features/assets/AssetList'
 import { WorkflowCanvas } from '../features/workflow-editor/WorkflowCanvas'
 import type { EditorMode } from '../features/workflow-editor/editor_types'
+import { has_access } from '../lib/access'
 import { workflow_state_meta, asset_statuses } from '../theme/status'
 import './WorkflowDetailPage.css'
 
@@ -23,8 +24,8 @@ export function WorkflowDetailPage() {
   const { data: workflow, loading, reload } = use_data(() => get_workflow(workflow_id), [workflow_id], { live: ['workflows', 'assets'] })
   use_pausing_notice(workflow ? [workflow] : undefined)
   const [busy, set_busy] = useState(false)
-  const can_run = Boolean(workflow && ['admin', 'owner', 'edit', 'run'].includes(workflow.access))
-  const can_edit = Boolean(workflow && ['admin', 'owner', 'edit'].includes(workflow.access))
+  const can_run = Boolean(workflow && has_access(workflow.access, 'use'))
+  const can_edit = Boolean(workflow && has_access(workflow.access, 'edit'))
   const toggle = async () => {
     if (!workflow || !can_run || busy) return
     set_busy(true)

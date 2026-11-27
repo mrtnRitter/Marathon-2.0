@@ -8,7 +8,7 @@ from sqlalchemy.engine import Engine
 
 from marathon.server.api.deps import current_user, get_engine
 from marathon.server.auth.sessions import AuthUser
-from marathon.server.db.workflow_access import require_workflow_access
+from marathon.server.db.object_access import require_access
 from marathon.server.db.asset_writes import (
     AssetConflict,
     AssetNotFound,
@@ -46,14 +46,14 @@ def post_assets_reprocess(
             source_workflow_ids = dict.fromkeys(row["workflow_id"] for row in rows)
             if unique_ids:
                 for workflow_id in source_workflow_ids:
-                    require_workflow_access(connection, user, workflow_id, "run")
+                    require_access(connection, user, "workflow", workflow_id, "use")
                 if payload.target_workflow_id is not None:
                     target_exists = connection.execute(
                         text("SELECT 1 FROM workflows WHERE id = :workflow_id"),
                         {"workflow_id": payload.target_workflow_id},
                     ).scalar_one_or_none()
                     if target_exists is not None:
-                        require_workflow_access(connection, user, payload.target_workflow_id, "run")
+                        require_access(connection, user, "workflow", payload.target_workflow_id, "use")
             asset_ids = reprocess_assets(connection, payload.asset_ids, payload.target_workflow_id)
     except AssetValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from marathon.modules._job import JobStopped
 from marathon.server.app import create_app
-from auth_helpers import sign_in
+from auth_helpers import edit_lock_headers, sign_in
 from marathon.server.config import EngineConfig
 from marathon.worker.runtime import WorkerRuntime, worker_capabilities
 
@@ -54,6 +54,7 @@ def _workflow(client: httpx.Client, name: str, modules: list[dict], connections:
     saved = client.put(
         f"/api/v1/workflows/{workflow_id}/graph",
         json={"base_version": 1, "modules": modules, "connections": connections},
+        headers=edit_lock_headers(client, "workflow", workflow_id),
     )
     assert saved.status_code == 200, saved.text
     activated = client.put(f"/api/v1/workflows/{workflow_id}/active", json={"active": True})

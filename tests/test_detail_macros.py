@@ -98,9 +98,9 @@ def test_standard_instance_has_hull_versions_permissions_and_null_done(db_engine
     assert admin_module["type_id"] == "step"
     assert admin_module["macro_version"] == admin_module["latest_version"] == 1
     assert admin_module["update_available"] is False
-    assert admin_module["can_edit"] is True
-    assert ordinary_module["can_edit"] is False
-    assert anonymous_module["can_edit"] is False
+    assert admin_module["access"] == "owner" and admin_module["blind"] is False
+    assert ordinary_module["access"] is None and ordinary_module["blind"] is True
+    assert anonymous_module["access"] == "owner" and anonymous_module["blind"] is False
     assert admin_module["hull"]["id"] == "step"
     assert admin_module["hull"]["version"] == 1
     assert admin_module["counters"]["done"] == 1

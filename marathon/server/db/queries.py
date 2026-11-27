@@ -7,11 +7,13 @@ from sqlalchemy.engine import Connection
 
 from marathon.common.availability import AvailabilityError, default_availability, normalize_availability
 from marathon.server.auth.sessions import AuthUser
-from marathon.server.db.workflow_access import workflow_access_filter
+from marathon.server.db.object_access import access_filter_sql, access_level_sql, object_access_map
 from marathon.server.db.workflow_checks import workflow_issues
 
 
 _asset_statuses = ("pending", "in_progress", "done", "failed", "on_hold")
+blind_module_name = "Nicht freigegebenes Modul"
+blind_message_text = "Meldung eines nicht freigegebenen Moduls"
 
 
 def _asset_counts(
@@ -21,7 +23,7 @@ def _asset_counts(
 ) -> dict[str, int]:
     """Return initialized status counts, optionally limited to visible workflows."""
     counts = {status: 0 for status in _asset_statuses}
-    access_filter, parameters = workflow_access_filter(user)
+    access_filter, parameters = access_filter_sql(user, "workflow", "workflow")
     filters = [access_filter]
     if workflow_id is not None:
         filters.append("workflow.id = :workflow_id")
@@ -64,32 +66,22 @@ def _workflow_record(row: Any) -> dict[str, Any]:
 
 def _workflow_select(user: AuthUser | None) -> tuple[str, dict[str, Any]]:
     """Return workflow columns, the effective access level, and user parameters."""
-    _, parameters = workflow_access_filter(user)
-    parameters = {
-        **parameters,
-        "workflow_access_is_admin": user is None or user.is_admin,
-        "workflow_access_user_id": user.id if user is not None else "",
-    }
+    access_sql, parameters = access_level_sql(user, "workflow", "workflow")
     return (
         "SELECT workflow.id, workflow.name, workflow.description, workflow.active, workflow.pausing, "
         "workflow.current_version AS version, workflow.schedule_every, workflow.schedule_unit, "
         "workflow.schedule_start, workflow.next_run_at, workflow.owner_user_id, "
         "owner.email AS owner_email, owner.display_name AS owner_display_name, "
-        "CASE WHEN :workflow_access_is_admin THEN 'admin' "
-        "WHEN workflow.owner_user_id = :workflow_access_user_id THEN 'owner' "
-        "ELSE share.access END AS access "
+        f"{access_sql} AS access "
         "FROM workflows AS workflow "
-        "LEFT JOIN users AS owner ON owner.id = workflow.owner_user_id "
-        "LEFT JOIN workflow_shares AS share ON share.workflow_id = workflow.id "
-        "AND share.user_id = :workflow_access_user_id ",
+        "LEFT JOIN users AS owner ON owner.id = workflow.owner_user_id ",
         parameters,
     )
-
 
 def list_workflows(connection: Connection, user: AuthUser | None = None) -> list[dict[str, Any]]:
     """List visible workflows with asset counts and current issues."""
     select, parameters = _workflow_select(user)
-    access_filter, access_parameters = workflow_access_filter(user)
+    access_filter, access_parameters = access_filter_sql(user, "workflow", "workflow")
     parameters.update(access_parameters)
     rows = connection.execute(
         text(select + f"WHERE {access_filter} ORDER BY lower(workflow.name), workflow.id"),
@@ -112,7 +104,7 @@ def get_workflow(
 ) -> dict[str, Any] | None:
     """Return one visible workflow and its asset counts, or None."""
     select, parameters = _workflow_select(user)
-    access_filter, access_parameters = workflow_access_filter(user)
+    access_filter, access_parameters = access_filter_sql(user, "workflow", "workflow")
     parameters.update(access_parameters)
     parameters["workflow_id"] = workflow_id
     row = connection.execute(
@@ -182,9 +174,9 @@ def list_assets(
     status: str | None = None,
     user: AuthUser | None = None,
 ) -> list[dict[str, Any]]:
-    """List assets from visible workflows, optionally filtered by workflow and status."""
+    """List visible assets, masking current modules without macro access."""
     filters, parameters = [], {}
-    access_filter, access_parameters = workflow_access_filter(user)
+    access_filter, access_parameters = access_filter_sql(user, "workflow", "workflow")
     filters.append(access_filter)
     parameters.update(access_parameters)
     if workflow_id is not None:
@@ -195,11 +187,22 @@ def list_assets(
         parameters["status"] = status
     rows = connection.execute(text(
         "SELECT asset.id, asset.workflow_id, asset.name, asset.status, asset.current_module_id, "
-        "module.name AS current_module, asset.step_status, asset.updated_at "
+        "module.name AS current_module, instance.macro_id AS module_macro_id, "
+        "asset.step_status, asset.updated_at "
         "FROM assets AS asset "
         "JOIN workflows AS workflow ON workflow.id = asset.workflow_id "
         "LEFT JOIN workflow_modules AS module ON module.workflow_id = asset.workflow_id "
         "AND module.version = workflow.current_version AND module.id = asset.current_module_id "
+        "LEFT JOIN workflow_instances AS instance ON instance.workflow_id = module.workflow_id "
+        "AND instance.version = module.version AND instance.id = module.instance_id "
         f"WHERE {' AND '.join(filters)} ORDER BY asset.list_position, asset.id"
     ), parameters).mappings()
-    return [dict(row) for row in rows]
+    assets = [dict(row) for row in rows]
+    module_access = object_access_map(
+        connection, user, "macro", (asset["module_macro_id"] for asset in assets if asset["module_macro_id"] is not None)
+    )
+    for asset in assets:
+        macro_id = asset.pop("module_macro_id")
+        if macro_id is not None and module_access.get(macro_id) is None:
+            asset["current_module"] = blind_module_name
+    return assets

@@ -81,6 +81,7 @@ def main() -> int:
         run_live=True,
         server_worker=config.server_worker,
         worker_client=config.worker_client,
+        edit_lock=config.edit_lock,
         load_proxy=True,
         listen=(config.host, config.port),
     )

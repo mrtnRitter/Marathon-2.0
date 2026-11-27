@@ -27,7 +27,8 @@ table_names = {
     "module_types", "workflows", "workflow_versions", "workflow_modules",
     "workflow_connections", "workers", "assets", "jobs", "job_assets",
     "asset_history", "log_lines", "watch_modules", "watch_files", "settings", "alembic_version",
-    "users", "auth_codes", "auth_failures", "auth_locks", "sessions", "workflow_shares",
+    "users", "auth_codes", "auth_failures", "auth_locks", "sessions", "object_shares",
+    "edit_locks", "object_events",
     "worker_ephemeral_tokens", "worker_control_sessions", "macros", "macro_versions",
     "workflow_instances", "workflow_instance_connections",
 }
@@ -49,8 +50,8 @@ def test_initial_upgrade_creates_exact_tables(db_engine):
 
 
 def test_upgrade_is_idempotent(db_engine):
-    assert upgrade_database(db_engine) == "0012"
-    assert upgrade_database(db_engine) == "0012"
+    assert upgrade_database(db_engine) == "0013"
+    assert upgrade_database(db_engine) == "0013"
 
 
 def test_engine_columns_exist(db_engine):
@@ -106,7 +107,7 @@ def test_downgrade_0005(db_engine):
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT status FROM jobs WHERE id = 'job-downgrade'")).scalar_one() == "cancelled"
     assert "attempts" not in {column["name"] for column in inspect(db_engine).get_columns("assets")}
-    assert upgrade_database(db_engine) == "0012"
+    assert upgrade_database(db_engine) == "0013"
 
 
 def _migration_config(connection):
@@ -118,6 +119,12 @@ def _migration_config(connection):
     config.set_main_option("script_location", str(migrations_dir))
     config.attributes["connection"] = connection
     return config
+
+
+def _downgrade_to_0012(connection):
+    from alembic import command
+
+    command.downgrade(_migration_config(connection), "0012")
 
 
 def test_worker_cleanup_migration_up_down_up(db_engine):
@@ -175,7 +182,7 @@ def test_worker_cleanup_migration_up_down_up(db_engine):
         assert defaults == {"priorities": {}, "max_parallel": 1, "client_slots": 1}
         command.upgrade(config, "head")
 
-    assert upgrade_database(db_engine) == "0012"
+    assert upgrade_database(db_engine) == "0013"
 
 
 def test_worker_release_migration_up_down_up(db_engine):
@@ -224,7 +231,7 @@ def test_worker_release_migration_up_down_up(db_engine):
                     {"job_id": job_id, "asset_id": extra_asset_id},
                 )
 
-    assert upgrade_database(db_engine) == "0012"
+    assert upgrade_database(db_engine) == "0013"
     with db_engine.begin() as connection:
         worker = connection.execute(
             text("SELECT skills, online FROM workers WHERE id = 'worker-offline'")
@@ -262,7 +269,7 @@ def test_worker_release_migration_up_down_up(db_engine):
     assert not {"skills", "online"} & {column["name"] for column in inspect(db_engine).get_columns("workers")}
     assert not {"outcome", "finished_at", "error"} & {column["name"] for column in inspect(db_engine).get_columns("job_assets")}
     assert "asset_id" not in {column["name"] for column in inspect(db_engine).get_columns("log_lines")}
-    assert upgrade_database(db_engine) == "0012"
+    assert upgrade_database(db_engine) == "0013"
     assert "settings" in inspect(db_engine).get_table_names()
 
 
@@ -383,11 +390,14 @@ def test_0011_worker_client_downgrade(db_engine):
         }
         command.upgrade(config, "head")
 
-    assert upgrade_database(db_engine) == "0012"
+    assert upgrade_database(db_engine) == "0013"
 
 
 
 def test_0010_users_schema(db_engine):
+    with db_engine.begin() as connection:
+        _downgrade_to_0012(connection)
+
     assert {"users", "auth_codes", "auth_failures", "auth_locks", "sessions", "workflow_shares"} <= set(
         inspect(db_engine).get_table_names()
     )
@@ -419,6 +429,7 @@ def test_0010_users_schema(db_engine):
 
 def test_0010_users_delete_cascades(db_engine):
     with db_engine.begin() as connection:
+        _downgrade_to_0012(connection)
         connection.execute(text("INSERT INTO users (id, email, role) VALUES ('user-cascade', 'cascade@example.test', 'user')"))
         connection.execute(text(
             "INSERT INTO workflows (id, name, owner_user_id) VALUES ('wf-cascade', 'Cascade', 'user-cascade')"
@@ -444,6 +455,7 @@ def test_0010_users_delete_cascades(db_engine):
 
 def test_0010_users_live_trigger(db_engine):
     with db_engine.begin() as connection:
+        _downgrade_to_0012(connection)
         connection.execute(text("INSERT INTO users (id, email, role) VALUES ('user-live', 'live@example.test', 'user')"))
         connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-live', 'Live')"))
 
@@ -490,8 +502,171 @@ def test_0010_users_downgrade(db_engine):
         }
         command.upgrade(config, "head")
 
-    assert upgrade_database(db_engine) == "0012"
+    assert upgrade_database(db_engine) == "0013"
 
+
+
+def test_0013_access_schema(db_engine):
+    inspector = inspect(db_engine)
+    tables = set(inspector.get_table_names())
+    assert {"object_shares", "edit_locks", "object_events"} <= tables
+    assert "workflow_shares" not in tables
+
+    share_columns = {column["name"]: column for column in inspector.get_columns("object_shares")}
+    assert {"object_type", "object_id", "user_id", "access", "updated_at"} == set(share_columns)
+    assert share_columns["user_id"]["nullable"] is True
+    assert {item["name"] for item in inspector.get_check_constraints("object_shares")} == {
+        "ck_object_shares_object_type", "ck_object_shares_access",
+    }
+    assert {item["name"] for item in inspector.get_indexes("object_shares")} == {
+        "ix_object_shares_user_id", "ux_object_shares_target",
+    }
+
+    lock_columns = {column["name"] for column in inspector.get_columns("edit_locks")}
+    assert lock_columns == {"object_type", "object_id", "user_id", "token_hash", "expires_at", "created_at"}
+    assert inspector.get_pk_constraint("edit_locks")["name"] == "pk_edit_locks"
+    assert {item["name"] for item in inspector.get_check_constraints("edit_locks")} == {
+        "ck_edit_locks_object_type",
+    }
+    assert inspector.get_pk_constraint("object_events")["constrained_columns"] == ["id"]
+    assert {item["name"] for item in inspector.get_indexes("object_events")} == {"ix_object_events_object"}
+
+    share_fk = next(item for item in inspector.get_foreign_keys("object_shares") if item["name"] == "fk_object_shares_user_id_users")
+    lock_fk = next(item for item in inspector.get_foreign_keys("edit_locks") if item["name"] == "fk_edit_locks_user_id_users")
+    event_fk = next(item for item in inspector.get_foreign_keys("object_events") if item["name"] == "fk_object_events_actor_user_id_users")
+    assert share_fk["options"]["ondelete"] == "CASCADE"
+    assert lock_fk["options"]["ondelete"] == "CASCADE"
+    assert event_fk["options"]["ondelete"] == "SET NULL"
+
+    history_module_id = next(column for column in inspector.get_columns("asset_history") if column["name"] == "module_id")
+    assert history_module_id["nullable"] is True
+    with db_engine.begin() as connection:
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-history', 'History')"))
+        connection.execute(text("INSERT INTO assets (id, workflow_id, name, status) VALUES ('asset-history', 'wf-history', 'History', 'pending')"))
+        connection.execute(text(
+            "INSERT INTO asset_history (asset_id, kind, text, module_id) "
+            "VALUES ('asset-history', 'info', 'created', NULL)"
+        ))
+        assert connection.execute(text(
+            "SELECT module_id FROM asset_history WHERE asset_id = 'asset-history'"
+        )).scalar_one() is None
+        identity = connection.execute(text(
+            "SELECT attidentity FROM pg_attribute "
+            "WHERE attrelid = 'object_events'::regclass AND attname = 'id'"
+        )).scalar_one()
+        assert identity == "d"
+        live_triggers = set(connection.execute(text(
+            "SELECT tgname FROM pg_trigger "
+            "WHERE NOT tgisinternal AND tgrelid = 'object_shares'::regclass"
+        )).scalars())
+        assert live_triggers == {"marathon_live_object_shares_write", "marathon_live_object_shares_update"}
+
+
+def test_0013_access_migration_downgrade_upgrade(db_engine):
+    from alembic import command
+
+    updated_at = datetime(2025, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    workflow_access = {"user-view": "view", "user-run": "run", "user-edit": "edit"}
+    with db_engine.begin() as connection:
+        config = _migration_config(connection)
+        command.downgrade(config, "0012")
+        connection.execute(text(
+            "INSERT INTO users (id, email, role) VALUES "
+            "('user-view', 'view@example.test', 'user'), "
+            "('user-run', 'run@example.test', 'user'), "
+            "('user-edit', 'edit@example.test', 'user')"
+        ))
+        connection.execute(text("INSERT INTO workflows (id, name) VALUES ('wf-access', 'Access')"))
+        for user_id, access in workflow_access.items():
+            connection.execute(text(
+                "INSERT INTO workflow_shares (workflow_id, user_id, access, updated_at) "
+                "VALUES ('wf-access', :user_id, :access, :updated_at)"
+            ), {"user_id": user_id, "access": access, "updated_at": updated_at})
+        connection.execute(text(
+            "INSERT INTO macros (id, current_version) VALUES ('macro-active', 1)"
+        ))
+        connection.execute(text(
+            "INSERT INTO macros (id, current_version, archived_at) VALUES ('macro-archived', 1, now())"
+        ))
+        command.upgrade(config, "head")
+
+        migrated = connection.execute(text(
+            "SELECT user_id, access, updated_at FROM object_shares "
+            "WHERE object_type = 'workflow' AND object_id = 'wf-access' ORDER BY user_id"
+        )).mappings().all()
+        assert [(row["user_id"], row["access"], row["updated_at"]) for row in migrated] == [
+            ("user-edit", "edit", updated_at),
+            ("user-run", "use", updated_at),
+            ("user-view", "view", updated_at),
+        ]
+        macro_shares = connection.execute(text(
+            "SELECT object_id, user_id, access FROM object_shares WHERE object_type = 'macro'"
+        )).all()
+        assert macro_shares == [("macro-active", None, "use")]
+
+        connection.execute(text(
+            "INSERT INTO object_shares (object_type, object_id, user_id, access) "
+            "VALUES ('workflow', 'wf-access', NULL, 'use')"
+        ))
+        command.downgrade(config, "0012")
+        restored = connection.execute(text(
+            "SELECT user_id, access, updated_at FROM workflow_shares "
+            "WHERE workflow_id = 'wf-access' ORDER BY user_id"
+        )).all()
+        assert restored == [
+            ("user-edit", "edit", updated_at),
+            ("user-run", "run", updated_at),
+            ("user-view", "view", updated_at),
+        ]
+        command.upgrade(config, "head")
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0013"
+        assert "workflow_shares" not in inspect(connection).get_table_names()
+        assert connection.execute(text(
+            "SELECT count(*) FROM object_shares "
+            "WHERE object_type = 'macro' AND object_id = 'macro-active' AND user_id IS NULL AND access = 'use'"
+        )).scalar_one() == 1
+
+
+def test_0013_access_unique_all_share(db_engine):
+    with pytest.raises(IntegrityError):
+        with db_engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO object_shares (object_type, object_id, user_id, access) "
+                "VALUES ('macro', 'macro-unique', NULL, 'use')"
+            ))
+            connection.execute(text(
+                "INSERT INTO object_shares (object_type, object_id, user_id, access) "
+                "VALUES ('macro', 'macro-unique', NULL, 'edit')"
+            ))
+
+
+def test_0013_access_user_delete_rules(db_engine):
+    with db_engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO users (id, email, role) VALUES ('user-access-delete', 'access-delete@example.test', 'user')"
+        ))
+        connection.execute(text(
+            "INSERT INTO object_shares (object_type, object_id, user_id, access) "
+            "VALUES ('macro', 'macro-delete', 'user-access-delete', 'edit')"
+        ))
+        connection.execute(text(
+            "INSERT INTO edit_locks (object_type, object_id, user_id, token_hash, expires_at) "
+            "VALUES ('macro', 'macro-delete', 'user-access-delete', 'hash', now() + interval '1 hour')"
+        ))
+        connection.execute(text(
+            "INSERT INTO object_events (object_type, object_id, actor_user_id, actor_name, text) "
+            "VALUES ('macro', 'macro-delete', 'user-access-delete', 'User', 'Edited')"
+        ))
+        connection.execute(text("DELETE FROM users WHERE id = 'user-access-delete'"))
+        assert connection.execute(text(
+            "SELECT count(*) FROM object_shares WHERE user_id = 'user-access-delete'"
+        )).scalar_one() == 0
+        assert connection.execute(text(
+            "SELECT count(*) FROM edit_locks WHERE user_id = 'user-access-delete'"
+        )).scalar_one() == 0
+        assert connection.execute(text(
+            "SELECT actor_user_id FROM object_events WHERE object_id = 'macro-delete'"
+        )).scalar_one() is None
 
 def test_ensure_database_creates_then_reuses(db_config):
     config, password = db_config
@@ -574,7 +749,7 @@ def test_cli_upgrades_test_database(tmp_path, pg_server, capsys):
     captured = capsys.readouterr()
 
     assert result == 0
-    assert "Revision 0012" in captured.out
+    assert "Revision 0013" in captured.out
     assert captured.err == ""
     assert password not in captured.out + captured.err
 
@@ -656,7 +831,7 @@ def test_schedule_waiting_migration_up_down_up_preserves_data_rules(db_engine):
             ("legacy-waiting", False, False),
         ]
         command.upgrade(config, "head")
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0012"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0013"
 
 
 def test_schedule_constraints(db_engine):
@@ -1022,6 +1197,7 @@ def test_0012_downgrade_rejects_built_modules(db_engine):
         config = _upgrade_to_0011(connection)
         _insert_0012_fixture(connection)
         command.upgrade(config, "head")
+        command.downgrade(config, "0012")
         connection.execute(text("UPDATE workflow_modules SET block_id = 'custom' WHERE id = 'm-copy.main'"))
         before_modules = connection.execute(text(
             "SELECT id, instance_id, block_id, exits FROM workflow_modules ORDER BY version, id"

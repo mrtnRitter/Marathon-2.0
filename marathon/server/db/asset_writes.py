@@ -73,10 +73,10 @@ def reprocess_assets(
             )
             connection.execute(
                 text(
-                    "INSERT INTO asset_history (asset_id, kind, text) "
-                    "VALUES (:id, 'info', 'Erneut verarbeiten: beginnt den Workflow von vorn')"
+                    "INSERT INTO asset_history (asset_id, module_id, kind, text) "
+                    "VALUES (:id, :module_id, 'info', 'Erneut verarbeiten: beginnt den Workflow von vorn')"
                 ),
-                {"id": asset_id},
+                {"id": asset_id, "module_id": None},
             )
             result_ids.append(asset_id)
             continue
@@ -102,19 +102,21 @@ def reprocess_assets(
         )
         connection.execute(
             text(
-                "INSERT INTO asset_history (asset_id, kind, text) VALUES (:id, 'info', :text)"
+                "INSERT INTO asset_history (asset_id, module_id, kind, text) VALUES (:id, :module_id, 'info', :text)"
             ),
             {
                 "id": asset_id,
+                "module_id": None,
                 "text": f"Workflow gewechselt nach „{target_workflow['name']}“ (neues Asset {new_id})",
             },
         )
         connection.execute(
             text(
-                "INSERT INTO asset_history (asset_id, kind, text) VALUES (:id, 'info', :text)"
+                "INSERT INTO asset_history (asset_id, module_id, kind, text) VALUES (:id, :module_id, 'info', :text)"
             ),
             {
                 "id": new_id,
+                "module_id": None,
                 "text": f"Kommt aus Workflow „{asset['workflow_name']}“ (Asset {asset_id})",
             },
         )

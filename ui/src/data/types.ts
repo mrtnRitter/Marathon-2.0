@@ -23,26 +23,49 @@ export interface PrioEntry { name: string; metadata: Record<string, unknown> }
 
 export type UserRole = 'user' | 'admin'
 
-export type WorkflowAccess = 'admin' | 'owner' | 'edit' | 'run' | 'view'
-export type WorkflowShareAccess = 'view' | 'run' | 'edit'
-
 export interface WorkflowOwner {
   id: string
   email: string
   display_name: string
 }
 
+export type ObjectType = 'workflow' | 'macro'
+export type Access = 'view' | 'use' | 'edit' | 'owner'
+export type ShareAccess = 'view' | 'use' | 'edit'
+
+export interface AccessShare {
+  user_id: string | null
+  email: string
+  display_name: string
+  access: ShareAccess
+}
+
+export interface AccessShares {
+  owner: WorkflowOwner | null
+  shares: AccessShare[]
+}
+
+export interface ObjectEvent {
+  ts: string
+  actor: string
+  text: string
+}
+
+export interface EditLock {
+  token: string
+  expires_at: string
+  heartbeat_s: number
+}
+
+export interface EditLockStatus {
+  holder: WorkflowOwner | null
+  expires_at: string | null
+}
+
 export interface UserDirectoryEntry {
   id: string
   email: string
   display_name: string
-}
-
-export interface WorkflowShare {
-  user_id: string
-  email: string
-  display_name: string
-  access: WorkflowShareAccess
 }
 
 export interface AuthUser {
@@ -124,7 +147,7 @@ export interface MacroHull extends ModuleType {
 
 export interface MacroSummary extends MacroHull {
   owner: WorkflowOwner | null
-  can_edit: boolean
+  access: Access
   usage: number
   updated_at: string
 }
@@ -211,10 +234,11 @@ export interface WorkflowModule {
   settings: Record<string, FieldValue>
   counters: ModuleCounters
   locked: boolean
+  access?: Access | null
+  blind?: boolean
   macro_version?: number | null
   latest_version?: number
   update_available?: boolean
-  can_edit?: boolean
   hull?: MacroHull
 }
 
@@ -247,7 +271,7 @@ export interface WorkflowSchedule extends ScheduleInput {
 export interface Workflow {
   id: string
   owner: WorkflowOwner | null
-  access: WorkflowAccess
+  access: Access
   name: string
   description: string
   active: boolean
@@ -336,6 +360,7 @@ export interface ModuleActivity {
   assets: Asset[]
   workers: Worker[]
   logs: LogLine[]
+  logs_hidden: boolean
 }
 
 export interface DashboardData {
@@ -405,7 +430,7 @@ export interface ReprocessResult {
   asset_ids: string[]
 }
 
-export type ModuleInput = Omit<WorkflowModule, 'counters' | 'latest_version' | 'update_available' | 'can_edit' | 'hull'>
+export type ModuleInput = Omit<WorkflowModule, 'counters' | 'latest_version' | 'update_available' | 'hull'>
 export type ConnectionInput = Omit<WorkflowConnection, 'id'>
 
 export interface GraphInput {

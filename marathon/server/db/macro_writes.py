@@ -10,6 +10,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 
 from marathon.server.auth.sessions import AuthUser
+from marathon.server.db.object_access import (
+    access_filter_sql,
+    access_level_sql,
+    log_intervention,
+    object_access,
+)
 from marathon.server.macros.definition import (
     macro_hull,
     standard_definition,
@@ -26,24 +32,7 @@ class MacroConflict(Exception):
     """Raised when a macro was updated from a stale version."""
 
 
-class MacroInUse(Exception):
-    """Raised when current workflows still use a macro."""
-
-    def __init__(self, names: list[str]) -> None:
-        self.names = names
-        super().__init__(", ".join(names))
-
-
-class StandardMacroDelete(Exception):
-    """Raised when attempting to archive a standard macro."""
-
-
 # QUERIES
-def can_edit_macro(owner_user_id: str | None, user: AuthUser) -> bool:
-    """Return whether the user is an administrator or the macro owner."""
-    return user.is_admin or (owner_user_id is not None and owner_user_id == user.id)
-
-
 def module_type_map(connection: Connection) -> dict[str, dict[str, Any]]:
     """Load every module-type row from the database, keyed by its ID."""
     rows = connection.execute(text(
@@ -87,10 +76,19 @@ def load_definitions(
     return {(row["macro_id"], row["version"]): row["definition"] for row in rows}
 
 
-def _macro_query(connection: Connection, macro_id: str | None = None) -> list[dict[str, Any]]:
-    """Load current macro definitions and their list metadata."""
-    filters = "WHERE macro.archived_at IS NULL"
-    parameters: dict[str, Any] = {}
+def _macro_query(
+    connection: Connection,
+    user: AuthUser,
+    macro_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Load visible current macro definitions and their list metadata."""
+    macro_access, access_parameters = access_level_sql(user, "macro", "macro")
+    macro_filter, filter_parameters = access_filter_sql(user, "macro", "macro", "view")
+    workflow_filter, workflow_parameters = access_filter_sql(
+        user, "workflow", "usage_workflow", "view"
+    )
+    filters = f"WHERE macro.archived_at IS NULL AND {macro_filter}"
+    parameters = {**access_parameters, **filter_parameters, **workflow_parameters}
     if macro_id is not None:
         filters += " AND macro.id = :macro_id"
         parameters["macro_id"] = macro_id
@@ -99,6 +97,7 @@ def _macro_query(connection: Connection, macro_id: str | None = None) -> list[di
                macro.updated_at, version_row.definition,
                owner.id AS joined_owner_id, owner.email AS owner_email,
                owner.display_name AS owner_display_name,
+               {macro_access} AS access,
                (
                    SELECT count(DISTINCT usage_workflow.id)
                    FROM workflow_instances AS instance
@@ -106,6 +105,7 @@ def _macro_query(connection: Connection, macro_id: str | None = None) -> list[di
                      ON usage_workflow.id = instance.workflow_id
                     AND usage_workflow.current_version = instance.version
                    WHERE instance.macro_id = macro.id
+                     AND {workflow_filter}
                ) AS usage
         FROM macros AS macro
         JOIN macro_versions AS version_row
@@ -136,7 +136,7 @@ def _macro_payload(
         }
     payload.update({
         "owner": owner,
-        "can_edit": can_edit_macro(row["owner_user_id"], user),
+        "access": row["access"],
         "usage": row["usage"],
         "updated_at": row["updated_at"].isoformat(),
     })
@@ -146,28 +146,28 @@ def _macro_payload(
 
 
 def list_macros(connection: Connection, user: AuthUser) -> list[dict[str, Any]]:
-    """List all non-archived modules as sorted hulls."""
+    """List non-archived modules visible at view level as sorted hulls."""
     module_types = module_type_map(connection)
     return [
         _macro_payload(row, module_types, user)
-        for row in _macro_query(connection)
+        for row in _macro_query(connection, user)
     ]
 
 
 def get_macro(connection: Connection, macro_id: str, user: AuthUser) -> dict[str, Any] | None:
-    """Return a macro's editable detail or None when missing or archived."""
-    rows = _macro_query(connection, macro_id)
+    """Return an editable macro detail or None when missing, archived, or hidden."""
+    rows = _macro_query(connection, user, macro_id)
     if not rows:
         return None
     row = rows[0]
-    if not can_edit_macro(row["owner_user_id"], user):
+    if row["access"] not in ("edit", "owner"):
         raise MacroForbidden
     return _macro_payload(row, module_type_map(connection), user, include_definition=True)
 
 
 # WRITES
 def ensure_standard_macros(connection: Connection) -> int:
-    """Insert version-one standard macros for module types without a matching macro."""
+    """Insert version-one standard macros and share each new one for use."""
     module_types = module_type_map(connection)
     insert_macro = text(
         "INSERT INTO macros (id, owner_user_id, current_version) "
@@ -177,6 +177,10 @@ def ensure_standard_macros(connection: Connection) -> int:
         "INSERT INTO macro_versions (macro_id, version, definition, created_by_user_id) "
         "VALUES (:macro_id, 1, :definition, NULL)"
     ).bindparams(bindparam("definition", type_=JSONB))
+    insert_share = text(
+        "INSERT INTO object_shares (object_type, object_id, user_id, access) "
+        "VALUES ('macro', :macro_id, NULL, 'use') ON CONFLICT DO NOTHING"
+    )
     created = 0
     for type_id, module_type in module_types.items():
         inserted_id = connection.execute(insert_macro, {"id": type_id}).scalar_one_or_none()
@@ -186,18 +190,19 @@ def ensure_standard_macros(connection: Connection) -> int:
             "macro_id": type_id,
             "definition": standard_definition(module_type),
         })
+        connection.execute(insert_share, {"macro_id": type_id})
         created += 1
     return created
 
 
 def create_macro(connection: Connection, definition: Mapping[str, Any], user: AuthUser) -> str:
-    """Validate and create a user-owned macro with its initial version."""
+    """Validate and create a private macro with its initial version."""
     validate_definition(definition, module_type_map(connection))
     macro_id = "mc-" + uuid4().hex[:12]
     connection.execute(text(
         "INSERT INTO macros (id, owner_user_id, current_version) "
         "VALUES (:id, :owner_user_id, 1)"
-    ), {"id": macro_id, "owner_user_id": user.id})
+    ), {"id": macro_id, "owner_user_id": None if user.is_admin else user.id})
     statement = text(
         "INSERT INTO macro_versions (macro_id, version, definition, created_by_user_id) "
         "VALUES (:macro_id, 1, :definition, :created_by_user_id)"
@@ -217,14 +222,13 @@ def update_macro(
     definition: Mapping[str, Any],
     user: AuthUser,
 ) -> int | None:
-    """Append a new validated version if the supplied base version is current."""
+    """Append a new validated version if the user can edit the current macro."""
     row = connection.execute(text(
-        "SELECT id, owner_user_id, current_version, archived_at "
-        "FROM macros WHERE id = :macro_id FOR UPDATE"
+        "SELECT id, current_version, archived_at FROM macros WHERE id = :macro_id FOR UPDATE"
     ), {"macro_id": macro_id}).mappings().one_or_none()
     if row is None or row["archived_at"] is not None:
         return None
-    if not can_edit_macro(row["owner_user_id"], user):
+    if object_access(connection, user, "macro", macro_id) not in ("edit", "owner"):
         raise MacroForbidden
     if base_version != row["current_version"]:
         raise MacroConflict
@@ -243,37 +247,26 @@ def update_macro(
     connection.execute(text(
         "UPDATE macros SET current_version = :version, updated_at = now() WHERE id = :macro_id"
     ), {"macro_id": macro_id, "version": new_version})
+    log_intervention(connection, user, "macro", macro_id, "Bearbeitet")
     return new_version
 
 
-def _current_workflow_names(connection: Connection, macro_id: str) -> list[str]:
-    """Return sorted distinct names of workflows currently using a macro."""
-    names = connection.execute(text("""
-        SELECT DISTINCT workflow.name, workflow.id
-        FROM workflow_instances AS instance
-        JOIN workflows AS workflow
-          ON workflow.id = instance.workflow_id
-         AND workflow.current_version = instance.version
-        WHERE instance.macro_id = :macro_id
-        ORDER BY workflow.name, workflow.id
-    """), {"macro_id": macro_id}).all()
-    return [row[0] for row in names]
-
-
 def archive_macro(connection: Connection, macro_id: str, user: AuthUser) -> bool:
-    """Soft-delete an editable user macro only when no current workflow uses it."""
+    """Archive an owned macro, remove its editing lock, and retain its shares."""
     row = connection.execute(text(
-        "SELECT id, owner_user_id, archived_at FROM macros WHERE id = :macro_id FOR UPDATE"
+        "SELECT id, archived_at FROM macros WHERE id = :macro_id FOR UPDATE"
     ), {"macro_id": macro_id}).mappings().one_or_none()
     if row is None or row["archived_at"] is not None:
         return False
-    if not can_edit_macro(row["owner_user_id"], user):
+    access = object_access(connection, user, "macro", macro_id)
+    if access is None:
+        return False
+    if access != "owner":
         raise MacroForbidden
-    if row["owner_user_id"] is None:
-        raise StandardMacroDelete
-    names = _current_workflow_names(connection, macro_id)
-    if names:
-        raise MacroInUse(names)
+    log_intervention(connection, user, "macro", macro_id, "Gelöscht")
+    connection.execute(text(
+        "DELETE FROM edit_locks WHERE object_type = 'macro' AND object_id = :macro_id"
+    ), {"macro_id": macro_id})
     connection.execute(text(
         "UPDATE macros SET archived_at = now(), updated_at = now() WHERE id = :macro_id"
     ), {"macro_id": macro_id})
@@ -281,25 +274,26 @@ def archive_macro(connection: Connection, macro_id: str, user: AuthUser) -> bool
 
 
 def outdated_workflows(connection: Connection, macro_id: str, user: AuthUser) -> list[dict[str, str]]:
-    """List the user's current workflows that use an older macro version."""
+    """List visible owner-level workflows using an older version of a macro."""
     macro = load_macros(connection, [macro_id]).get(macro_id)
     if macro is None or macro["archived_at"] is not None:
         return []
-    if not can_edit_macro(macro["owner_user_id"], user):
+    if object_access(connection, user, "macro", macro_id) not in ("edit", "owner"):
         raise MacroForbidden
-    rows = connection.execute(text("""
+    workflow_filter, parameters = access_filter_sql(user, "workflow", "workflow", "owner")
+    parameters.update({
+        "macro_id": macro_id,
+        "current_version": macro["current_version"],
+    })
+    rows = connection.execute(text(f"""
         SELECT DISTINCT workflow.id, workflow.name
         FROM workflows AS workflow
         JOIN workflow_instances AS instance
           ON instance.workflow_id = workflow.id
          AND instance.version = workflow.current_version
-        WHERE workflow.owner_user_id = :owner_user_id
+        WHERE {workflow_filter}
           AND instance.macro_id = :macro_id
           AND instance.macro_version < :current_version
         ORDER BY workflow.name, workflow.id
-    """), {
-        "owner_user_id": user.id,
-        "macro_id": macro_id,
-        "current_version": macro["current_version"],
-    }).mappings()
+    """), parameters).mappings()
     return [{"id": row["id"], "name": row["name"]} for row in rows]

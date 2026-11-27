@@ -2,6 +2,7 @@ import pytest
 
 from marathon.server.config import (
     ConfigError,
+    EditLockConfig,
     EngineConfig,
     ProxyConfig,
     ServerWorkerConfig,
@@ -27,6 +28,7 @@ def test_defaults_without_sections(tmp_path):
     config = load_server_config(config_file)
 
     assert config.engine == EngineConfig()
+    assert config.edit_lock == EditLockConfig()
     assert config.server_worker == ServerWorkerConfig()
     assert config.worker_client == WorkerClientConfig()
     assert config.client_build == ClientBuildConfig()
@@ -316,4 +318,24 @@ def test_invalid_control_session_hours(tmp_path, hours):
 
     assert str(error.value) == (
         f"[worker_client] control_session_hours in {config_file} muss eine ganze Zahl zwischen 1 und 168 sein"
+    )
+
+
+def test_edit_lock_config_values(tmp_path):
+    config_file = tmp_path / "marathon.toml"
+    config_file.write_text("[edit_lock]\nttl_s = 300\n", encoding="utf-8")
+
+    assert load_server_config(config_file).edit_lock == EditLockConfig(300)
+
+
+@pytest.mark.parametrize("value", ["true", "30.0", "29", "3601"])
+def test_invalid_edit_lock_ttl(tmp_path, value):
+    config_file = tmp_path / "marathon.toml"
+    config_file.write_text(f"[edit_lock]\nttl_s = {value}\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError) as error:
+        load_server_config(config_file)
+
+    assert str(error.value) == (
+        f"[edit_lock] ttl_s in {config_file} muss eine ganze Zahl zwischen 30 und 3600 sein"
     )

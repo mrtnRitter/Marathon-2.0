@@ -108,30 +108,48 @@ def _load_asset(connection: Connection, asset_id: str) -> dict[str, Any]:
     return dict(asset)
 
 
-def _write_asset(
-    connection: Connection,
-    asset_id: str,
-    fields: dict[str, Any],
-    history: tuple[str, str] | None = None,
-) -> None:
+def _write_asset(connection: Connection, asset_id: str, fields: dict[str, Any]) -> None:
     assignments = ", ".join(f"{field} = :{field}" for field in fields)
     connection.execute(
         text(f"UPDATE assets SET {assignments}, updated_at = now() WHERE id = :asset_id"),
         {"asset_id": asset_id, **fields},
     )
-    if history is not None:
-        connection.execute(
-            text("INSERT INTO asset_history (asset_id, kind, text) VALUES (:asset_id, :kind, :text)"),
-            {"asset_id": asset_id, "kind": history[0], "text": history[1]},
-        )
+
+
+def _history(
+    connection: Connection,
+    asset_id: str,
+    kind: str,
+    message: str,
+    module_id: str | None,
+) -> None:
+    connection.execute(
+        text(
+            "INSERT INTO asset_history (asset_id, module_id, kind, text) "
+            "VALUES (:asset_id, :module_id, :kind, :text)"
+        ),
+        {"asset_id": asset_id, "module_id": module_id, "kind": kind, "text": message},
+    )
+
+
+def _write_asset_with_history(
+    connection: Connection,
+    asset_id: str,
+    fields: dict[str, Any],
+    history: tuple[str, str],
+    module_id: str | None,
+) -> None:
+    _write_asset(connection, asset_id, fields)
+    _history(connection, asset_id, history[0], history[1], module_id)
 
 
 def _fail_locked_asset(connection: Connection, asset: dict[str, Any], message: str) -> None:
-    _write_asset(
+    _write_asset_with_history(
         connection,
         asset["id"],
         {"status": "failed", "step_status": None, "wait_until": None},
         ("error", message),
+        asset["current_module_id"],
     )
     connection.execute(
         text(
@@ -191,7 +209,7 @@ def _route_locked_asset(
         if output_id == "error"
         else ("success", "Workflow abgeschlossen")
     )
-    _write_asset(connection, asset["id"], fields, history)
+    _write_asset_with_history(connection, asset["id"], fields, history, from_module_id)
 
 
 def route_asset(

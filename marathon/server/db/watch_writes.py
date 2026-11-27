@@ -293,9 +293,13 @@ def apply_scan(
             },
         )
         connection.execute(
-            text("INSERT INTO asset_history (asset_id, kind, text) VALUES (:asset_id, 'info', :text)"),
+            text(
+                "INSERT INTO asset_history (asset_id, module_id, kind, text) "
+                "VALUES (:asset_id, :module_id, 'info', :text)"
+            ),
             {
                 "asset_id": asset_id,
+                "module_id": claim.module_id,
                 "text": f"Vom Watchfolder „{claim.module_name}“ übernommen: {path}",
             },
         )

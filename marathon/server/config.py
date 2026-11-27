@@ -152,6 +152,11 @@ class FolderDialogConfig:
 
 
 @dataclass(frozen=True)
+class EditLockConfig:
+    ttl_s: int = 120
+
+
+@dataclass(frozen=True)
 class ServerWorkerConfig:
     enabled: bool = True
     skills: tuple[str, ...] = ("copy_file", "move_file", "rename_file")
@@ -206,6 +211,7 @@ class ServerConfig:
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     worker_client: WorkerClientConfig = field(default_factory=WorkerClientConfig)
     client_build: ClientBuildConfig = field(default_factory=ClientBuildConfig)
+    edit_lock: EditLockConfig = field(default_factory=EditLockConfig)
 
 
 def _validated_value(
@@ -341,6 +347,14 @@ def load_server_config(config_file: Path = default_config_file) -> ServerConfig:
         raise ConfigError(f"[client_build] sign_command in {config_file} braucht den Platzhalter {{file}}")
     client_build = ClientBuildConfig(sign_command=tuple(sign_command))
 
+    edit_lock_data = data.get("edit_lock", {})
+    if not isinstance(edit_lock_data, dict):
+        raise ConfigError(f"[edit_lock] in {config_file} muss eine Tabelle sein")
+    edit_lock = EditLockConfig(
+        ttl_s=_validated_value(edit_lock_data, "edit_lock", "ttl_s", 120, 30, 3600, config_file, integer=True)
+    )
+
     return ServerConfig(
-        config.host, config.port, database, engine, server_worker, folder_dialog, proxy, worker_client, client_build
+        config.host, config.port, database, engine, server_worker, folder_dialog, proxy, worker_client, client_build,
+        edit_lock,
     )

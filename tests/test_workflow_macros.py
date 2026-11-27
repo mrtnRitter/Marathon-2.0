@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from auth_helpers import sign_in
+from auth_helpers import edit_lock_headers, sign_in
 from marathon.server.app import create_app
 from marathon.server.auth.sessions import AuthUser
 from marathon.server.db.macro_writes import create_macro, update_macro
@@ -27,10 +27,21 @@ from test_engine_e2e import (
 )
 
 
+_EDIT_LOCK_HEADERS: dict[tuple[int, str], dict[str, str]] = {}
+
+
+def _workflow_edit_lock_headers(client, workflow_id: str) -> dict[str, str]:
+    key = (id(client), workflow_id)
+    if key not in _EDIT_LOCK_HEADERS:
+        _EDIT_LOCK_HEADERS[key] = edit_lock_headers(client, "workflow", workflow_id)
+    return _EDIT_LOCK_HEADERS[key]
+
+
 # FIXTURES
 @pytest.fixture
 def macro_client(db_engine, tmp_path):
     """Provide a catalog-synced API client and admin macro owner."""
+    _EDIT_LOCK_HEADERS.clear()
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
     with db_engine.begin() as connection:
         connection.execute(text(
@@ -54,6 +65,7 @@ def _save(client: TestClient, workflow_id: str, version: int, modules: list[dict
     return client.put(
         f"/api/v1/workflows/{workflow_id}/graph",
         json={"base_version": version, "modules": modules, "connections": connections or []},
+        headers=_workflow_edit_lock_headers(client, workflow_id),
     )
 
 

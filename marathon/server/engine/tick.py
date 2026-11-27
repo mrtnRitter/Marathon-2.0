@@ -205,10 +205,10 @@ def advance_assets(
 
             connection.execute(
                 text(
-                    "INSERT INTO asset_history (asset_id, kind, text) "
-                    "VALUES (:asset_id, 'info', 'Wartezeit abgelaufen')"
+                    "INSERT INTO asset_history (asset_id, module_id, kind, text) "
+                    "VALUES (:asset_id, :module_id, 'info', 'Wartezeit abgelaufen')"
                 ),
-                {"asset_id": asset_id},
+                {"asset_id": asset_id, "module_id": module_id},
             )
             route_asset(connection, asset_id, graph, module_id, "success")
             processed += 1
