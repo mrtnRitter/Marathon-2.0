@@ -4,6 +4,8 @@ import { AssetDetailPage } from '../pages/AssetDetailPage'
 import { AssetsPage } from '../pages/AssetsPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { NotFoundPage } from '../pages/NotFoundPage'
+import { ModulesPage } from '../pages/ModulesPage'
+import { ModuleBuilderPage } from '../pages/ModuleBuilderPage'
 import { ReportsPage } from '../pages/ReportsPage'
 import { SettingsPage } from '../pages/SettingsPage'
 import { WorkersPage } from '../pages/WorkersPage'
@@ -16,6 +18,9 @@ export const routes: { path: string; element: ReactNode }[] = [
   { path: '/', element: <Navigate to="/dashboard" replace /> },
   { path: '/dashboard', element: <DashboardPage /> },
   { path: '/workflows', element: <WorkflowsPage /> },
+  { path: '/modules/new', element: <ModuleBuilderPage /> },
+  { path: '/modules/:macro_id', element: <ModuleBuilderPage /> },
+  { path: '/modules', element: <ModulesPage /> },
   { path: '/workflows/:workflow_id', element: <Navigate to="modules" replace /> },
   { path: '/workflows/:workflow_id/:tab', element: <WorkflowDetailPage /> },
   { path: '/assets', element: <AssetsPage /> },

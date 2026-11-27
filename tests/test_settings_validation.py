@@ -13,6 +13,7 @@ from marathon.modules import load_catalog
 from marathon.server.app import create_app
 from marathon.server.config import domains_error
 from marathon.server.db.catalog_writes import sync_module_types
+from marathon.server.db.macro_writes import ensure_standard_macros
 from marathon.server.db.settings_writes import SettingsValidationError, save_settings
 
 
@@ -24,6 +25,7 @@ def api_client(db_engine, tmp_path):
     with db_engine.begin() as connection:
         connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('test-admin', 'admin@test.local', 'Test Admin', 'admin')"))
         sync_module_types(connection, load_catalog())
+        ensure_standard_macros(connection)
     app = create_app(static_dir=tmp_path, engine=db_engine)
     sign_in(app)
     with TestClient(app) as client:
@@ -116,6 +118,7 @@ def test_type_without_validator_is_unchanged(api_client, db_engine):
                 "outputs": json.dumps([{"id": "success", "label": "Weiter", "description": ""}]),
             },
         )
+        ensure_standard_macros(connection)
     workflow = api_client.post("/api/v1/workflows", json={"name": "Custom"}).json()
     response = api_client.put(
         f"/api/v1/workflows/{workflow['id']}/graph",

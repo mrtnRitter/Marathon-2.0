@@ -23,6 +23,7 @@ from marathon.server.db.workflow_access import (
     workflow_owner_id,
 )
 from marathon.server.db.workflow_writes import (
+    resolve_graph,
     WorkflowConflict,
     WorkflowNotStartable,
     WorkflowPausing,
@@ -90,6 +91,7 @@ class ModuleInput(BaseModel):
 
     id: str
     type_id: str
+    macro_version: int | None = None
     name: str
     description: str = ""
     position: PositionInput
@@ -248,7 +250,7 @@ def put_workflow_graph(
             )
             if new_version is None:
                 raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
-            graph = get_graph(connection, workflow_id)
+            graph = get_graph(connection, workflow_id, user=user)
     except WorkflowConflict as exc:
         raise HTTPException(
             status_code=409,
@@ -266,18 +268,58 @@ def post_workflow_graph_impact(
     user: AuthUser = Depends(current_user),
     engine: Engine = Depends(get_engine),
 ) -> dict[str, Any]:
-    """Return the impact of removing modules in a proposed graph."""
+    """Return impact for removed runtime modules, grouped by module instance."""
     with engine.begin() as connection:
         require_workflow_access(connection, user, workflow_id, "edit")
         exists = connection.execute(
             text("SELECT id FROM workflows WHERE id = :id FOR SHARE"), {"id": workflow_id}
         ).scalar_one_or_none()
-        return graph_impact(
+        if exists is None:
+            raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
+        try:
+            _, _, runtime_modules, runtime_connections = resolve_graph(
+                connection,
+                workflow_id,
+                [module.model_dump() for module in payload.modules],
+                [item.model_dump() for item in payload.connections],
+            )
+        except WorkflowValidationError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        impact = graph_impact(
             connection,
             workflow_id,
-            [module.id for module in payload.modules],
-            [(item.source_module_id, item.source_output_id, item.target_module_id) for item in payload.connections],
+            [module["id"] for module in runtime_modules],
+            [
+                (item["source_module_id"], item["source_output_id"], item["target_module_id"])
+                for item in runtime_connections
+            ],
         )
+        current_modules = connection.execute(text(
+            "SELECT runtime.id, COALESCE(runtime.instance_id, runtime.id) AS instance_id, "
+            "COALESCE(instance.name, runtime.name) AS instance_name "
+            "FROM workflow_modules AS runtime "
+            "LEFT JOIN workflow_instances AS instance ON instance.workflow_id = runtime.workflow_id "
+            "AND instance.version = runtime.version AND instance.id = runtime.instance_id "
+            "WHERE runtime.workflow_id = :id AND runtime.version = "
+            "(SELECT current_version FROM workflows WHERE id = :id)"
+        ), {"id": workflow_id}).mappings()
+        instance_by_runtime_id = {
+            row["id"]: (row["instance_id"], row["instance_name"])
+            for row in current_modules
+        }
+        grouped = {}
+        for removed in impact["removed_modules"]:
+            instance_id, instance_name = instance_by_runtime_id.get(
+                removed["id"], (removed["id"], removed["name"])
+            )
+            item = grouped.setdefault(instance_id, {
+                "id": instance_id, "name": instance_name, "assets": 0, "jobs": 0,
+            })
+            item["assets"] += removed["assets"]
+            item["jobs"] += removed["jobs"]
+        impact["removed_modules"] = list(grouped.values())
+        return impact
 
 
 @router.get("/workflows/{workflow_id}/shares")

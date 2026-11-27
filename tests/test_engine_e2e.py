@@ -264,7 +264,7 @@ def test_pause_cancels_running_job_end_to_end(db_engine, tmp_path):
         assert _job_status_for_asset(db_engine, asset_id) == "cancelled"
         asset = next(row for row in _asset_rows(db_engine, workflow_id) if row["id"] == asset_id)
         assert (asset["status"], asset["step_status"], asset["current_module_id"]) == (
-            "in_progress", "waiting", "copy"
+            "in_progress", "waiting", "copy.main"
         )
 
 
@@ -321,5 +321,5 @@ def _pause_finished(db_engine, workflow_id: str, asset_id: str) -> bool:
         not workflow
         and asset["status"] == "in_progress"
         and asset["step_status"] == "waiting"
-        and asset["current_module_id"] == "copy"
+        and asset["current_module_id"] == "copy.main"
     )

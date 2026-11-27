@@ -1,6 +1,6 @@
 // Single data access point for all pages; talks to the server API.
 import { notify } from '../components/Toast'
-import type { Asset, AssetDetail, AssetStatus, AuthUser, AvailabilityConfig, ClientInfo, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, ModuleActivity, ModuleType, ReprocessResult, Settings, SmtpSettings, SmtpSettingsInput, UserDirectoryEntry, UserRecord, UserSession, UserRole, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput, WorkflowShare, WorkflowShareAccess } from './types'
+import type { Asset, AssetDetail, AssetStatus, AuthUser, AvailabilityConfig, ClientInfo, DashboardData, DirListing, GraphImpact, GraphInput, JobStatusReport, MacroDefinition, MacroDetail, MacroSaveResult, MacroSummary, MacroUpdateResult, ModuleActivity, ModuleType, ReprocessResult, Settings, SmtpSettings, SmtpSettingsInput, UserDirectoryEntry, UserRecord, UserSession, UserRole, Worker, WorkerInput, Workflow, WorkflowGraph, WorkflowInput, WorkflowShare, WorkflowShareAccess } from './types'
 
 export class ApiError extends Error {
   readonly status: number
@@ -125,6 +125,24 @@ export const set_workflow_owner = (id: string, user_id: string): Promise<Workflo
 export const get_workflow_graph = (id: string, options: { quiet?: boolean } = {}): Promise<WorkflowGraph | null> => request<WorkflowGraph>(`/workflows/${encodeURIComponent(id)}/graph`, { allow_404: true, quiet: options.quiet })
 
 export const get_module_types = (): Promise<ModuleType[]> => request<ModuleType[]>('/module-types').then(data => data!)
+
+export const get_macros = (): Promise<MacroSummary[]> => request<MacroSummary[]>('/macros').then(data => data!)
+
+export const get_macro = (id: string): Promise<MacroDetail | null> =>
+  request<MacroDetail>(`/macros/${encodeURIComponent(id)}`, { allow_404: true })
+
+export const create_macro = (definition: MacroDefinition): Promise<MacroDetail> =>
+  request<MacroDetail>('/macros', { method: 'POST', body: { definition } }).then(data => data!)
+
+export const update_macro = (id: string, base_version: number, definition: MacroDefinition): Promise<MacroSaveResult> =>
+  request<MacroSaveResult>(`/macros/${encodeURIComponent(id)}`, { method: 'PUT', body: { base_version, definition } }).then(data => data!)
+
+export async function delete_macro(id: string): Promise<void> {
+  await request<null>(`/macros/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export const update_macro_workflows = (id: string): Promise<MacroUpdateResult> =>
+  request<MacroUpdateResult>(`/macros/${encodeURIComponent(id)}/update-workflows`, { method: 'POST' }).then(data => data!)
 
 export const list_dirs = (path?: string | null): Promise<DirListing> =>
   request<DirListing>(`/fs/dirs${path === undefined || path === null ? '' : `?path=${encodeURIComponent(path)}`}`, { quiet: true }).then(data => data!)

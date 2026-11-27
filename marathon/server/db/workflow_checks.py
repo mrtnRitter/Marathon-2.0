@@ -23,23 +23,30 @@ def invalid_modules(modules: Iterable[Mapping[str, Any]]) -> list[Mapping[str, A
 
 
 def workflow_invalid_modules(connection: Connection, workflow_id: str) -> list[dict[str, str]]:
-    """Return invalid modules from the workflow's current graph version."""
+    """Return one sorted invalid-module record per workflow instance."""
     rows = connection.execute(
         text(
-            "SELECT module.id, module.name, module.type_id, module.settings "
+            "SELECT COALESCE(module.instance_id, module.id) AS instance_id, module.name, "
+            "module.type_id, module.settings "
             "FROM workflows AS workflow "
             "JOIN workflow_modules AS module ON module.workflow_id = workflow.id "
             "AND module.version = workflow.current_version "
-            "WHERE workflow.id = :workflow_id ORDER BY module.name, module.id"
+            "WHERE workflow.id = :workflow_id "
+            "ORDER BY module.name, COALESCE(module.instance_id, module.id), module.id"
         ),
         {"workflow_id": workflow_id},
     ).mappings()
-    return [
-        {"id": module["id"], "name": module["name"]}
-        for module in invalid_modules(rows)
-    ]
+    invalid = []
+    seen_instances = set()
+    for module in invalid_modules(rows):
+        instance_id = module["instance_id"]
+        if instance_id in seen_instances:
+            continue
+        seen_instances.add(instance_id)
+        invalid.append({"id": instance_id, "name": module["name"]})
+    return invalid
 
 
 def workflow_issues(connection: Connection, workflow_id: str) -> list[str]:
     """Return the names of invalid modules in the current workflow version."""
-    return [module["name"] for module in workflow_invalid_modules(connection, workflow_id)]
+    return list(dict.fromkeys(module["name"] for module in workflow_invalid_modules(connection, workflow_id)))

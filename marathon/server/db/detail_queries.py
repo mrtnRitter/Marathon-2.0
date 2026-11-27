@@ -3,63 +3,143 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection
 
 from marathon.server.auth.sessions import AuthUser
+from marathon.server.db.macro_writes import can_edit_macro, load_definitions, load_macros, module_type_map
 from marathon.server.db.queries import list_assets, list_workers
+from marathon.server.macros.definition import macro_hull
 from marathon.server.db.workflow_access import workflow_access_filter
 
 
-def get_graph(connection: Connection, workflow_id: str) -> dict[str, Any] | None:
-    """Return the current workflow graph with per-module counters, or None."""
+def get_graph(
+    connection: Connection,
+    workflow_id: str,
+    user: AuthUser | None = None,
+) -> dict[str, Any] | None:
+    """Return the current workflow graph at module-instance level, or None."""
     workflow = connection.execute(text(
         "SELECT id, current_version AS version FROM workflows WHERE id = :workflow_id"
     ), {"workflow_id": workflow_id}).mappings().one_or_none()
     if workflow is None:
         return None
 
-    modules = connection.execute(text(
-        "SELECT module.id, module.type_id, module.name, module.description, module.position_x, module.position_y, "
-        "module.settings, module.locked, "
-        "(SELECT COUNT(*) FROM watch_files AS watch_file WHERE watch_file.workflow_id = module.workflow_id "
-        "AND watch_file.module_id = module.id AND watch_file.asset_id IS NOT NULL) AS discovered, "
-        "(SELECT COUNT(*) FROM assets AS asset WHERE asset.workflow_id = module.workflow_id "
-        "AND asset.current_module_id = module.id AND asset.step_status = 'waiting') AS waiting, "
-        "(SELECT COUNT(*) FROM assets AS asset WHERE asset.workflow_id = module.workflow_id "
-        "AND asset.current_module_id = module.id AND asset.step_status = 'running') AS running, "
-        "(SELECT COUNT(*) FROM assets AS asset WHERE asset.workflow_id = module.workflow_id "
-        "AND asset.current_module_id = module.id AND asset.status = 'failed') AS failed, "
-        "(SELECT COUNT(*) FROM job_assets AS job_asset JOIN jobs AS job ON job.id = job_asset.job_id "
-        "WHERE job.workflow_id = module.workflow_id AND job.module_id = module.id "
-        "AND job_asset.outcome = 'result' AND job_asset.output_id IS DISTINCT FROM 'error') AS done "
-        "FROM workflow_modules AS module WHERE module.workflow_id = :workflow_id "
-        "AND module.version = :version ORDER BY module.id"
-    ), {"workflow_id": workflow_id, "version": workflow["version"]}).mappings()
-    module_list = []
-    for row in modules:
-        module = dict(row)
-        module["position"] = {"x": module.pop("position_x"), "y": module.pop("position_y")}
-        module["counters"] = {key: module.pop(key) for key in ("waiting", "running", "done", "failed", "discovered")}
-        module_list.append(module)
+    version = workflow["version"]
+    instance_rows = connection.execute(text(
+        "SELECT id, macro_id, macro_version, name, description, position_x, position_y, settings, locked "
+        "FROM workflow_instances WHERE workflow_id = :workflow_id AND version = :version ORDER BY id"
+    ), {"workflow_id": workflow_id, "version": version}).mappings().all()
+    instances = [dict(row) for row in instance_rows]
+    macro_rows = load_macros(connection, (instance["macro_id"] for instance in instances))
+    definitions = load_definitions(
+        connection, ((instance["macro_id"], instance["macro_version"]) for instance in instances)
+    )
+    module_types = module_type_map(connection)
 
-    connections = connection.execute(text(
-        "SELECT source_module_id, source_output_id, target_module_id "
-        "FROM workflow_connections WHERE workflow_id = :workflow_id AND version = :version "
-        "ORDER BY source_module_id, source_output_id, target_module_id"
-    ), {"workflow_id": workflow_id, "version": workflow["version"]}).mappings()
-    connection_list = [
-        {
-            "id": f"{workflow_id}-{row['source_module_id']}-{row['source_output_id']}",
-            "source_module_id": row["source_module_id"],
-            "source_output_id": row["source_output_id"],
-            "target_module_id": row["target_module_id"],
-        }
-        for row in connections
-    ]
+    counter_rows = connection.execute(text("""
+        SELECT runtime.instance_id,
+               COALESCE(SUM((SELECT COUNT(*) FROM assets AS asset
+                    WHERE asset.workflow_id = runtime.workflow_id
+                      AND asset.current_module_id = runtime.id AND asset.step_status = 'waiting')), 0)::integer AS waiting,
+               COALESCE(SUM((SELECT COUNT(*) FROM assets AS asset
+                    WHERE asset.workflow_id = runtime.workflow_id
+                      AND asset.current_module_id = runtime.id AND asset.step_status = 'running')), 0)::integer AS running,
+               COALESCE(SUM((SELECT COUNT(*) FROM assets AS asset
+                    WHERE asset.workflow_id = runtime.workflow_id
+                      AND asset.current_module_id = runtime.id AND asset.status = 'failed')), 0)::integer AS failed,
+               COALESCE(SUM((SELECT COUNT(*) FROM watch_files AS watch_file
+                    WHERE watch_file.workflow_id = runtime.workflow_id
+                      AND watch_file.module_id = runtime.id AND watch_file.asset_id IS NOT NULL)), 0)::integer AS discovered
+        FROM workflow_modules AS runtime
+        WHERE runtime.workflow_id = :workflow_id AND runtime.version = :version
+        GROUP BY runtime.instance_id
+    """), {"workflow_id": workflow_id, "version": version}).mappings()
+    counters_by_instance = {
+        row["instance_id"]: {key: row[key] or 0 for key in ("waiting", "running", "failed", "discovered")}
+        for row in counter_rows
+    }
+    done_rows = connection.execute(text("""
+        SELECT runtime.instance_id, COUNT(*) AS done
+        FROM workflow_modules AS runtime
+        JOIN jobs AS job ON job.workflow_id = runtime.workflow_id AND job.module_id = runtime.id
+        JOIN job_assets AS job_asset ON job_asset.job_id = job.id
+        WHERE runtime.workflow_id = :workflow_id AND runtime.version = :version
+          AND job_asset.outcome = 'result'
+          AND (
+              job_asset.output_id IS NULL
+              OR (jsonb_exists(runtime.exits, job_asset.output_id)
+                  AND runtime.exits ->> job_asset.output_id <> 'error')
+              OR (NOT jsonb_exists(runtime.exits, job_asset.output_id)
+                  AND job_asset.output_id <> 'error'
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM workflow_connections AS internal_connection
+                      JOIN workflow_modules AS target_module
+                        ON target_module.workflow_id = internal_connection.workflow_id
+                       AND target_module.version = internal_connection.version
+                       AND target_module.id = internal_connection.target_module_id
+                      WHERE internal_connection.workflow_id = runtime.workflow_id
+                        AND internal_connection.version = runtime.version
+                        AND internal_connection.source_module_id = runtime.id
+                        AND internal_connection.source_output_id = job_asset.output_id
+                        AND target_module.instance_id = runtime.instance_id
+                  ))
+          )
+        GROUP BY runtime.instance_id
+    """), {"workflow_id": workflow_id, "version": version}).mappings()
+    for row in done_rows:
+        counters_by_instance.setdefault(row["instance_id"], {})["done"] = row["done"]
+
+    module_list = []
+    for instance in instances:
+        macro_id = instance["macro_id"]
+        macro = macro_rows[macro_id]
+        macro_version = instance["macro_version"]
+        counters = counters_by_instance.get(instance["id"], {})
+        module_list.append({
+            "id": instance["id"],
+            "type_id": macro_id,
+            "macro_version": macro_version,
+            "latest_version": macro["current_version"],
+            "update_available": (
+                macro["current_version"] > macro_version and macro["archived_at"] is None
+            ),
+            "can_edit": user is not None and can_edit_macro(macro["owner_user_id"], user),
+            "hull": macro_hull(
+                macro_id,
+                macro_version,
+                definitions[(macro_id, macro_version)],
+                module_types,
+            ),
+            "name": instance["name"],
+            "description": instance["description"],
+            "position": {"x": instance["position_x"], "y": instance["position_y"]},
+            "settings": instance["settings"],
+            "locked": instance["locked"],
+            "counters": {
+                "waiting": counters.get("waiting", 0),
+                "running": counters.get("running", 0),
+                "done": counters.get("done", 0),
+                "failed": counters.get("failed", 0),
+                "discovered": counters.get("discovered", 0),
+            },
+        })
+
+    connection_rows = connection.execute(text(
+        "SELECT source_id, source_output_id, target_id FROM workflow_instance_connections "
+        "WHERE workflow_id = :workflow_id AND version = :version "
+        "ORDER BY source_id, source_output_id, target_id"
+    ), {"workflow_id": workflow_id, "version": version}).mappings()
+    connection_list = [{
+        "id": f"{workflow_id}-{row['source_id']}-{row['source_output_id']}",
+        "source_module_id": row["source_id"],
+        "source_output_id": row["source_output_id"],
+        "target_module_id": row["target_id"],
+    } for row in connection_rows]
     return {
         "workflow_id": workflow["id"],
-        "version": workflow["version"],
+        "version": version,
         "modules": module_list,
         "connections": connection_list,
     }
@@ -71,32 +151,40 @@ def get_module_activity(
     module_id: str,
     user: AuthUser | None = None,
 ) -> dict[str, Any] | None:
-    """Return current module activity, or None if its workflow/module is missing."""
-    exists = connection.execute(text(
-        "SELECT 1 FROM workflows AS workflow JOIN workflow_modules AS module "
-        "ON module.workflow_id = workflow.id AND module.version = workflow.current_version "
-        "WHERE workflow.id = :workflow_id AND module.id = :module_id"
-    ), {"workflow_id": workflow_id, "module_id": module_id}).scalar_one_or_none()
-    if exists is None:
+    """Return activity for a current module instance, or None when missing."""
+    instance = connection.execute(text(
+        "SELECT workflow.current_version AS version FROM workflows AS workflow "
+        "JOIN workflow_instances AS instance ON instance.workflow_id = workflow.id "
+        "AND instance.version = workflow.current_version "
+        "WHERE workflow.id = :workflow_id AND instance.id = :module_id"
+    ), {"workflow_id": workflow_id, "module_id": module_id}).mappings().one_or_none()
+    if instance is None:
         return None
 
+    runtime_ids = list(connection.execute(text(
+        "SELECT id FROM workflow_modules WHERE workflow_id = :workflow_id "
+        "AND version = :version AND instance_id = :module_id ORDER BY id"
+    ), {"workflow_id": workflow_id, "version": instance["version"], "module_id": module_id}).scalars())
+    runtime_id_set = set(runtime_ids)
     assets = [
         asset for asset in list_assets(connection, workflow_id=workflow_id, user=user)
-        if asset["current_module_id"] == module_id
+        if asset["current_module_id"] in runtime_id_set
     ]
     jobs = []
-    if assets:
+    if assets and runtime_ids:
         rows = connection.execute(text(
             "SELECT job.id, job.module_id, job.status, worker.name AS worker, worker.id AS worker_id, "
             "job.attempt, job.progress, array_agg(job_asset.asset_id ORDER BY job_asset.asset_id) AS asset_ids "
             "FROM jobs AS job JOIN job_assets AS job_asset ON job_asset.job_id = job.id "
             "JOIN assets AS asset ON asset.id = job_asset.asset_id "
             "LEFT JOIN workers AS worker ON worker.id = job.worker_id "
-            "WHERE job.workflow_id = :workflow_id AND job.module_id = :module_id "
-            "AND asset.workflow_id = :workflow_id AND asset.current_module_id = :module_id "
+            "WHERE job.workflow_id = :workflow_id AND job.module_id IN :runtime_ids "
+            "AND asset.workflow_id = :workflow_id AND asset.current_module_id = job.module_id "
             "GROUP BY job.id, job.module_id, job.status, worker.name, worker.id, job.attempt, job.progress, job.created_at "
             "ORDER BY job.created_at, job.id"
-        ), {"workflow_id": workflow_id, "module_id": module_id}).mappings()
+        ).bindparams(bindparam("runtime_ids", expanding=True)), {
+            "workflow_id": workflow_id, "runtime_ids": runtime_ids,
+        }).mappings()
         jobs = [dict(row) for row in rows]
 
     worker_ids = set()
@@ -111,11 +199,13 @@ def get_module_activity(
         "FROM log_lines AS log LEFT JOIN assets AS asset ON asset.id = log.asset_id "
         "LEFT JOIN jobs AS job ON job.id = log.job_id "
         "LEFT JOIN workers AS worker ON worker.id = job.worker_id "
-        "WHERE log.workflow_id = :workflow_id AND log.module_id = :module_id "
+        "WHERE log.workflow_id = :workflow_id AND (log.module_id = :module_id OR log.module_id IN :runtime_ids) "
         "AND log.level IN ('warn', 'error') "
         "ORDER BY log.ts DESC, log.id DESC LIMIT 500"
         ") AS recent_logs ORDER BY ts, id"
-    ), {"workflow_id": workflow_id, "module_id": module_id}).mappings()
+    ).bindparams(bindparam("runtime_ids", expanding=True)), {
+        "workflow_id": workflow_id, "module_id": module_id, "runtime_ids": runtime_ids,
+    }).mappings()
     return {"jobs": jobs, "assets": assets, "workers": workers, "logs": [dict(row) for row in logs]}
 
 

@@ -2,7 +2,7 @@
 
 Workflow-Engine als Webanwendung (interner Name „m2“, im Code `marathon`, Version 2.0.0).
 
-**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und stoppen und zeitgesteuert laufen lassen (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuerter Workflow bleibt aktiv und wartet zwischen den Läufen auf den nächsten Termin. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Module liegen im Repo unter `marathon/modules/` und erscheinen beim Serverstart in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Gestartete Workflows verarbeiten ihre Assets: Die Engine teilt Jobs an Worker zu; der Server bringt dafür einen eigenen Server-Worker mit (siehe [Engine und Worker](#engine-und-worker)). Alle Ansichten aktualisieren sich über einen Live-Kanal in Echtzeit; ist der Server nicht erreichbar, sperrt der Hinweis „Keine Verbindung zum Marathon-Server“ die Oberfläche, bis die Verbindung zurück ist. Worker lassen sich starten, stoppen (laufende Jobs laufen zu Ende) und sofort stoppen; ihre Fähigkeiten stehen in einer Rangliste. Windows-Rechner arbeiten über den Worker-Client als weitere Worker mit; er wird auf der Worker-Seite heruntergeladen, installiert sich selbst und wird ohne Marathon-Anmeldung über das Tray-Symbol eingestellt (siehe [Worker-Client](#worker-client)). Die Einstellungsseite speichert in die Datenbank (siehe [Einstellungen](#einstellungen)). Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
+**Aktueller Stand:** Die Oberfläche liest und speichert alle Inhalte in einer lokalen PostgreSQL-Datenbank. Workflows lassen sich anlegen, ändern, duplizieren, im Node-Editor bearbeiten, speichern und löschen. Workflows mit fehlerhaften Einstellungen lassen sich speichern, aber nicht starten (siehe [Workflows mit fehlerhaften Einstellungen](#workflows-mit-fehlerhaften-einstellungen)). Workflows lassen sich in der Workflow-Übersicht, auf dem Dashboard und auf ihrer Detailseite starten und stoppen und zeitgesteuert laufen lassen (alle X Minuten, Stunden, Tage, Wochen oder Monate); ein zeitgesteuerter Workflow bleibt aktiv und wartet zwischen den Läufen auf den nächsten Termin. Assets lassen sich erneut verarbeiten, auch in einem anderen Workflow. Reports lassen sich als CSV herunterladen. Über den Katzenkopf unten links lässt sich ein Bug-Report erfassen; er wird noch nicht versendet. Bausteine liegen im Repo unter `marathon/modules/`; beim Serverstart entsteht zu jedem Baustein ein gleichnamiges Standardmodul in der Modul-Palette: Watchfolder, Warten, Datei kopieren, Datei verschieben, Umbenennen und Prioliste (siehe [Module](#module)). Eigene Module aus mehreren Bausteinen entstehen im Modul-Builder (siehe [Module bauen](#module-bauen)). Gestartete Workflows verarbeiten ihre Assets: Die Engine teilt Jobs an Worker zu; der Server bringt dafür einen eigenen Server-Worker mit (siehe [Engine und Worker](#engine-und-worker)). Alle Ansichten aktualisieren sich über einen Live-Kanal in Echtzeit; ist der Server nicht erreichbar, sperrt der Hinweis „Keine Verbindung zum Marathon-Server“ die Oberfläche, bis die Verbindung zurück ist. Worker lassen sich starten, stoppen (laufende Jobs laufen zu Ende) und sofort stoppen; ihre Fähigkeiten stehen in einer Rangliste. Windows-Rechner arbeiten über den Worker-Client als weitere Worker mit; er wird auf der Worker-Seite heruntergeladen, installiert sich selbst und wird ohne Marathon-Anmeldung über das Tray-Symbol eingestellt (siehe [Worker-Client](#worker-client)). Die Einstellungsseite speichert in die Datenbank (siehe [Einstellungen](#einstellungen)). Schaltflächen ohne echte Funktion zeigen den Hinweis „Noch nicht verfügbar“.
 
 ## Voraussetzungen
 
@@ -315,6 +315,8 @@ Der Client kann sich selbst aktualisieren: Er lädt eine vom Server angebotene V
 
 ## Module
 
+Jeder Baustein steht als Standardmodul mit allen Einstellungen und Ausgängen in der Workflow-Palette. Bausteine selbst erscheinen nur im Modul-Builder.
+
 ### Watchfolder (Kategorie „Quelle“)
 
 Überwacht einen Ordner und legt für jede neue Datei ein Asset im Workflow an (Status „Ausstehend“, aktuelles Modul = Watchfolder), sobald sich Größe und Zeitstempel eine Wartezeit lang nicht geändert haben. Gescannt wird nur, solange der Workflow gestartet ist. Kein Eingang, ein Ausgang „Erfolg“.
@@ -393,6 +395,34 @@ Liste von Einträgen mit Namen, z. B. „Kollektion Defa“, „Kollektion Cinte
 - In den Moduleinstellungen: „Eintrag hinzufügen“, Name direkt bearbeiten, Pfeile zum Hoch- und Runtersetzen.
 - Drei-Punkte-Menü: „Bearbeiten“ (noch nicht verfügbar) und „Entfernen“.
 - Namen sind Pflicht und eindeutig (Groß-/Kleinschreibung zählt nicht).
+
+## Module bauen
+
+Seite „Module“ in der Seitenleiste:
+
+- Liste aller Module mit Kategorie, Eigentümer („Standard“ bei Standardmodulen), Version, Anzahl verwendender Workflows und letzter Änderung.
+- „Neues Modul“ öffnet den Builder. Ein Klick auf eine Zeile öffnet das Modul im Builder, wenn Du es bearbeiten darfst (eigene Module; Admins: alle, auch Standardmodule).
+- „Löschen“ im Drei-Punkte-Menü geht nur, solange kein Workflow das Modul verwendet. Standardmodule lassen sich nicht löschen.
+
+Builder:
+
+- Links die Bausteine mit Suche, in der Mitte der Flow, rechts das Seitenpanel. Bausteine werden wie Module im Workflow platziert und verbunden.
+- Ohne Auswahl zeigt das Seitenpanel das Modul: Name, Kategorie, Icon, Beschreibung, „Eingang“ (Baustein, an dem Assets eintreten, oder „Kein Eingang (Quelle)“), „Ausgänge“ und „Zuordnung“. Unter „Zuordnung“ wählst Du je freiem Baustein-Ausgang den Modul-Ausgang oder „– endet hier“.
+- Mit gewähltem Baustein: Name und Einstellungen als feste Werte. „Im Modul einstellbar“ macht eine Einstellung im Workflow einstellbar, mit eigener Beschriftung und eigenem Hilfetext.
+- „Speichern“ legt jedes Mal eine neue Version an. Verwenden eigene Workflows noch eine ältere Version, erscheint „Workflows aktualisieren“: „Alle aktualisieren“ übernimmt die neue Version in alle eigenen Workflows. Übersprungen werden Workflows mit Assets oder Jobs in entfallenden Bausteinen („Laufende Assets betroffen“) und Workflows, deren Graph mit der neuen Version ungültig wäre.
+- „Zurück“ führt zur Seite „Module“; ungespeicherte Änderungen werden vorher abgefragt.
+
+Im Workflow:
+
+- Die Palette zeigt nur Module. Jede platzierte Instanz bleibt auf ihrer Version, bis sie aktualisiert wird.
+- Gibt es eine neue Version, zeigt der Knoten „Neue Version verfügbar“. Im Seitenpanel übernimmt „Aktualisieren“ die neue Version; Einstellungen mit gleichem Schlüssel bleiben, entfallene werden gemeldet. Wirksam wird das erst mit „Speichern“.
+- Eigentümer und Admins öffnen ein Modul über „Im Builder öffnen“ im Seitenpanel. Alle anderen sehen nur Modul und Einstellungen.
+- Die Zähler einer Instanz fassen alle ihre Bausteine zusammen.
+
+Grenzen:
+
+- Ein Modul besteht nur aus Bausteinen, Module lassen sich nicht verschachteln.
+- Migration `0012_macros` stellt bestehende Workflows auf Standardmodule um. Ein Downgrade ist nur möglich, solange kein Workflow ein gebautes Modul verwendet.
 
 ## Tests (optional)
 

@@ -6,11 +6,14 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Text, bindparam, text
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy import bindparam, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 
+from marathon.server.db.macro_writes import load_definitions, load_macros, module_type_map
 from marathon.server.db.workflow_checks import invalid_modules, workflow_issues
+from marathon.server.macros.definition import macro_hull
+from marathon.server.macros.expand import expand_graph
 from marathon.server.engine.jobs import remove_missing_modules, request_pause
 from marathon.server.schedule import ScheduleError, next_occurrence, normalize_interval
 
@@ -63,12 +66,8 @@ def _validate_workflow_name(connection: Connection, name: str, workflow_id: str)
     return normalized_name
 
 
-def _validate_graph(
-    modules: list[dict[str, Any]],
-    connections: list[dict[str, Any]],
-    module_types: dict[str, dict[str, Any]],
-) -> None:
-    """Validate modules and connections in the specified first-error order."""
+def _validate_module_ids(modules: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Validate instance identifiers and return the graph indexed by ID."""
     for module in modules:
         module_id = module["id"]
         if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", module_id) is None:
@@ -80,12 +79,16 @@ def _validate_graph(
         if module_id in modules_by_id:
             raise WorkflowValidationError(f"Modul-ID doppelt: {module_id}")
         modules_by_id[module_id] = module
+    return modules_by_id
 
-    for module in modules:
-        type_id = module["type_id"]
-        if type_id not in module_types:
-            raise WorkflowValidationError(f"Unbekannter Modultyp: {type_id}")
 
+def _validate_graph(
+    modules: list[dict[str, Any]],
+    connections: list[dict[str, Any]],
+    hulls: dict[str, dict[str, Any]],
+) -> None:
+    """Validate names and connections against the resolved instance hulls."""
+    modules_by_id = _validate_module_ids(modules)
     for module in modules:
         if not module["name"].strip():
             raise WorkflowValidationError(f"Modulname fehlt: {module['id']}")
@@ -103,14 +106,12 @@ def _validate_graph(
     for graph_connection in connections:
         source_id = graph_connection["source_module_id"]
         output_id = graph_connection["source_output_id"]
-        source_type = module_types[modules_by_id[source_id]["type_id"]]
-        if not any(isinstance(output, dict) and output.get("id") == output_id for output in source_type["outputs"]):
+        if not any(isinstance(output, dict) and output.get("id") == output_id for output in hulls[source_id]["outputs"]):
             raise WorkflowValidationError(f"Unbekannter Ausgang {output_id} an Modul {source_id}")
 
     for graph_connection in connections:
         target_id = graph_connection["target_module_id"]
-        target_type = module_types[modules_by_id[target_id]["type_id"]]
-        if not target_type["has_input"]:
+        if not hulls[target_id]["has_input"]:
             raise WorkflowValidationError(f"Modul {target_id} hat keinen Eingang")
 
     connected_outputs: set[tuple[str, str]] = set()
@@ -121,6 +122,67 @@ def _validate_graph(
         if output_key in connected_outputs:
             raise WorkflowValidationError(f"Ausgang {output_id} an Modul {source_id} ist mehrfach verbunden")
         connected_outputs.add(output_key)
+
+
+def resolve_graph(
+    connection: Connection,
+    workflow_id: str,
+    modules: list[dict[str, Any]],
+    connections: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Validate and resolve proposed instances without changing caller-owned input."""
+    _validate_module_ids(modules)
+    macro_ids = list(dict.fromkeys(module["type_id"] for module in modules))
+    macros = load_macros(connection, macro_ids)
+    module_types = module_type_map(connection)
+
+    versions: dict[str, int] = {}
+    definition_keys = []
+    for module in modules:
+        macro = macros.get(module["type_id"])
+        if macro is None:
+            continue
+        version = module.get("macro_version")
+        if version is None:
+            version = macro["current_version"]
+        versions[module["id"]] = version
+        definition_keys.append((module["type_id"], version))
+    definitions = load_definitions(connection, definition_keys)
+
+    current_version = connection.execute(
+        text("SELECT current_version FROM workflows WHERE id = :id"), {"id": workflow_id}
+    ).scalar_one_or_none()
+    existing_versions: set[tuple[str, int]] = set()
+    if current_version is not None:
+        existing_versions = set(connection.execute(
+            text(
+                "SELECT macro_id, macro_version FROM workflow_instances "
+                "WHERE workflow_id = :id AND version = :version"
+            ),
+            {"id": workflow_id, "version": current_version},
+        ).all())
+
+    hulls: dict[str, dict[str, Any]] = {}
+    instances: list[dict[str, Any]] = []
+    for module in modules:
+        type_id = module["type_id"]
+        macro = macros.get(type_id)
+        if macro is None:
+            raise WorkflowValidationError(f"Unbekanntes Modul: {type_id}")
+        version = versions[module["id"]]
+        key = (type_id, version)
+        definition = definitions.get(key)
+        if definition is None:
+            raise WorkflowValidationError(f"Unbekannte Modulversion: {type_id} v{version}")
+        if macro["archived_at"] is not None and key not in existing_versions:
+            raise WorkflowValidationError(f"Modul ist gelöscht: {type_id}")
+        hulls[module["id"]] = macro_hull(type_id, version, definition, module_types)
+        instances.append({**module, "macro_id": type_id, "macro_version": version})
+
+    _validate_graph(modules, connections, hulls)
+    instance_connections = [dict(item) for item in connections]
+    runtime_modules, runtime_connections = expand_graph(instances, instance_connections, definitions)
+    return instances, instance_connections, runtime_modules, runtime_connections
 
 
 def _schedule_values(
@@ -257,14 +319,33 @@ def duplicate_workflow(
         text("INSERT INTO workflow_versions (workflow_id, version) VALUES (:id, 1)"),
         {"id": duplicate_id},
     )
+    copy_parameters = {"duplicate_id": duplicate_id, "workflow_id": workflow_id, "version": source["current_version"]}
+    connection.execute(
+        text(
+            "INSERT INTO workflow_instances "
+            "(workflow_id, version, id, macro_id, macro_version, name, description, position_x, position_y, settings, locked) "
+            "SELECT :duplicate_id, 1, id, macro_id, macro_version, name, description, position_x, position_y, settings, locked "
+            "FROM workflow_instances WHERE workflow_id = :workflow_id AND version = :version"
+        ),
+        copy_parameters,
+    )
+    connection.execute(
+        text(
+            "INSERT INTO workflow_instance_connections "
+            "(workflow_id, version, source_id, source_output_id, target_id) "
+            "SELECT :duplicate_id, 1, source_id, source_output_id, target_id "
+            "FROM workflow_instance_connections WHERE workflow_id = :workflow_id AND version = :version"
+        ),
+        copy_parameters,
+    )
     connection.execute(
         text(
             "INSERT INTO workflow_modules "
-            "(workflow_id, version, id, type_id, name, description, position_x, position_y, settings, locked) "
-            "SELECT :duplicate_id, 1, id, type_id, name, description, position_x, position_y, settings, locked "
+            "(workflow_id, version, id, type_id, name, description, position_x, position_y, settings, locked, instance_id, block_id, exits) "
+            "SELECT :duplicate_id, 1, id, type_id, name, description, position_x, position_y, settings, locked, instance_id, block_id, exits "
             "FROM workflow_modules WHERE workflow_id = :workflow_id AND version = :version"
         ),
-        {"duplicate_id": duplicate_id, "workflow_id": workflow_id, "version": source["current_version"]},
+        copy_parameters,
     )
     connection.execute(
         text(
@@ -273,7 +354,7 @@ def duplicate_workflow(
             "SELECT :duplicate_id, 1, source_module_id, source_output_id, target_module_id "
             "FROM workflow_connections WHERE workflow_id = :workflow_id AND version = :version"
         ),
-        {"duplicate_id": duplicate_id, "workflow_id": workflow_id, "version": source["current_version"]},
+        copy_parameters,
     )
     return duplicate_id
 
@@ -363,7 +444,7 @@ def save_graph(
     modules: list[dict[str, Any]],
     connections: list[dict[str, Any]],
 ) -> int | None:
-    """Validate and save a new immutable graph version, or return None if missing."""
+    """Validate and save a new immutable instance and runtime graph version."""
     connection.execute(text("SET LOCAL lock_timeout = '10s'"))
     current_row = connection.execute(
         text("SELECT current_version, active FROM workflows WHERE id = :id FOR UPDATE"),
@@ -376,69 +457,89 @@ def save_graph(
     if current_version != base_version:
         raise WorkflowConflict
 
-    module_types: dict[str, dict[str, Any]] = {}
-    type_ids = list(dict.fromkeys(module["type_id"] for module in modules))
-    if type_ids:
-        rows = connection.execute(
-            text("SELECT id, has_input, outputs FROM module_types WHERE id = ANY(:ids)").bindparams(
-                bindparam("ids", type_=ARRAY(Text()))
-            ),
-            {"ids": type_ids},
-        ).mappings()
-        module_types = {row["id"]: dict(row) for row in rows}
-    _validate_graph(modules, connections, module_types)
-
+    instances, instance_connections, runtime_modules, runtime_connections = resolve_graph(
+        connection, workflow_id, modules, connections
+    )
     new_version = current_version + 1
     connection.execute(
         text("INSERT INTO workflow_versions (workflow_id, version) VALUES (:id, :version)"),
         {"id": workflow_id, "version": new_version},
     )
-    module_insert = text(
-        "INSERT INTO workflow_modules "
-        "(workflow_id, version, id, type_id, name, description, position_x, position_y, settings, locked) "
-        "VALUES (:workflow_id, :version, :id, :type_id, :name, :description, :position_x, :position_y, "
-        ":settings, :locked)"
+
+    instance_insert = text(
+        "INSERT INTO workflow_instances "
+        "(workflow_id, version, id, macro_id, macro_version, name, description, position_x, position_y, settings, locked) "
+        "VALUES (:workflow_id, :version, :id, :macro_id, :macro_version, :name, :description, :position_x, :position_y, :settings, :locked)"
     ).bindparams(bindparam("settings", type_=JSONB()))
-    for module in modules:
-        connection.execute(
-            module_insert,
-            {
-                "workflow_id": workflow_id,
-                "version": new_version,
-                "id": module["id"],
-                "type_id": module["type_id"],
-                "name": module["name"],
-                "description": module["description"],
-                "position_x": module["position"]["x"],
-                "position_y": module["position"]["y"],
-                "settings": module["settings"],
-                "locked": module["locked"],
-            },
-        )
-    connection_insert = text(
+    for instance in instances:
+        connection.execute(instance_insert, {
+            "workflow_id": workflow_id,
+            "version": new_version,
+            "id": instance["id"],
+            "macro_id": instance["macro_id"],
+            "macro_version": instance["macro_version"],
+            "name": instance["name"],
+            "description": instance.get("description", ""),
+            "position_x": instance["position"]["x"],
+            "position_y": instance["position"]["y"],
+            "settings": instance.get("settings", {}),
+            "locked": instance.get("locked", False),
+        })
+    instance_connection_insert = text(
+        "INSERT INTO workflow_instance_connections "
+        "(workflow_id, version, source_id, source_output_id, target_id) "
+        "VALUES (:workflow_id, :version, :source_module_id, :source_output_id, :target_module_id)"
+    )
+    for item in instance_connections:
+        connection.execute(instance_connection_insert, {
+            "workflow_id": workflow_id, "version": new_version, **item,
+        })
+
+    runtime_insert = text(
+        "INSERT INTO workflow_modules "
+        "(workflow_id, version, id, type_id, name, description, position_x, position_y, settings, locked, instance_id, block_id, exits) "
+        "VALUES (:workflow_id, :version, :id, :type_id, :name, :description, :position_x, :position_y, :settings, :locked, :instance_id, :block_id, :exits)"
+    ).bindparams(bindparam("settings", type_=JSONB()), bindparam("exits", type_=JSONB()))
+    for module in runtime_modules:
+        connection.execute(runtime_insert, {
+            "workflow_id": workflow_id,
+            "version": new_version,
+            "id": module["id"],
+            "type_id": module["type_id"],
+            "name": module["name"],
+            "description": module["description"],
+            "position_x": module["position"]["x"],
+            "position_y": module["position"]["y"],
+            "settings": module["settings"],
+            "locked": module["locked"],
+            "instance_id": module["instance_id"],
+            "block_id": module["block_id"],
+            "exits": module["exits"],
+        })
+    runtime_connection_insert = text(
         "INSERT INTO workflow_connections "
         "(workflow_id, version, source_module_id, source_output_id, target_module_id) "
         "VALUES (:workflow_id, :version, :source_module_id, :source_output_id, :target_module_id)"
     )
-    for graph_connection in connections:
-        connection.execute(
-            connection_insert,
-            {
-                "workflow_id": workflow_id,
-                "version": new_version,
-                **graph_connection,
-            },
-        )
+    for item in runtime_connections:
+        connection.execute(runtime_connection_insert, {
+            "workflow_id": workflow_id, "version": new_version, **item,
+        })
+
     connection.execute(
         text("UPDATE workflows SET current_version = :version, updated_at = now() WHERE id = :id"),
         {"id": workflow_id, "version": new_version},
     )
-    remove_missing_modules(connection, workflow_id, datetime.now(timezone.utc))
+    now = datetime.now(timezone.utc)
+    remove_missing_modules(connection, workflow_id, now)
     if workflow_active:
-        invalid = invalid_modules(modules)
-        if invalid:
-            request_pause(connection, workflow_id, datetime.now(timezone.utc))
-            for module in invalid:
+        invalid = invalid_modules(runtime_modules)
+        invalid_instances = {}
+        for module in invalid:
+            invalid_instances.setdefault(module["instance_id"], module)
+        if invalid_instances:
+            request_pause(connection, workflow_id, now)
+            for module in invalid_instances.values():
                 connection.execute(
                     text(
                         "INSERT INTO log_lines (workflow_id, module_id, job_id, level, text) "

@@ -103,6 +103,7 @@ export interface ModuleOutput {
   id: string
   label: string
   description: string
+  data?: boolean
 }
 
 export interface ModuleType {
@@ -114,6 +115,83 @@ export interface ModuleType {
   has_input: boolean
   outputs: ModuleOutput[]
   settings: ModuleSetting[]
+}
+
+export interface MacroHull extends ModuleType {
+  version: number
+  sort_order: number
+}
+
+export interface MacroSummary extends MacroHull {
+  owner: WorkflowOwner | null
+  can_edit: boolean
+  usage: number
+  updated_at: string
+}
+
+export interface MacroBlock {
+  id: string
+  type_id: string
+  name: string
+  position: { x: number; y: number }
+  settings: Record<string, FieldValue>
+}
+
+export interface MacroConnection {
+  source_block_id: string
+  source_output_id: string
+  target_block_id: string
+}
+
+export interface MacroOutputSource {
+  block_id: string
+  output_id: string
+}
+
+export interface MacroOutput {
+  id: string
+  label: string
+  description: string
+  sources: MacroOutputSource[]
+}
+
+export interface MacroSetting {
+  key: string
+  block_id: string
+  setting_key: string
+  label: string
+  help: string
+}
+
+export interface MacroDefinition {
+  name: string
+  category: string
+  icon: string
+  description: string
+  sort_order: number
+  blocks: MacroBlock[]
+  connections: MacroConnection[]
+  entry_block_id: string | null
+  outputs: MacroOutput[]
+  settings: MacroSetting[]
+}
+
+export interface MacroDetail extends MacroSummary {
+  definition: MacroDefinition
+}
+
+export interface MacroWorkflowRef {
+  id: string
+  name: string
+}
+
+export interface MacroSaveResult extends MacroDetail {
+  outdated_workflows: MacroWorkflowRef[]
+}
+
+export interface MacroUpdateResult {
+  updated: (MacroWorkflowRef & { dropped_settings: string[] })[]
+  skipped: (MacroWorkflowRef & { reason: string })[]
 }
 
 export interface ModuleCounters {
@@ -133,6 +211,11 @@ export interface WorkflowModule {
   settings: Record<string, FieldValue>
   counters: ModuleCounters
   locked: boolean
+  macro_version?: number | null
+  latest_version?: number
+  update_available?: boolean
+  can_edit?: boolean
+  hull?: MacroHull
 }
 
 export interface WorkflowConnection {
@@ -322,7 +405,7 @@ export interface ReprocessResult {
   asset_ids: string[]
 }
 
-export type ModuleInput = Omit<WorkflowModule, 'counters'>
+export type ModuleInput = Omit<WorkflowModule, 'counters' | 'latest_version' | 'update_available' | 'can_edit' | 'hull'>
 export type ConnectionInput = Omit<WorkflowConnection, 'id'>
 
 export interface GraphInput {

@@ -21,15 +21,15 @@ def api_client(db_engine, tmp_path):
     with db_engine.begin() as connection:
         connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('test-admin', 'admin@test.local', 'Test Admin', 'admin')"))
         module_types = (
-            ("source", "Quelle", False, "none", [{"id": "success"}]),
-            ("step", "Schritt", True, "worker", [{"id": "success"}, {"id": "error"}]),
-            ("wait", "Warten", True, "engine", [{"id": "success"}]),
+            ("source", "Quelle", False, "none", [{"id": "success", "label": "Weiter"}], []),
+            ("step", "Schritt", True, "worker", [{"id": "success", "label": "Weiter"}, {"id": "error", "label": "Fehler"}], []),
+            ("wait", "Warten", True, "engine", [{"id": "success", "label": "Weiter"}], [{"key": "wait_s", "label": "Dauer", "type": "number", "default": 1}]),
         )
-        for type_id, name, has_input, execution, outputs in module_types:
+        for type_id, name, has_input, execution, outputs, settings in module_types:
             connection.execute(
                 text(
-                    "INSERT INTO module_types (id, name, category, icon, has_input, execution, outputs) "
-                    "VALUES (:id, :name, 'test', 'test', :has_input, :execution, CAST(:outputs AS jsonb))"
+                    "INSERT INTO module_types (id, name, category, icon, has_input, execution, outputs, settings) "
+                    "VALUES (:id, :name, 'test', 'test', :has_input, :execution, CAST(:outputs AS jsonb), CAST(:settings AS jsonb))"
                 ),
                 {
                     "id": type_id,
@@ -37,8 +37,11 @@ def api_client(db_engine, tmp_path):
                     "has_input": has_input,
                     "execution": execution,
                     "outputs": json.dumps(outputs),
+                    "settings": json.dumps(settings),
                 },
             )
+        from marathon.server.db.macro_writes import ensure_standard_macros
+        ensure_standard_macros(connection)
     _test_app = create_app(static_dir=tmp_path, engine=db_engine)
     sign_in(_test_app)
     with TestClient(_test_app) as client:
@@ -71,6 +74,7 @@ def _save_graph(api_client, workflow_id: str, base_version: int, modules: list[d
 
 
 def _insert_worker_asset_job(db_engine, workflow_id: str, module_id: str, *, status: str = "running") -> None:
+    runtime_id = f"{module_id}.main"
     with db_engine.begin() as connection:
         connection.execute(
             text("INSERT INTO workers (id, name, status) VALUES ('worker-1', 'Worker', 'ready')")
@@ -80,14 +84,14 @@ def _insert_worker_asset_job(db_engine, workflow_id: str, module_id: str, *, sta
                 "INSERT INTO assets (id, workflow_id, name, status, current_module_id, step_status) "
                 "VALUES ('asset-1', :workflow_id, 'Asset', 'in_progress', :module_id, 'running')"
             ),
-            {"workflow_id": workflow_id, "module_id": module_id},
+            {"workflow_id": workflow_id, "module_id": runtime_id},
         )
         connection.execute(
             text(
                 "INSERT INTO jobs (id, workflow_id, module_id, status, worker_id) "
                 "VALUES ('job-1', :workflow_id, :module_id, :status, 'worker-1')"
             ),
-            {"workflow_id": workflow_id, "module_id": module_id, "status": status},
+            {"workflow_id": workflow_id, "module_id": runtime_id, "status": status},
         )
         connection.execute(text("INSERT INTO job_assets (job_id, asset_id) VALUES ('job-1', 'asset-1')"))
 
@@ -151,8 +155,8 @@ def test_save_graph_reroutes_assets_of_removed_module(api_client, db_engine):
             text(
                 "INSERT INTO assets (id, workflow_id, name, status, current_module_id, step_status, "
                 "from_module_id, from_output_id, wait_until, attempts) "
-                "VALUES ('asset-1', :workflow_id, 'Asset', 'in_progress', 'm2', 'waiting', "
-                "'m1', 'success', :wait_until, 3)"
+                "VALUES ('asset-1', :workflow_id, 'Asset', 'in_progress', 'm2.main', 'waiting', "
+                "'m1.main', 'success', :wait_until, 3)"
             ),
             {"workflow_id": workflow["id"], "wait_until": datetime.now(timezone.utc) + timedelta(hours=1)},
         )
@@ -164,7 +168,7 @@ def test_save_graph_reroutes_assets_of_removed_module(api_client, db_engine):
         asset = connection.execute(
             text("SELECT current_module_id, step_status, wait_until FROM assets WHERE id = 'asset-1'")
         ).one()
-    assert tuple(asset) == ("m3", "waiting", None)
+    assert tuple(asset) == ("m3.main", "waiting", None)
 
 
 def test_save_invalid_active_workflow_stops(api_client, db_engine):

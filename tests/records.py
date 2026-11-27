@@ -8,6 +8,8 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Engine
 
+from marathon.server.macros.definition import standard_definition
+
 
 # FUNC
 def insert_records(engine: Engine, now: datetime) -> None:
@@ -33,6 +35,12 @@ def insert_records(engine: Engine, now: datetime) -> None:
             "sort_order": 1,
         },
     ]
+    module_type_by_id = {module_type["id"]: module_type for module_type in module_types}
+    macro_rows = [{"id": module_type["id"]} for module_type in module_types]
+    macro_version_rows = [
+        {"id": module_type["id"], "definition": standard_definition(module_type)}
+        for module_type in module_types
+    ]
     workflows = [
         {"id": "wf-a", "name": "Alpha", "description": "", "active": True, "current_version": 2},
         {"id": "wf-b", "name": "Beta", "description": "", "active": True, "current_version": 1},
@@ -57,6 +65,20 @@ def insert_records(engine: Engine, now: datetime) -> None:
         {"workflow_id": "wf-a", "version": 2, "source_module_id": "m2", "source_output_id": "success", "target_module_id": "m3"},
         {"workflow_id": "wf-b", "version": 1, "source_module_id": "m1", "source_output_id": "success", "target_module_id": "m2"},
     ]
+    instance_rows = [{
+        "workflow_id": module["workflow_id"], "version": module["version"], "id": module["id"],
+        "macro_id": module["type_id"], "macro_version": 1, "name": module["name"],
+        "description": module["description"], "position_x": module["position_x"],
+        "position_y": module["position_y"], "settings": module["settings"], "locked": module["locked"],
+    } for module in modules]
+    runtime_module_rows = [{
+        **module, "instance_id": module["id"], "block_id": "main",
+        "exits": {output["id"]: output["id"] for output in module_type_by_id[module["type_id"]]["outputs"]},
+    } for module in modules]
+    instance_connection_rows = [{
+        "workflow_id": row["workflow_id"], "version": row["version"], "source_id": row["source_module_id"],
+        "source_output_id": row["source_output_id"], "target_id": row["target_module_id"],
+    } for row in connections]
     workers = [
         {"id": "w1", "name": "WORKER-01", "status": "ready", "ip_address": "10.0.0.21", "capabilities": ["test"], "client_version": "2.0.0", "last_seen": now, "created_at": ago(1439)},
         {"id": "w2", "name": "WORKER-02", "status": "ready", "ip_address": None, "capabilities": [], "client_version": "", "last_seen": None, "created_at": ago(1438)},
@@ -104,6 +126,14 @@ def insert_records(engine: Engine, now: datetime) -> None:
             module_types, {"outputs": JSONB(), "settings": JSONB()},
         ),
         (
+            "INSERT INTO macros (id, owner_user_id, current_version) VALUES (:id, NULL, 1)",
+            macro_rows, {},
+        ),
+        (
+            "INSERT INTO macro_versions (macro_id, version, definition) VALUES (:id, 1, :definition)",
+            macro_version_rows, {"definition": JSONB()},
+        ),
+        (
             "INSERT INTO workflows (id, name, description, active, current_version, created_at, updated_at) "
             "VALUES (:id, :name, :description, :active, :current_version, :created_at, :updated_at)",
             [{**row, "created_at": ago(1439), "updated_at": now} for row in workflows], {},
@@ -113,14 +143,24 @@ def insert_records(engine: Engine, now: datetime) -> None:
             "VALUES (:workflow_id, :version, :created_at)", versions, {},
         ),
         (
-            "INSERT INTO workflow_modules (workflow_id, version, id, type_id, name, description, position_x, position_y, settings, locked) "
-            "VALUES (:workflow_id, :version, :id, :type_id, :name, :description, :position_x, :position_y, :settings, :locked)",
-            modules, {"settings": JSONB()},
+            "INSERT INTO workflow_modules (workflow_id, version, id, type_id, name, description, position_x, position_y, settings, locked, instance_id, block_id, exits) "
+            "VALUES (:workflow_id, :version, :id, :type_id, :name, :description, :position_x, :position_y, :settings, :locked, :instance_id, :block_id, :exits)",
+            runtime_module_rows, {"settings": JSONB(), "exits": JSONB()},
+        ),
+        (
+            "INSERT INTO workflow_instances (workflow_id, version, id, macro_id, macro_version, name, description, position_x, position_y, settings, locked) "
+            "VALUES (:workflow_id, :version, :id, :macro_id, :macro_version, :name, :description, :position_x, :position_y, :settings, :locked)",
+            instance_rows, {"settings": JSONB()},
         ),
         (
             "INSERT INTO workflow_connections (workflow_id, version, source_module_id, source_output_id, target_module_id) "
             "VALUES (:workflow_id, :version, :source_module_id, :source_output_id, :target_module_id)",
             connections, {},
+        ),
+        (
+            "INSERT INTO workflow_instance_connections (workflow_id, version, source_id, source_output_id, target_id) "
+            "VALUES (:workflow_id, :version, :source_id, :source_output_id, :target_id)",
+            instance_connection_rows, {},
         ),
         (
             "INSERT INTO workers (id, name, status, ip_address, capabilities, client_version, last_seen, created_at) "

@@ -12,6 +12,7 @@ from sqlalchemy import text
 from marathon.modules import load_catalog
 from marathon.server.app import create_app
 from marathon.server.db.catalog_writes import sync_module_types
+from marathon.server.db.macro_writes import ensure_standard_macros
 from marathon.server.scheduler import run_schedule_tick
 
 
@@ -23,6 +24,7 @@ def api_client(db_engine, tmp_path):
     with db_engine.begin() as connection:
         connection.execute(text("INSERT INTO users (id, email, display_name, role) VALUES ('test-admin', 'admin@test.local', 'Test Admin', 'admin')"))
         sync_module_types(connection, load_catalog())
+        ensure_standard_macros(connection)
     _test_app = create_app(static_dir=tmp_path, engine=db_engine)
     sign_in(_test_app)
     with TestClient(_test_app) as client:
@@ -130,7 +132,7 @@ def test_save_invalid_pauses_active_workflow(api_client, db_engine, tmp_path):
     assert state["active"] is False
     assert (state["schedule_waiting"], state["run_started_at"]) == (False, None)
     assert any(
-        row["module_id"] == "watch-1"
+        row["module_id"] == "watch-1.main"
         and row["level"] == "warn"
         and row["text"] == "Workflow gestoppt: Einstellungen prüfen"
         for row in log

@@ -106,28 +106,29 @@ Vertrag: `docs/spec.md` §3.4 (Rechner-Erkennung im Browser), §3.5, §3.6 (Quel
 - [ ] Quelle `Dieser Rechner` (Live-Listing über den ausgehenden Long-Poll des lokal erkannten Workers, abgesichert über `presence_token`; Admins dürfen zusätzlich beliebige Online-Worker wählen; Hinweis + Download-Link falls lokal kein Client läuft)
   - Offen: Verhalten, wenn der Worker gerade nicht antwortet (Zeitlimit 10 s, Meldungstext)
 
-### Release Modul-Builder (grob, Brainstorming folgt)
+### Release Modul-Builder
 
-Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee: die umfassende Abstraktion – aus atomaren Bausteinen entstehen Makro-Systeme
+Vertrag erster Wurf: `docs/spec.md` Teil 4 (Migration `0012_macros`, Worker-Protokoll unverändert). Leitidee: die umfassende Abstraktion – aus atomaren Bausteinen entstehen Makro-Systeme. Ersetzt die Teilworkflows (Sub) aus dem Backlog.
 
-- [ ] Module in der Oberfläche bauen: Ein Modul besteht aus Code-Block, Eingang, Ausgängen, Stats und Settings im Seitenpanel
-- [ ] Freigabe beim Speichern: Module sind privat oder öffentlich; ändern dürfen nur Ersteller und Admin, öffentliche Module können andere nur benutzen
-- [ ] Standardmodule (heute Watchfolder, Warten, Kopieren, Verschieben, Umbenennen, Prioliste) gehören dem Admin und sind ab Werk öffentlich
-- [ ] Löst „Module sind immer für alle geteilt“ aus dem Release Zugang & Nutzer ab; Modulsperren je Nutzer und Konsistenzschutz Modul-/Workflow-Freigabe (aus Zugang & Nutzer zurückgestellt; frühere Fassung in der Git-Historie von `docs/spec.md`) werden hier neu gedacht
-- Offen (Brainstorming):
-  - Wer darf Module bauen – jeder Nutzer oder nur Admins? Der Code-Block läuft auf Workern mit Dateizugriff
-  - Sprache, Ausführung und Absicherung des Code-Blocks
-  - Wie werden Settings-Felder, Ausgänge und Stats im Builder beschrieben?
-  - Verhältnis zu den Modultypen unter `marathon/modules/` und Verteilung an die Worker (Bezug Auto-Update im Backlog)
-  - Versionen: Was passiert mit Workflows, wenn ein Modul geändert, privat gestellt oder gelöscht wird?
-  - Wird ein Sub (Modul aus einem Teil-Workflow) eine Variante des Builders?
-- Aus dem bisherigen Sub-Konzept (zur Prüfung):
-  - Anlegen: Module im Workflow markieren → „Als Sub speichern“; Eingang, Erfolg, Fehler ergeben sich aus der Auswahl
-  - Freigegebene Optionen (z. B. QC-Preset) je Verwendung im Seitenpanel einstellbar
-  - Doppelklick betritt den Sub; Änderungen gelten nur für diese Instanz
-  - Vorlage ändern: Sub in leeren Workflow ziehen, auflösen, ändern, beim Speichern bestehenden Sub ersetzen
-  - Verwendende Workflows bekommen einen Update-Hinweis zum Übernehmen; Instanz-Einstellungen bleiben, sonst Warnung
-  - Offen: Was gilt bei einem Update, wenn die Instanz innen geändert wurde?
+Erster Wurf:
+
+- [ ] Modul-Builder als eigene Seite „Module“: links Bausteine, Mitte Flow, rechts Einstellungen; Module nur im Builder erzeugen
+- [ ] Module ohne Code: Bausteine (Modultypen aus `marathon/modules/`) mit Eingang, Ausgängen, einstellbaren Einstellungen und Zählern
+- [ ] Code-Module bleiben Python im Repo; ein freier Code-Block ist verworfen (Ausführung beliebigen Codes auf allen Workern)
+- [ ] Nutzer sehen nur Modul und Einstellungen; Innenleben nur Ersteller und Admin im Builder; Sprung „Im Builder öffnen“ aus dem Workflow
+- [ ] Bestehende Modultypen werden Standardmodule (gehören dem Admin), bestehende Workflows werden migriert
+- [ ] Versionen: Workflows behalten ihre Version; Update-Hinweis im Workflow; Ersteller oder Admin aktualisiert auf Wunsch alle eigenen Workflows
+
+Danach (Teilen, Feinschliff):
+
+- [ ] Freigabe beim Speichern: privat oder öffentlich; öffentliche Module können andere nur benutzen
+- [ ] Fremde Workflows mit meinen Modulen werden vom Ersteller manuell aktualisiert
+- Offen:
+  - Werden Module vom Admin in anderen Workflows immer automatisch aktualisiert? (Martin denkt nach)
+  - Modulsperren je Nutzer und Konsistenzschutz Modul-/Workflow-Freigabe (aus Zugang & Nutzer zurückgestellt)
+  - Verschachtelte Module (Modul aus Modulen)
+  - Begrenzte Ausdruckssprache für kleine Logik (Bedingungen, Namensmuster, Metadaten) ohne Datei-, Netz- oder Importzugriff
+  - Rollout von Code-Modulen über den Server (Backlog „Engine und Worker“)
 
 ---
 
@@ -210,7 +211,7 @@ Vertrag: noch keiner; ersetzt die Teilworkflows (Sub) aus dem Backlog. Leitidee:
  - [ ] Workereinstellungen UI überarbeiten und Rangfolge der Bedingungen klären
    - [ ] Tray-Icon updated sich zu langsam
    - [ ] Starten, Stoppen, Sofort Aus direkt über Tray-Menü
- - [ ] User nebst Mail auch mit Namen, wird bei der Anmeldung abgefragt
- - [ ] Teilenlogik: alle, ausgewählte (dann lieber nach Namen, statt Mailadressen)
+ - [ ] Syntethisches Testprogramm für Server - ich kann parallel manuell den Worker killen, um dieses Verhalten zu prüfen
+ - [ ] Ecosystem für Serverupdates: es wird prod und dev umgebung geben. Beide Server dürfen sich nicht beeinflussen und worker müssen immer wissen, welchen server sie verwenden (prod!) - ich brauche ein system, um update für den server von dev auf prod auszurollen. Updates zu modulen (veränderungen, weitere module) sollten ohne server-downzeit erfolgen
+ - [ ] UI cleanup - Details kommen noch, ich muss mir erstmal alles ansehen - offen für empfehlung zu klaren rollen der UI Elementei (Seitenleisetn, obere Leiste, Tabellen - beispiel: starten ist einmal im oberen Menüband und einmal in der Tabelle - ist oberes Menüband immer global über Mehrfachauswahl? Machen wir das nur in der Tabelle, weil in der echten Welt nicht ständig x Worker ausgeschaltet werden, sondern ab und zu mal einer)
  - [ ] 
-

@@ -1,5 +1,6 @@
 """Detail API integration tests backed by the local PostgreSQL fixture."""
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
@@ -22,8 +23,23 @@ def test_graph_returns_current_workflow_modules_and_counters(db_engine, tmp_path
             "INSERT INTO module_types (id, name, category, icon, description, has_input, outputs, settings, sort_order) "
             "VALUES ('watchfolder', 'Watchfolder', 'Input', 'folder', '', false, '[]'::jsonb, '[]'::jsonb, 2)"
         ))
+        watchfolder_definition = {
+            "name": "Watchfolder", "category": "Input", "icon": "folder", "description": "", "sort_order": 2,
+            "blocks": [{"id": "main", "type_id": "watchfolder", "name": "Watchfolder", "position": {"x": 0, "y": 0}, "settings": {}}],
+            "connections": [], "entry_block_id": None, "outputs": [], "settings": [],
+        }
         connection.execute(text(
-            "UPDATE workflow_modules SET type_id = 'watchfolder' "
+            "INSERT INTO macros (id, owner_user_id, current_version) VALUES ('watchfolder', NULL, 1)"
+        ))
+        connection.execute(text(
+            "INSERT INTO macro_versions (macro_id, version, definition) VALUES ('watchfolder', 1, CAST(:definition AS jsonb))"
+        ), {"definition": json.dumps(watchfolder_definition)})
+        connection.execute(text(
+            "UPDATE workflow_instances SET macro_id = 'watchfolder' "
+            "WHERE workflow_id = 'wf-a' AND version = 2 AND id = 'm1'"
+        ))
+        connection.execute(text(
+            "UPDATE workflow_modules SET type_id = 'watchfolder', exits = '{}'::jsonb "
             "WHERE workflow_id = 'wf-a' AND version = 2 AND id = 'm1'"
         ))
         connection.execute(text(
@@ -146,9 +162,13 @@ def test_graph_done_counter_counts_asset_results_not_jobs(db_engine, tmp_path):
     insert_records(db_engine, fixed_now)
     with db_engine.begin() as connection:
         connection.execute(text(
-            "INSERT INTO workflow_modules (workflow_id, version, id, type_id, name, description, position_x, position_y, settings, locked) "
-            "VALUES ('wf-a', 2, 'm-batch', 'step', 'Batch', '', 600, 0, '{}'::jsonb, false)"
+            "INSERT INTO workflow_instances (workflow_id, version, id, macro_id, macro_version, name, description, position_x, position_y, settings, locked) "
+            "VALUES ('wf-a', 2, 'm-batch', 'step', 1, 'Batch', '', 600, 0, '{}'::jsonb, false)"
         ))
+        connection.execute(text(
+            "INSERT INTO workflow_modules (workflow_id, version, id, type_id, name, description, position_x, position_y, settings, locked, instance_id, block_id, exits) "
+            "VALUES ('wf-a', 2, 'm-batch', 'step', 'Batch', '', 600, 0, '{}'::jsonb, false, 'm-batch', 'main', CAST(:exits AS jsonb))"
+        ), {"exits": json.dumps({"success": "success", "failure": "failure"})})
         connection.execute(text(
             "INSERT INTO assets (id, workflow_id, name, status, current_module_id, step_status, list_position, metadata, created_at, updated_at) "
             "VALUES ('a-batch-1', 'wf-a', 'batch-1', 'done', 'm-batch', NULL, 8, '{}'::jsonb, :now, :now), "

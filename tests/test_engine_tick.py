@@ -13,6 +13,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from marathon.modules import load_catalog
 from marathon.server.config import EngineConfig
 from marathon.server.db.catalog_writes import sync_module_types
+from marathon.server.db.macro_writes import ensure_standard_macros
 from marathon.server.db.workflow_writes import create_workflow, save_graph
 from marathon.server.engine.jobs import apply_job_result
 from marathon.server.engine.tick import (
@@ -66,6 +67,7 @@ def _workflow(
     ]
     with db_engine.begin() as connection:
         sync_module_types(connection, load_catalog())
+        ensure_standard_macros(connection)
         workflow_id = create_workflow(connection, f"Tick test {uuid4().hex[:8]}", "")
         save_graph(connection, workflow_id, 1, modules, connections)
         connection.execute(
@@ -81,7 +83,7 @@ def _asset(
     asset_id: str = "asset-1",
     *,
     status: str = "in_progress",
-    current_module_id: str | None = "copy",
+    current_module_id: str | None = "copy.main",
     step_status: str | None = "waiting",
     metadata: dict | None = None,
     attempts: int = 0,
@@ -155,7 +157,7 @@ def _job(
     *,
     job_id: str = "job-1",
     asset_id: str = "asset-1",
-    module_id: str = "copy",
+    module_id: str = "copy.main",
     worker_id: str = "worker-1",
     status: str = "running",
     created_at: datetime = NOW,
@@ -176,7 +178,7 @@ def _job(
                 "module_id": module_id,
                 "status": status,
                 "worker_id": worker_id,
-                "type_id": "copy_file" if module_id == "copy" else "move_file",
+                "type_id": "copy_file" if module_id == "copy.main" else "move_file",
                 "pickup_deadline": pickup_deadline,
                 "created_at": created_at,
                 "started_at": created_at if status in {"running", "cancelling"} else None,
@@ -306,17 +308,17 @@ def test_wait_module_uses_engine_jobs_and_individual_deadlines(db_engine):
     )
     with db_engine.begin() as connection:
         connection.execute(
-            text("UPDATE workflow_modules SET settings = '{\"wait_s\": 5}'::jsonb WHERE workflow_id = :id AND id = 'wait'"),
+            text("UPDATE workflow_modules SET settings = '{\"wait_s\": 5}'::jsonb WHERE workflow_id = :id AND id = 'wait.main'"),
             {"id": workflow_id},
         )
-    _asset(db_engine, workflow_id, "first", current_module_id="wait", step_status="waiting")
+    _asset(db_engine, workflow_id, "first", current_module_id="wait.main", step_status="waiting")
 
     assert _step(db_engine, advance_assets, NOW) == 1
     first = _rows(db_engine, "SELECT * FROM jobs WHERE worker_id IS NULL")[0]
     assert first["status"] == "running"
     assert _asset_row(db_engine, "first")["wait_until"] == NOW + timedelta(seconds=5)
 
-    _asset(db_engine, workflow_id, "second", current_module_id="wait", step_status="waiting", list_position=2)
+    _asset(db_engine, workflow_id, "second", current_module_id="wait.main", step_status="waiting", list_position=2)
     assert _step(db_engine, advance_assets, NOW + timedelta(seconds=3)) == 1
     wait_until = {row["asset_id"]: row["wait_until"] for row in _rows(
         db_engine,
@@ -327,7 +329,7 @@ def test_wait_module_uses_engine_jobs_and_individual_deadlines(db_engine):
 
     assert _step(db_engine, advance_assets, NOW + timedelta(seconds=6)) == 1
     assert _job_row(db_engine, first["id"])["status"] == "succeeded"
-    assert (_asset_row(db_engine, "first")["current_module_id"], _asset_row(db_engine, "first")["step_status"]) == ("copy", "waiting")
+    assert (_asset_row(db_engine, "first")["current_module_id"], _asset_row(db_engine, "first")["step_status"]) == ("copy.main", "waiting")
     assert _asset_row(db_engine, "second")["step_status"] == "running"
 
 
@@ -337,10 +339,10 @@ def test_due_legacy_wait_without_engine_job_uses_old_route(db_engine):
         [_module("watch", "watchfolder"), _module("wait", "wait"), _module("copy", "copy_file")],
         [_connection("watch", "success", "wait"), _connection("wait", "success", "copy")],
     )
-    _asset(db_engine, workflow_id, current_module_id="wait", step_status="running", wait_until=NOW)
+    _asset(db_engine, workflow_id, current_module_id="wait.main", step_status="running", wait_until=NOW)
 
     assert _step(db_engine, advance_assets, NOW) == 1
-    assert _asset_row(db_engine, "asset-1")["current_module_id"] == "copy"
+    assert _asset_row(db_engine, "asset-1")["current_module_id"] == "copy.main"
     assert _history(db_engine, "asset-1")[0]["text"] == "Wartezeit abgelaufen"
 
 
@@ -352,12 +354,12 @@ def test_schedule_waiting_blocks_engine_work_until_schedule_starts(db_engine):
     )
     with db_engine.begin() as connection:
         connection.execute(
-            text("UPDATE workflow_modules SET settings = '{\"wait_s\": 5}'::jsonb WHERE workflow_id = :id AND id = 'wait'"),
+            text("UPDATE workflow_modules SET settings = '{\"wait_s\": 5}'::jsonb WHERE workflow_id = :id AND id = 'wait.main'"),
             {"id": workflow_id},
         )
         connection.execute(text("UPDATE workflows SET schedule_waiting = true WHERE id = :id"), {"id": workflow_id})
-    _asset(db_engine, workflow_id, "worker-asset", current_module_id="copy", step_status="waiting")
-    _asset(db_engine, workflow_id, "wait-asset", current_module_id="wait", step_status="waiting", list_position=2)
+    _asset(db_engine, workflow_id, "worker-asset", current_module_id="copy.main", step_status="waiting")
+    _asset(db_engine, workflow_id, "wait-asset", current_module_id="wait.main", step_status="waiting", list_position=2)
     _worker(db_engine, capabilities=["copy_file"])
 
     assert _step(db_engine, advance_assets, NOW) == 0
@@ -391,8 +393,9 @@ def test_non_worker_module_fails(db_engine):
     }
     with db_engine.begin() as connection:
         sync_module_types(connection, [*load_catalog(), custom_type])
+        ensure_standard_macros(connection)
     workflow_id = _workflow(db_engine, [_module("none", "engine_none_test")], [])
-    _asset(db_engine, workflow_id, current_module_id="none", step_status="waiting")
+    _asset(db_engine, workflow_id, current_module_id="none.main", step_status="waiting")
 
     assert _step(db_engine, advance_assets, NOW) == 1
     assert _asset_row(db_engine, "asset-1")["status"] == "failed"
@@ -603,7 +606,7 @@ def test_invalid_parallel_setting_uses_single_asset_jobs(db_engine, parallel):
     workflow_id = _workflow(db_engine)
     with db_engine.begin() as connection:
         connection.execute(
-            text("UPDATE workflow_modules SET settings = :settings WHERE workflow_id = :id AND id = 'copy'").bindparams(
+            text("UPDATE workflow_modules SET settings = :settings WHERE workflow_id = :id AND id = 'copy.main'").bindparams(
                 bindparam("settings", type_=JSONB)
             ),
             {"id": workflow_id, "settings": {"parallel": parallel}},
@@ -625,7 +628,7 @@ def test_parallel_batches_waiting_assets_in_list_order(db_engine):
     )
     with db_engine.begin() as connection:
         connection.execute(
-            text("UPDATE workflow_modules SET settings = '{\"parallel\": 3}'::jsonb WHERE workflow_id = :id AND id = 'copy'"),
+            text("UPDATE workflow_modules SET settings = '{\"parallel\": 3}'::jsonb WHERE workflow_id = :id AND id = 'copy.main'"),
             {"id": workflow_id},
         )
     for position in range(5):
@@ -652,7 +655,7 @@ def test_asset_without_path_is_failed_and_excluded_from_batch(db_engine):
     )
     with db_engine.begin() as connection:
         connection.execute(
-            text("UPDATE workflow_modules SET settings = '{\"parallel\": 2}'::jsonb WHERE workflow_id = :id AND id = 'copy'"),
+            text("UPDATE workflow_modules SET settings = '{\"parallel\": 2}'::jsonb WHERE workflow_id = :id AND id = 'copy.main'"),
             {"id": workflow_id},
         )
     _asset(db_engine, workflow_id, "missing", metadata={}, list_position=0)
@@ -668,8 +671,8 @@ def test_asset_without_path_is_failed_and_excluded_from_batch(db_engine):
 
 def test_skill_rank_example_and_tick_worker_limit(db_engine):
     workflow_id = _workflow(db_engine)
-    _asset(db_engine, workflow_id, "copy-asset", current_module_id="copy", list_position=1)
-    _asset(db_engine, workflow_id, "move-asset", current_module_id="move", list_position=2)
+    _asset(db_engine, workflow_id, "copy-asset", current_module_id="copy.main", list_position=1)
+    _asset(db_engine, workflow_id, "move-asset", current_module_id="move.main", list_position=2)
     _worker(db_engine, "worker-a", name="A", skills=["copy_file", "move_file"])
     _worker(db_engine, "worker-b", name="B", skills=["move_file", "copy_file"])
 

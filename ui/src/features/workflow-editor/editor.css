@@ -96,6 +96,7 @@
 .module-settings { display: flex; flex-direction: column; position: relative; flex-shrink: 0; background: var(--bg-panel); border-left: 1px solid var(--border); min-height: 0; }
 .module-settings-header { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); border-bottom: 1px solid var(--border); font-weight: 500; }
 .module-settings-body { flex: 1; overflow: auto; padding: var(--space-3); }
+.module-settings-update { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-3); }
 
 .module-settings-output { display: grid; grid-template-columns: 90px 1fr; gap: var(--space-3); padding: 4px 0; font-size: var(--font-size-sm); }
 .slide-panel-body.module-activity-panel-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }

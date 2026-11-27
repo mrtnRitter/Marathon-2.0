@@ -21,38 +21,40 @@ from marathon.server.db.workflow_writes import WorkflowValidationError, create_w
 
 # FUNC
 def _insert_module_types(db_engine) -> None:
-    """Insert module types used by graph write tests."""
+    """Insert valid module hulls used by graph write tests."""
     module_types = (
+        ("source", "Quelle", False, [{"id": "success", "label": "Weiter", "description": ""}], []),
         (
-            "source",
-            "Quelle",
-            False,
-            [{"id": "success", "label": "Weiter", "description": ""}],
-        ),
-        (
-            "step",
-            "Schritt",
-            True,
+            "step", "Schritt", True,
             [
                 {"id": "success", "label": "Weiter", "description": ""},
                 {"id": "failure", "label": "Fehler", "description": ""},
             ],
+            [{"key": "duration_s", "label": "Dauer", "type": "number", "default": 0}],
+        ),
+        (
+            "priolist", "Prioliste", False,
+            [{"id": "list", "label": "Prioliste", "data": True}],
+            [{"key": "entries", "label": "Einträge", "type": "priolist", "default": []}],
         ),
     )
     with db_engine.begin() as connection:
-        for type_id, name, has_input, outputs in module_types:
+        for type_id, name, has_input, outputs, settings in module_types:
             connection.execute(
                 text(
-                    "INSERT INTO module_types (id, name, category, icon, has_input, outputs) "
-                    "VALUES (:id, :name, 'test', 'test', :has_input, CAST(:outputs AS jsonb))"
+                    "INSERT INTO module_types (id, name, category, icon, has_input, outputs, settings) "
+                    "VALUES (:id, :name, 'test', 'test', :has_input, CAST(:outputs AS jsonb), CAST(:settings AS jsonb))"
                 ),
                 {
                     "id": type_id,
                     "name": name,
                     "has_input": has_input,
                     "outputs": json.dumps(outputs),
+                    "settings": json.dumps(settings),
                 },
             )
+        from marathon.server.db.macro_writes import ensure_standard_macros
+        ensure_standard_macros(connection)
 
 
 def _module(module_id: str, type_id: str = "step", name: str = "Modul") -> dict:
@@ -88,6 +90,7 @@ def test_module_input_accepts_priolist_settings_without_database():
         "settings": settings,
     })
     assert module.settings == settings
+    assert module.macro_version is None
 
 
 def test_create_update_and_delete_workflow(api_client):
@@ -185,11 +188,34 @@ def test_save_graph_creates_new_version(api_client, db_engine):
     assert graph["version"] == 2
     modules = {module["id"]: module for module in graph["modules"]}
     assert modules["m1"]["type_id"] == "source"
+    assert modules["m1"]["macro_version"] == 1
     assert modules["m1"]["locked"] is True
     assert modules["m1"]["position"] == {"x": 10.0, "y": 20.0}
     assert modules["m2"]["description"] == "Zeile 1\nZeile 2"
     assert modules["m2"]["settings"] == {"duration_s": 5}
     assert modules["m2"]["position"] == {"x": 30.0, "y": 40.0}
+    with db_engine.connect() as connection:
+        instances = connection.execute(text(
+            "SELECT id, macro_id, macro_version, description FROM workflow_instances "
+            "WHERE workflow_id = :id AND version = 2 ORDER BY id"
+        ), {"id": workflow["id"]}).mappings().all()
+        runtime = connection.execute(text(
+            "SELECT id, instance_id, block_id, type_id, description, exits FROM workflow_modules "
+            "WHERE workflow_id = :id AND version = 2 ORDER BY id"
+        ), {"id": workflow["id"]}).mappings().all()
+        runtime_connections = connection.execute(text(
+            "SELECT source_module_id, source_output_id, target_module_id FROM workflow_connections "
+            "WHERE workflow_id = :id AND version = 2"
+        ), {"id": workflow["id"]}).mappings().all()
+    assert [(row["id"], row["macro_id"], row["macro_version"], row["description"]) for row in instances] == [
+        ("m1", "source", 1, ""), ("m2", "step", 1, "Zeile 1\nZeile 2"),
+    ]
+    assert [(row["id"], row["instance_id"], row["block_id"], row["type_id"], row["description"]) for row in runtime] == [
+        ("m1.main", "m1", "main", "source", ""), ("m2.main", "m2", "main", "step", ""),
+    ]
+    assert [dict(row) for row in runtime_connections] == [{
+        "source_module_id": "m1.main", "source_output_id": "success", "target_module_id": "m2.main",
+    }]
     assert [
         {key: item[key] for key in ("source_module_id", "source_output_id", "target_module_id")}
         for item in graph["connections"]
@@ -209,7 +235,7 @@ def test_save_graph_roundtrips_priolist_settings(api_client, db_engine):
     settings = {"entries": [{"name": "Urgent", "metadata": {"rank": 1, "labels": ["hot"]}}]}
     saved = api_client.put(
         f"/api/v1/workflows/{workflow['id']}/graph",
-        json={"base_version": 1, "modules": [{**_module("m-prio", name="Prioliste"), "settings": settings}], "connections": []},
+        json={"base_version": 1, "modules": [{**_module("m-prio", "priolist", name="Prioliste"), "settings": settings}], "connections": []},
     )
     assert saved.status_code == 200
     graph = api_client.get(f"/api/v1/workflows/{workflow['id']}/graph")
@@ -242,7 +268,7 @@ def test_save_graph_conflict(api_client, db_engine):
             [],
             "Modul-ID doppelt: m1",
         ),
-        ([_module("m1", "missing")], [], "Unbekannter Modultyp: missing"),
+        ([_module("m1", "missing")], [], "Unbekanntes Modul: missing"),
         ([_module("m1", "source", "  ")], [], "Modulname fehlt: m1"),
         (
             [_module("m1", "source"), _module("m2")],

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent } from 'react'
 import { FormField, FormSection } from '../../components/FormField'
 import { Icon } from '../../components/Icon'
+import { Button } from '../../components/Toolbar'
 import type { FieldValue, WorkflowModule } from '../../data/types'
 import { parse_extensions, setting_errors } from '../../lib/module_settings'
 import type { ModuleNodeData } from './editor_types'
@@ -9,6 +10,8 @@ import { output_color } from '../../theme/status'
 interface Props {
   data: ModuleNodeData
   on_change: (module: WorkflowModule) => void
+  on_upgrade?: () => void
+  on_builder_open?: () => void
   read_only?: boolean
   width: number
   on_width_change: (width: number) => void
@@ -102,7 +105,7 @@ export function ModuleSettingsForm({ data, on_change, read_only = false, width }
   )
 }
 
-export function ModuleSettingsPanel({ data, on_change, read_only = false, width, on_width_change }: Props) {
+export function ModuleSettingsPanel({ data, on_change, on_upgrade, on_builder_open, read_only = false, width, on_width_change }: Props) {
   const drag = useRef<{ pointer_id: number; start_x: number; start_width: number } | null>(null)
   const [resizing, set_resizing] = useState(false)
 
@@ -140,6 +143,13 @@ export function ModuleSettingsPanel({ data, on_change, read_only = false, width,
         {read_only && <Icon name="lock" size={14} />}
       </header>
       <div className="module-settings-body">
+        {!read_only && data.module.update_available && data.module.latest_version !== undefined && on_upgrade && (
+          <div className="module-settings-update">
+            <span>Neue Version verfügbar (v{data.module.latest_version})</span>
+            <Button label="Aktualisieren" icon="reprocess" on_click={on_upgrade} />
+          </div>
+        )}
+        {data.module.can_edit && on_builder_open && <Button label="Im Builder öffnen" icon="workflow" on_click={on_builder_open} />}
         <ModuleSettingsForm data={data} on_change={on_change} read_only={read_only} width={width} />
       </div>
     </aside>

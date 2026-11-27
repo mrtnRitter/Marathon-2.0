@@ -33,6 +33,7 @@ from marathon.server.config import (
 from marathon.server.db.settings_writes import get_proxy_config
 from marathon.server.proxy import ProxyMiddleware, caddyfile, proxy_settings, upstream_address
 from marathon.server.db.catalog_writes import sync_module_types
+from marathon.server.db.macro_writes import ensure_standard_macros
 from marathon.modules import load_catalog
 from marathon.server.engine.tick import EngineRunner
 from marathon.server.live import LiveHub, NotifyListener, open_listen_connection
@@ -103,6 +104,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         if app.state.sync_catalog:
             with app_engine(app).begin() as connection:
                 sync_module_types(connection, load_catalog())
+                ensure_standard_macros(connection)
         if app.state.run_live:
             listener = NotifyListener(
                 lambda: open_listen_connection(app_engine(app)),

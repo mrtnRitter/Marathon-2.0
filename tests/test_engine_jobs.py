@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from marathon.modules import load_catalog
 from marathon.server.db.catalog_writes import sync_module_types
+from marathon.server.db.macro_writes import ensure_standard_macros
 from marathon.server.db.workflow_writes import create_workflow, save_graph
 from marathon.server.engine.flow import load_graph
 from marathon.server.engine.jobs import (
@@ -56,6 +57,7 @@ def _workflow(db_engine, modules: list[dict] | None = None, connections: list[di
     ]
     with db_engine.begin() as connection:
         sync_module_types(connection, load_catalog())
+        ensure_standard_macros(connection)
         workflow_id = create_workflow(connection, f"Job test {uuid4().hex[:8]}", "")
         save_graph(connection, workflow_id, 1, modules, connections)
     return workflow_id
@@ -67,10 +69,10 @@ def _asset(
     asset_id: str = "asset-1",
     *,
     status: str = "in_progress",
-    current_module_id: str = "copy",
+    current_module_id: str = "copy.main",
     step_status: str | None = "waiting",
     metadata: dict | None = None,
-    from_module_id: str | None = "watch",
+    from_module_id: str | None = "watch.main",
     from_output_id: str | None = "success",
     attempts: int = 0,
     wait_until: datetime | None = None,
@@ -121,7 +123,7 @@ def _job(
     *,
     job_id: str = "job-1",
     asset_id: str = "asset-1",
-    module_id: str = "copy",
+    module_id: str = "copy.main",
     worker_id: str = "worker-1",
     status: str = "running",
     attempt: int = 1,
@@ -143,7 +145,7 @@ def _job(
                 "status": status,
                 "worker_id": worker_id,
                 "attempt": attempt,
-                "type_id": "copy_file" if module_id == "copy" else "move_file",
+                "type_id": "copy_file" if module_id == "copy.main" else "move_file",
                 "created_at": NOW,
                 "error": error,
             },
@@ -211,7 +213,7 @@ def test_create_job(db_engine):
     )
     assert _asset_row(db_engine)["step_status"] == "running"
     assert _logs(db_engine, workflow_id) == [{
-        "workflow_id": workflow_id, "module_id": "copy", "job_id": job_id, "level": "info", "text": "Zugeteilt an GPU"
+        "workflow_id": workflow_id, "module_id": "copy.main", "job_id": job_id, "level": "info", "text": "Zugeteilt an GPU"
     }]
     with db_engine.connect() as connection:
         assert connection.execute(text("SELECT asset_id FROM job_assets WHERE job_id = :id"), {"id": job_id}).scalar_one() == "asset-1"
@@ -232,7 +234,7 @@ def test_result_routes_to_next_module(db_engine):
     with db_engine.begin() as connection:
         assert apply_job_result(connection, "job-1", "worker-1", {"outcome": "result", "output": "success", "log": []}, NOW, 3)
     asset = _asset_row(db_engine)
-    assert (asset["current_module_id"], asset["step_status"]) == ("move", "waiting")
+    assert (asset["current_module_id"], asset["step_status"]) == ("move.main", "waiting")
     assert (_job_row(db_engine)["status"], _job_row(db_engine)["output_id"], _job_row(db_engine)["finished_at"]) == (
         "succeeded", "success", NOW
     )
@@ -271,7 +273,7 @@ def test_result_spawns_assets(db_engine):
     assert spawned["name"] == "out.mov"
     assert spawned["metadata"] == {"path": "/render/out.mov"}
     assert (spawned["status"], spawned["current_module_id"], spawned["step_status"], spawned["list_position"]) == (
-        "in_progress", "move", "waiting", 2
+        "in_progress", "move.main", "waiting", 2
     )
     assert _history(db_engine, spawned["id"]) == [{"kind": "info", "text": "Render erstellt"}]
 
@@ -284,7 +286,7 @@ def test_result_log_lines(db_engine):
         }, NOW, 3)
     log = _logs(db_engine, workflow_id)[0]
     assert (log["job_id"], log["module_id"], log["level"], log["text"]) == (
-        "job-1", "copy", "error", "Fehlerdetail"
+        "job-1", "copy.main", "error", "Fehlerdetail"
     )
     assert {"kind": "error", "text": "Fehlerdetail"} in _history(db_engine)
 
@@ -300,7 +302,7 @@ def test_error_routes_via_error_output(db_engine):
             "outcome": "error", "error": "Kopierfehler", "log": []
         }, NOW, 3)
     assert (_job_row(db_engine)["status"], _job_row(db_engine)["error"]) == ("failed", "Kopierfehler")
-    assert (_asset_row(db_engine)["current_module_id"], _asset_row(db_engine)["step_status"]) == ("move", "waiting")
+    assert (_asset_row(db_engine)["current_module_id"], _asset_row(db_engine)["step_status"]) == ("move.main", "waiting")
     assert {"kind": "error", "text": "Kopierfehler"} in _history(db_engine)
 
 
@@ -310,12 +312,13 @@ def test_error_without_error_output_fails_asset(db_engine):
         connection.execute(text(
             "INSERT INTO module_types (id, name, category, icon, has_input, outputs, settings, execution) "
             "VALUES ('no-error-test', 'Testtyp', 'Test', 'test', true, "
-            "'[{\"id\": \"success\"}]'::jsonb, '[]'::jsonb, 'worker')"
+            "'[{\"id\": \"success\", \"label\": \"Erfolg\"}]'::jsonb, '[]'::jsonb, 'worker')"
         ))
+        ensure_standard_macros(connection)
         workflow_id = create_workflow(connection, f"Job test {uuid4().hex[:8]}", "")
         save_graph(connection, workflow_id, 1, [_module("custom", "no-error-test", "Testmodul")], [])
-    _asset(db_engine, workflow_id, current_module_id="custom", step_status="running", from_module_id=None, from_output_id=None)
-    _job(db_engine, workflow_id, module_id="custom")
+    _asset(db_engine, workflow_id, current_module_id="custom.main", step_status="running", from_module_id=None, from_output_id=None)
+    _job(db_engine, workflow_id, module_id="custom.main")
     with db_engine.begin() as connection:
         apply_job_result(connection, "job-1", "worker-1", {
             "outcome": "error", "error": "Kein Fehlerausgang", "log": []
@@ -358,7 +361,7 @@ def test_result_while_cancelling_is_applied(db_engine):
             "outcome": "result", "output": "success", "log": []
         }, NOW, 3)
     assert _job_row(db_engine)["status"] == "succeeded"
-    assert _asset_row(db_engine)["current_module_id"] == "move"
+    assert _asset_row(db_engine)["current_module_id"] == "move.main"
 
 
 def test_late_result_is_discarded(db_engine):
@@ -378,12 +381,12 @@ def test_result_from_other_worker_raises(db_engine):
 
 def test_asset_mismatch_only_finishes_job(db_engine):
     workflow_id = _workflow(db_engine)
-    _asset(db_engine, workflow_id, current_module_id="move", step_status="running")
+    _asset(db_engine, workflow_id, current_module_id="move.main", step_status="running")
     _job(db_engine, workflow_id)
     with db_engine.begin() as connection:
         assert apply_job_result(connection, "job-1", "worker-1", {"outcome": "result", "output": "success", "log": []}, NOW, 3)
     assert _job_row(db_engine)["status"] == "succeeded"
-    assert (_asset_row(db_engine)["current_module_id"], _asset_row(db_engine)["step_status"]) == ("move", "running")
+    assert (_asset_row(db_engine)["current_module_id"], _asset_row(db_engine)["step_status"]) == ("move.main", "running")
     assert _logs(db_engine, workflow_id)[0]["text"] == "Asset passt nicht zum Job"
 
 
@@ -481,7 +484,7 @@ def test_remove_missing_modules(db_engine):
         ], [_connection("watch", "success", "move")]) == 3
         remove_missing_modules(connection, workflow_id, NOW)
     assert (_asset_row(db_engine, "waiting-asset")["current_module_id"], _asset_row(db_engine, "waiting-asset")["step_status"]) == (
-        "move", "waiting"
+        "move.main", "waiting"
     )
     assert _row(db_engine, "jobs", "id", "running-job")["status"] == "cancelling"
 
@@ -501,34 +504,34 @@ def test_result_of_removed_module_fails_asset(db_engine):
 
 def test_graph_impact(db_engine):
     workflow_id = _workflow(db_engine)
-    _asset(db_engine, workflow_id, current_module_id="copy")
+    _asset(db_engine, workflow_id, current_module_id="copy.main")
     _job(db_engine, workflow_id, status="running")
-    _asset(db_engine, workflow_id, "move-asset", current_module_id="move", list_position=2)
+    _asset(db_engine, workflow_id, "move-asset", current_module_id="move.main", list_position=2)
 
     with db_engine.begin() as connection:
-        rerouted = graph_impact(connection, workflow_id, ["watch", "move"], [("watch", "success", "move")])
+        rerouted = graph_impact(connection, workflow_id, ["watch.main", "move.main"], [("watch.main", "success", "move.main")])
     assert rerouted["outcomes"] == {"rerouted": 1, "done": 0, "failed": 0}
     assert rerouted["assets"] == sum(rerouted["outcomes"].values()) == 1
 
     with db_engine.begin() as connection:
-        completed = graph_impact(connection, workflow_id, ["watch", "move"], [])
+        completed = graph_impact(connection, workflow_id, ["watch.main", "move.main"], [])
     assert completed["outcomes"] == {"rerouted": 0, "done": 1, "failed": 0}
 
     with db_engine.begin() as connection:
-        failed_source = graph_impact(connection, workflow_id, ["move"], [])
+        failed_source = graph_impact(connection, workflow_id, ["move.main"], [])
     assert failed_source["outcomes"] == {"rerouted": 0, "done": 0, "failed": 1}
 
-    _asset(db_engine, workflow_id, "missing-source", current_module_id="copy", from_module_id=None, list_position=3)
-    _asset(db_engine, workflow_id, "error-output", current_module_id="copy", from_output_id="error", list_position=4)
+    _asset(db_engine, workflow_id, "missing-source", current_module_id="copy.main", from_module_id=None, list_position=3)
+    _asset(db_engine, workflow_id, "error-output", current_module_id="copy.main", from_output_id="error", list_position=4)
     with db_engine.begin() as connection:
-        edge_cases = graph_impact(connection, workflow_id, ["watch", "move"], [("watch", "success", "move")])
+        edge_cases = graph_impact(connection, workflow_id, ["watch.main", "move.main"], [("watch.main", "success", "move.main")])
     assert edge_cases["outcomes"] == {"rerouted": 1, "done": 0, "failed": 2}
     assert edge_cases["assets"] == sum(edge_cases["outcomes"].values()) == 3
 
 
 # RELEASE WORKER TESTS
 
-def _create_batch(db_engine, asset_ids: list[str], *, attempts: list[int] | None = None, module_id: str = "copy"):
+def _create_batch(db_engine, asset_ids: list[str], *, attempts: list[int] | None = None, module_id: str = "copy.main"):
     from marathon.server.engine import jobs as job_ops
 
     workflow_id = _workflow(db_engine)
@@ -557,7 +560,7 @@ def _create_wait_job(db_engine, asset_id: str = "wait-asset"):
         modules=[_module("watch", "watchfolder"), _module("wait", "wait"), _module("move", "move_file")],
         connections=[_connection("watch", "success", "wait"), _connection("wait", "success", "move")],
     )
-    _asset(db_engine, workflow_id, asset_id, current_module_id="wait")
+    _asset(db_engine, workflow_id, asset_id, current_module_id="wait.main")
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
         job_id = job_ops.create_engine_job(connection, asset_id, graph, NOW)
@@ -643,7 +646,7 @@ def test_late_result_for_finished_asset_is_rejected_and_logged(db_engine):
         ).mappings().one()
     assert (log["asset_id"], log["text"]) == ("late-a", "Spätes Ergebnis verworfen")
     assert _job_row(db_engine, job_id)["progress"] == 50
-    assert _asset_row(db_engine, "late-a")["current_module_id"] == "move"
+    assert _asset_row(db_engine, "late-a")["current_module_id"] == "move.main"
     assert workflow_id == _asset_row(db_engine, "late-a")["workflow_id"]
 
 
@@ -692,7 +695,7 @@ def test_interrupt_batch_only_affects_open_assets_and_rejects_late_results(db_en
     with db_engine.begin() as connection:
         job_ops.interrupt_job(connection, job_id, "Worker antwortet nicht", NOW, 3)
     assert _job_row(db_engine, job_id)["status"] == "interrupted"
-    assert _asset_row(db_engine, "interrupt-a")["current_module_id"] == "move"
+    assert _asset_row(db_engine, "interrupt-a")["current_module_id"] == "move.main"
     assert _asset_row(db_engine, "interrupt-a")["attempts"] == 0
     with db_engine.connect() as connection:
         rows = connection.execute(
@@ -707,7 +710,7 @@ def test_interrupt_batch_only_affects_open_assets_and_rejects_late_results(db_en
         assert job_ops.apply_asset_result(
             connection, job_id, "interrupt-b", "worker-1", {"outcome": "result", "output": "success"}, NOW, 3
         ) is False
-    assert _asset_row(db_engine, "interrupt-b")["current_module_id"] == "copy"
+    assert _asset_row(db_engine, "interrupt-b")["current_module_id"] == "copy.main"
 
 
 def test_drop_unstarted_batch_finishes_and_restores_all_assets(db_engine):
@@ -760,7 +763,7 @@ def test_engine_wait_job_applies_result_and_asset_logs(db_engine):
         ("wait-asset", "Ergebnis: Erfolg"),
     ]
     assert asset_job["outcome"] == "result" and asset_job["finished_at"] is not None
-    assert _asset_row(db_engine, "wait-asset")["current_module_id"] == "move"
+    assert _asset_row(db_engine, "wait-asset")["current_module_id"] == "move.main"
     assert _asset_row(db_engine, "wait-asset")["workflow_id"] == workflow_id
 
 

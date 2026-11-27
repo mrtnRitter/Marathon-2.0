@@ -4,7 +4,7 @@ import type { ModuleType } from '../../data/types'
 import { drag_mime } from './editor_types'
 
 /** Left-hand list of module types; entries are dragged onto the canvas. */
-export function ModulePalette({ module_types }: { module_types: ModuleType[] }) {
+export function ModulePalette({ module_types, placeholder = 'Module suchen …', empty_text = 'Keine Modultypen vorhanden' }: { module_types: ModuleType[]; placeholder?: string; empty_text?: string }) {
   const [search, set_search] = useState('')
   const groups = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -21,10 +21,10 @@ export function ModulePalette({ module_types }: { module_types: ModuleType[] }) 
     <aside className="module-palette">
       <div className="module-palette-search">
         <Icon name="search" size={14} />
-        <input className="input" placeholder="Module suchen …" value={search} onChange={event => set_search(event.target.value)} />
+        <input className="input" placeholder={placeholder} value={search} onChange={event => set_search(event.target.value)} />
       </div>
       <div className="module-palette-list">
-        {module_types.length === 0 ? <div className="dim">Keine Modultypen vorhanden</div> : (
+        {module_types.length === 0 ? <div className="dim">{empty_text}</div> : (
           <>
             {groups.map(group => (
               <div key={group.category} className="module-palette-group">

@@ -8,6 +8,7 @@ Bezeichner im Code englisch (`snake_case`), Texte für Nutzer deutsch und wörtl
 - **Teil 2** beschreibt den **bereits umgesetzten** Systemvertrag für Kern, Engine und Worker-Steuerung (Stand Migration `0009`, Worker-Protokoll 2; Abnahme offen).
 - **Teil 2a** beschreibt den Vertrag für den Release *HTTPS* (keine Migration, Worker-Protokoll unverändert).
 - **Teil 3** beschreibt den **geplanten** Vertrag für die Releases *Zugang & Nutzer*, *Worker-Client & Steuerung*, *Datei- und Ordner-Dialog* und *Lokale Watchfolder & Rechnerwechsel* (Zugang & Nutzer: Migration `0010_users`, Worker-Protokoll unverändert; Worker-Client & Steuerung: Migration `0011_worker_client`, Worker-Protokoll 3, umgesetzt; übrige Releases: eigene Migrationen, noch nicht umgesetzt). Offene Punkte und Entscheidungen je Release stehen in `docs/mission_log.md` und gehen bis zur Klärung vor; nach der Klärung werden sie hier eingearbeitet. Der vorgelagerte Release *HTTPS* steht in Teil 2a. Migration und Protokollnummer je Release werden bei der Klärung festgelegt. Wo Teil 3 Punkte aus Teil 2 erweitert oder ablöst, ist das markiert und gilt ab Umsetzung von Teil 3.
+- **Teil 4** beschreibt den Vertrag für den ersten Wurf des Releases *Modul-Builder* (Migration `0012_macros`, Worker-Protokoll unverändert; in Umsetzung).
 
 ---
 
@@ -865,3 +866,158 @@ Ausbau des bestehenden `ui/src/components/FolderDialog.tsx` zu einer wiederverwe
 - Ein eingeloggter Nutzer kann einen Workflow mit lokalen Pfaden an Rechner 1 anlegen, zu Rechner 2 wechseln, per 1-Klick-Umschaltung dort aktivieren (inkl. Pfadprüfung) und laufen lassen; fremde Workstations lassen sich ohne lokalen Presence-Nachweis nicht browsen oder kapern.
 - Lokale Watchfolder binden Folgejobs per Sticky Locality bis zum ersten Netzwerkpfad und zeigen fehlende/abweichende/inaktive Worker mit direktem Link am Modul an.
 - `FileBrowserDialog` beherrscht `Server` und `Dieser Rechner`, `Liste` und `Details`, Breadcrumb + Autocomplete, Verlauf (`←`/`→`/`↑`/`↻`), Filterfeld und scrollt 5.000+ Einträge flüssig.
+
+---
+
+# Teil 4: Release Modul-Builder – erster Wurf (in Umsetzung, Migration `0012_macros`, Worker-Protokoll unverändert)
+
+Umfang: Modul-Builder als eigene Seite, Module aus Bausteinen ohne Code, Versionen mit Update-Hinweis, bestehende Modultypen als Standardmodule. Nicht enthalten: Teilen (privat/öffentlich, fremde Workflows, automatische Updates von Admin-Modulen), verschachtelte Module, Ausdruckssprache, Rollout von Code-Modulen. Bezeichner im Code `macro`, in der Oberfläche „Modul“.
+
+## 4.1 Begriffe & Grundsätze
+
+| Begriff | Bedeutung |
+|---|---|
+| **Baustein** | Modultyp aus `marathon/modules/` (Tabelle `module_types`, `GET /api/v1/module-types`). Nur im Modul-Builder sichtbar. |
+| **Modul** | Im Builder gebaute, versionierte Zusammenstellung aus Bausteinen ohne eigenen Code (Tabellen `macros`, `macro_versions`). Die Workflow-Palette zeigt nur Module. |
+| **Standardmodul** | Je Baustein ein Modul mit `id = type_id`, `owner_user_id NULL`, genau einem Baustein `main`, allen Einstellungen und Ausgängen 1:1 (`standard_definition`). |
+| **Modulinstanz** | Ein im Workflow platziertes Modul in fester Version (Tabelle `workflow_instances`). |
+| **Laufzeitgraph** | Die in Bausteine aufgelöste Fassung jeder Workflow-Version in `workflow_modules`/`workflow_connections`. Engine, Watchfolder, Scheduler und Worker arbeiten nur hierauf und bleiben unverändert. |
+
+- Laufzeit-ID eines Bausteins: `f"{instanz_id}.{baustein_id}"`; `.` kommt in Instanz- und Baustein-IDs (`^[A-Za-z0-9_-]{1,64}$`) nicht vor.
+- Laufzeitzeile: `name` = Name der Instanz, `description` = `""`, Position und `locked` der Instanz, dazu `instance_id`, `block_id`, `exits`.
+- Bausteine eines Moduls sind nur Modultypen (keine verschachtelten Module).
+- Rechte: Ändern, Löschen und Innenleben ansehen dürfen Eigentümer und Admins; Standardmodule (`owner_user_id NULL`) nur Admins. Alle anderen sehen nur Hülle und Einstellungen. Bis zum Schritt „Teilen“ stehen alle nicht gelöschten Module allen Nutzern in der Palette zur Verfügung.
+
+## 4.2 Definition & Hülle (`marathon/server/macros/definition.py`, rein, ohne Datenbank)
+
+```python
+class MacroValidationError(ValueError): ...
+def validate_definition(definition: Mapping[str, Any], module_types: Mapping[str, Mapping[str, Any]]) -> None
+def standard_definition(module_type: Mapping[str, Any]) -> dict[str, Any]
+def macro_hull(macro_id: str, version: int, definition: Mapping[str, Any], module_types: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]
+```
+
+`module_types`: `type_id` → Zeile wie in `module_types` (`id`, `name`, `category`, `icon`, `description`, `has_input`, `outputs`, `settings`, `sort_order`).
+
+Definition (JSONB `macro_versions.definition`):
+
+```json
+{
+  "name": "Kopieren", "category": "Dateien", "icon": "copy", "description": "…", "sort_order": 20,
+  "blocks": [{"id": "main", "type_id": "copy_file", "name": "Kopieren", "position": {"x": 0, "y": 0}, "settings": {}}],
+  "connections": [{"source_block_id": "a", "source_output_id": "success", "target_block_id": "b"}],
+  "entry_block_id": "main",
+  "outputs": [{"id": "success", "label": "Erfolg", "description": "…", "sources": [{"block_id": "main", "output_id": "success"}]}],
+  "settings": [{"key": "target", "block_id": "main", "setting_key": "target", "label": "Zielordner", "help": ""}]
+}
+```
+
+- `entry_block_id`: Baustein, an dem Assets eintreten, oder `null` (Modul ohne Eingang, z. B. Watchfolder).
+- `outputs[].sources`: freie Baustein-Ausgänge, die über diesen Modul-Ausgang das Modul verlassen. Nicht zugeordnete freie Ausgänge enden wie heute ein unverbundener Ausgang.
+- `settings`: im Modul einstellbare Baustein-Einstellungen (je Baustein-Einstellung höchstens einmal). Alle übrigen Werte in `blocks[].settings` sind fest.
+
+**`validate_definition`** wirft beim ersten Fehler `MacroValidationError` mit genau diesem Text (Prüfreihenfolge wie aufgeführt; Texte nach `strip()` prüfen):
+
+0. Typen: Definition kein dict oder `blocks`, `connections`, `outputs`, `settings`, `sources` keine Liste (fehlende Listen gelten als leer), Einträge darin kein dict: „Definition ungültig: {feld}“ (`feld` = Schlüssel, z. B. `blocks`); Texte, die kein `str` sind, gelten als leer
+1. `name` 1–100 Zeichen: „Name fehlt“ / „Name ist zu lang (max. 100 Zeichen)“
+2. `category` 1–50: „Kategorie fehlt“ / „Kategorie ist zu lang (max. 50 Zeichen)“
+3. `icon` 1–64: „Icon fehlt“
+4. `description` Text ≤ 500: „Beschreibung ist zu lang (max. 500 Zeichen)“
+5. `sort_order` ganze Zahl (kein bool): „Sortierung muss eine ganze Zahl sein“
+6. `blocks` mindestens einer: „Modul braucht mindestens einen Baustein“
+7. je Baustein: ID-Muster „Ungültige Baustein-ID: {id}“; doppelt „Baustein-ID doppelt: {id}“; `type_id` unbekannt „Unbekannter Baustein: {type_id}“; Name leer „Bausteinname fehlt: {id}“; `settings` kein dict „Einstellungen ungültig: {id}“; Schlüssel nicht im Baustein „Unbekannte Einstellung {key} in Baustein {id}“
+8. je Verbindung: Baustein fehlt „Verbindung zu unbekanntem Baustein: {id}“; Quelle = Ziel „Baustein {id} kann nicht mit sich selbst verbunden werden“; Ausgang fehlt „Unbekannter Ausgang {output} an Baustein {id}“; Ziel ohne Eingang „Baustein {id} hat keinen Eingang“; Ausgang doppelt „Ausgang {output} an Baustein {id} ist mehrfach verbunden“
+9. `entry_block_id` nicht `null`: unbekannt „Unbekannter Eingangs-Baustein: {id}“; ohne Eingang „Eingangs-Baustein hat keinen Eingang: {id}“
+10. je Modul-Ausgang: ID `^[a-z0-9_]{1,64}$` „Ungültige Ausgangs-ID: {id}“; doppelt „Ausgangs-ID doppelt: {id}“; Beschriftung 1–50 „Ausgangsname fehlt: {id}“; Quelle unbekannt „Ungültige Ausgangsquelle: {block_id}.{output_id}“; Quelle intern verbunden „Ausgang ist bereits intern verbunden: {block_id}.{output_id}“; Quelle in mehreren Ausgängen „Ausgangsquelle doppelt: {block_id}.{output_id}“; Daten-Quelle (`data: true`) nicht als einzige Quelle „Daten-Ausgang braucht genau eine Quelle: {id}“
+11. je Einstellung: Schlüssel `^[a-z0-9_]{1,64}$` „Ungültiger Einstellungs-Schlüssel: {key}“; doppelt „Einstellungs-Schlüssel doppelt: {key}“; Baustein fehlt „Einstellung {key}: unbekannter Baustein {block_id}“; Baustein-Einstellung fehlt „Einstellung {key}: unbekannte Einstellung {setting_key}“; doppelt freigegeben „Einstellung mehrfach freigegeben: {block_id}.{setting_key}“; Beschriftung 1–100 „Einstellung {key}: Beschriftung fehlt“; `help` Text ≤ 300 „Einstellung {key}: Hilfetext ist zu lang (max. 300 Zeichen)“
+
+Einstellungswerte selbst prüft `validate_definition` nicht; sie prüft der Workflow wie bisher (`validate_settings` des Bausteins auf den aufgelösten Laufzeitzeilen).
+
+**`standard_definition(t)`**: `name`, `category`, `icon`, `description`, `sort_order` aus `t`; `blocks = [{"id": "main", "type_id": t["id"], "name": t["name"], "position": {"x": 0, "y": 0}, "settings": {}}]`; `connections = []`; `entry_block_id = "main"` bei `has_input`, sonst `null`; `outputs` je Baustein-Ausgang in Reihenfolge `{"id", "label", "description" (fehlt → ""), "sources": [{"block_id": "main", "output_id": id}]}`; `settings` je Baustein-Einstellung in Reihenfolge `{"key": k, "block_id": "main", "setting_key": k, "label", "help" (fehlt → "")}`.
+
+**`macro_hull`** liefert das Format eines Modultyps für die Oberfläche: `{"id", "version", "name", "category", "icon", "description", "sort_order", "has_input" (= entry_block_id nicht null), "outputs", "settings"}`.
+- `outputs`: je Modul-Ausgang `{"id", "label", "description"}`, zusätzlich `"data": true`, wenn die Quelle ein Daten-Ausgang ist.
+- `settings`: je Einstellung eine Kopie der Feldbeschreibung des Bausteins mit `key` = Modul-Schlüssel, `label` = Beschriftung, `help` = Hilfetext, falls nicht leer, sonst der des Bausteins (fehlt beides: kein Schlüssel); `default` = fester Wert des Bausteins, falls gesetzt, sonst Vorgabe des Bausteins (fehlt beides: kein Schlüssel); `exclusive_with` auf den Modul-Schlüssel des Partners im selben Baustein umgeschrieben, ohne freigegebenen Partner entfernt.
+
+## 4.3 Auflösen (`marathon/server/macros/expand.py`, rein, ohne Datenbank)
+
+```python
+def runtime_id(instance_id: str, block_id: str) -> str
+def block_settings(definition: Mapping[str, Any], block_id: str, instance_settings: Mapping[str, Any]) -> dict[str, Any]
+def expand_graph(
+    instances: Sequence[Mapping[str, Any]],      # {id, name, macro_id, macro_version, settings, position: {x, y}, locked}
+    connections: Sequence[Mapping[str, Any]],    # {source_module_id, source_output_id, target_module_id} zwischen Instanzen
+    definitions: Mapping[tuple[str, int], Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]
+def remap_settings(settings: Mapping[str, Any], hull: Mapping[str, Any]) -> tuple[dict[str, Any], list[str]]
+```
+
+- `block_settings`: Kopie von `blocks[].settings`; je Einstellung dieses Bausteins, deren Modul-Schlüssel in `instance_settings` steht, `setting_key` = Wert der Instanz. Fehlende Werte bleiben dem Baustein überlassen (seine Vorgabe).
+- `expand_graph` liefert Laufzeitmodule `{"id", "instance_id", "block_id", "type_id", "name", "description": "", "position", "settings", "locked", "exits"}` (Instanzen in Eingabe-, Bausteine in Definitionsreihenfolge) und Laufzeitverbindungen `{"source_module_id", "source_output_id", "target_module_id"}`: zuerst je Instanz die internen Verbindungen in Definitionsreihenfolge, dann je Instanz-Verbindung in Eingabereihenfolge für jede Quelle des Modul-Ausgangs (Definitionsreihenfolge) `(runtime_id(Quelle, block_id), output_id) → runtime_id(Ziel, entry_block_id)`.
+- `exits`: `{baustein_ausgang: modul_ausgang}` für jede Quelle dieses Bausteins.
+- Fehlende Definition → `KeyError`; unbekannter Modul-Ausgang → `ValueError("Unbekannter Ausgang {output} an Modul {id}")`; Ziel ohne Eingang → `ValueError("Modul {id} hat keinen Eingang")`.
+- `remap_settings`: behält nur Schlüssel, die in `hull["settings"]` vorkommen; zweiter Wert = sortierte Liste der entfallenen Schlüssel.
+
+## 4.4 Datenbank: Migration `0012_macros`
+
+| Tabelle | Spalten & Constraints |
+|---|---|
+| `macros` | `id TEXT PK`, `owner_user_id TEXT NULL` (FK `users.id` ON DELETE SET NULL, `fk_macros_owner_user_id_users`), `current_version INTEGER NOT NULL`, `archived_at TIMESTAMPTZ NULL`, `created_at`, `updated_at` (`now()`) |
+| `macro_versions` | `macro_id TEXT` (FK `macros.id` ON DELETE CASCADE), `version INTEGER`, `definition JSONB NOT NULL`, `created_by_user_id TEXT NULL` (FK `users.id` ON DELETE SET NULL), `created_at`; PK `(macro_id, version)` |
+| `workflow_instances` | `workflow_id`, `version`, `id`, `macro_id`, `macro_version`, `name`, `description TEXT NOT NULL DEFAULT ''`, `position_x`, `position_y` (FLOAT), `settings JSONB NOT NULL DEFAULT '{}'`, `locked BOOLEAN NOT NULL DEFAULT false`; PK `(workflow_id, version, id)`; FK `(workflow_id, version)` → `workflow_versions` ON DELETE CASCADE; FK `(macro_id, macro_version)` → `macro_versions` |
+| `workflow_instance_connections` | `workflow_id`, `version`, `source_id`, `source_output_id`, `target_id`; PK `(workflow_id, version, source_id, source_output_id)`; FKs `(workflow_id, version, source_id)` und `(workflow_id, version, target_id)` → `workflow_instances` ON DELETE CASCADE |
+| `workflow_modules` | neu `instance_id TEXT NULL`, `block_id TEXT NULL`, `exits JSONB NOT NULL DEFAULT '{}'` |
+
+Datenübernahme in derselben Migration:
+1. Je Zeile in `module_types`: Standardmodul (`macros`: `id = type_id`, `owner_user_id NULL`, `current_version 1`; `macro_versions` Version 1 mit der Definition nach `standard_definition`, in der Migration selbst nachgebildet, ohne Import aus `marathon.server`).
+2. Je Zeile in `workflow_modules` (alle Versionen): Instanz mit derselben ID, `macro_id = type_id`, `macro_version = 1`, Name, Beschreibung, Position, Einstellungen und `locked`. Je Zeile in `workflow_connections`: Instanz-Verbindung mit den bisherigen IDs.
+3. Laufzeitgraph umbenennen: `workflow_modules.id` → `id || '.main'`, `instance_id` = alte ID, `block_id = 'main'`, `exits` = `{id: id}` für alle Ausgänge des Typs (inkl. Daten-Ausgänge); `workflow_connections.source_module_id`/`target_module_id` entsprechend.
+4. Verweise umbenennen (Wert ohne `.` → `|| '.main'`): `assets.current_module_id`, `assets.from_module_id`, `jobs.module_id`, `log_lines.module_id`, `watch_modules.module_id`, `watch_files.module_id`.
+5. Fremdschlüssel, die die Umbenennung blockieren, werden vorher entfernt und danach unter demselben Namen wieder angelegt.
+
+`downgrade` macht 1–5 rückgängig; enthält `workflow_modules` eine Zeile mit `block_id <> 'main'`, bricht er mit „Downgrade nicht möglich: Workflows verwenden gebaute Module“ ab.
+
+Beim Serverstart legt `ensure_standard_macros(connection)` direkt nach `sync_module_types` für jeden Modultyp ohne Modul gleicher ID ein Standardmodul an (Version 1); bestehende Module bleiben unverändert.
+
+## 4.5 Workflow-Graph (Instanz-Ebene)
+
+- `PUT /workflows/{id}/graph` und `POST …/graph/impact`: `ModuleInput.type_id` = Modul-ID, neu `macro_version: int | None` (`None` = aktuelle Version). Verbindungen verbinden Instanzen.
+- `save_graph` (Signatur unverändert): bisherige Prüfungen auf Instanz-Ebene mit der Hülle statt des Modultyps; „Unbekannter Modultyp: {type_id}“ wird „Unbekanntes Modul: {type_id}“; unbekannte Version „Unbekannte Modulversion: {type_id} v{version}“; gelöschtes Modul nur erlaubt, wenn genau diese Version schon in der aktuellen Workflow-Version steht, sonst „Modul ist gelöscht: {type_id}“. Danach Instanz-Ebene und aufgelösten Laufzeitgraph (`expand_graph`) in derselben neuen Version schreiben; `remove_missing_modules` und Prüfung der Einstellungen wie bisher auf dem Laufzeitgraphen.
+- `duplicate_workflow` kopiert beide Ebenen.
+- `graph/impact` löst den vorgeschlagenen Graphen auf und bewertet den Laufzeitgraphen; `removed_modules` je Instanz zusammengefasst (`id` = Instanz-ID, `assets`, `jobs` summiert).
+- `workflow_invalid_modules` liefert `{"id": instance_id (sonst id), "name"}` je Instanz einmal; `workflow_issues` entsprechend ohne doppelte Namen.
+- `GET /workflows/{id}/graph` liefert die Instanz-Ebene. Je Modul zusätzlich `macro_version`, `latest_version` (`macros.current_version`), `update_available` (`latest_version > macro_version` und Modul nicht gelöscht), `can_edit` und `hull` (Hülle der verwendeten Version). Zähler je Instanz über ihre Laufzeitmodule: `waiting`, `running`, `failed`, `discovered` summiert; `done` = Ergebnisse (`outcome 'result'`) eines Laufzeitmoduls der Instanz mit `output_id` NULL, oder mit `output_id` in `exits` und Ziel ≠ `error`, oder mit `output_id` nicht in `exits`, nicht intern verbunden und ≠ `error` (für Standardmodule gleich der bisherigen Regel). Die Zuordnung Laufzeitmodul → Instanz erfolgt immer über die Spalte `instance_id`, nie über das ID-Muster. Verbindungen aus `workflow_instance_connections` (`id` = `{workflow_id}-{source_id}-{source_output_id}`).
+- `GET /workflows/{id}/modules/{module_id}/activity`: `module_id` = Instanz-ID; Assets, Jobs und Logs aller Laufzeitmodule der Instanz (Logs zusätzlich mit `module_id` = Instanz-ID).
+
+## 4.6 Modul-API (`/api/v1/macros`, angemeldete Nutzer)
+
+- Listeneintrag: Hülle der aktuellen Version plus `owner` (`{id, email, display_name}` oder `null`), `can_edit`, `usage` (Anzahl Workflows, deren aktuelle Version das Modul verwendet), `updated_at`. Sortierung `sort_order`, `name`, `id`; gelöschte Module fehlen.
+- `GET /macros` → Liste.
+- `GET /macros/{id}` → Listeneintrag plus `definition`; 404 „Modul nicht gefunden“ (auch gelöscht), 403 „Keine Berechtigung für dieses Modul“ ohne `can_edit`.
+- `POST /macros` `{definition}` → `id = "mc-" + 12 hex`, Eigentümer = Nutzer, Version 1; 201 mit Detail; 422 mit Text aus `validate_definition`.
+- `PUT /macros/{id}` `{base_version, definition}` → neue Version (jede Speicherung); 409 „Modul wurde zwischenzeitlich geändert. Bitte neu laden.“ bei `base_version ≠ current_version`; Antwort Detail plus `outdated_workflows`: `[{id, name}]` der Workflows mit `owner_user_id` = Nutzer, deren aktuelle Version eine ältere Version des Moduls verwendet (nach Name).
+- `DELETE /macros/{id}` → setzt `archived_at`, 204; 409 „Standardmodule können nicht gelöscht werden“ bei `owner_user_id NULL`; 409 „Modul wird in Workflows verwendet: {Name, …}“, solange die aktuelle Version eines Workflows es verwendet.
+- `POST /macros/{id}/update-workflows` → je Workflow aus `outdated_workflows`: neue Graph-Version über `save_graph` mit `macro_version` = aktuell und `remap_settings`; übersprungen, wenn `graph_impact` laufende Assets meldet („Laufende Assets betroffen“) oder `save_graph` einen Fehler meldet (dessen Text). Antwort `{"updated": [{id, name, dropped_settings}], "skipped": [{id, name, reason}]}`.
+- `PUT`, `DELETE` und `update-workflows` verlangen `can_edit` (sonst 403 wie oben).
+
+## 4.7 Oberfläche
+
+- **Seitenleiste:** Eintrag „Module“ (Icon `blocks`, lucide `Blocks`) direkt nach „Workflows“, Route `/modules`, für alle Nutzer.
+- **Seite „Module“** (`/modules`): Schaltfläche „Neues Modul“ (→ `/modules/new`). Tabelle mit Name (mit Icon), Kategorie, Eigentümer („Standard“ bei `owner null`, sonst Anzeigename oder E-Mail), Version („v{n}“), Verwendet („1 Workflow“, sonst „{n} Workflows“, bei 0 „–“), Geändert. Zeilenklick öffnet `/modules/{id}` nur bei `can_edit`. Drei-Punkte-Menü „Löschen“ bei `can_edit` und `owner` nicht `null`, Rückfrage „Modul „{name}“ löschen?“, Fehlertext als Meldung. Ohne Einträge „Keine Module vorhanden“.
+- **Builder** (`/modules/new`, `/modules/:macro_id`), Aufbau wie der Workflow-Editor:
+  - Links Palette „Bausteine“ (`GET /module-types`, Suche „Bausteine suchen …“), Mitte der Flow (Bausteine platzieren und verbinden wie Module), rechts das Seitenpanel. Kopf: Modulname, „v{n}“, „Speichern“, „Zurück“ (→ `/modules`); ungespeicherte Änderungen beim Verlassen: „Ungespeicherte Änderungen verwerfen?“.
+  - Seitenpanel ohne Auswahl, Titel „Modul“: Name, Kategorie, Icon (Auswahl aus den Icon-Namen der Oberfläche), Beschreibung; „Eingang“ (Bausteine mit Eingang oder „Kein Eingang (Quelle)“); „Ausgänge“ (Beschriftung, Beschreibung; „Ausgang hinzufügen“, Entfernen; neue ID aus der Beschriftung: klein, jedes Zeichen außer `a-z0-9` → `_`, bei Doppelung `_2`, `_3` …; bestehende IDs bleiben beim Umbenennen); „Zuordnung“: je freiem Baustein-Ausgang „{Bausteinname} › {Ausgang}“ mit Auswahl eines Modul-Ausgangs oder „– endet hier“.
+  - Seitenpanel mit gewähltem Baustein: „Name“, darunter seine Einstellungen als feste Werte (Felder wie im Workflow); je Einstellung Schalter „Im Modul einstellbar“, eingeschaltet zusätzlich „Beschriftung“ (Vorgabe: Beschriftung des Bausteins) und „Hilfetext“. Modul-Schlüssel = Einstellungsschlüssel, bei Doppelung `_2`, `_3` ….
+  - Neues Modul: Name „Neues Modul“, Kategorie „Eigene“, Icon `workflow`, Ausgänge „Erfolg“ (`success`) und „Fehler“ (`error`), keine Bausteine.
+  - Speichern: neu `POST` (danach `/modules/{id}`), sonst `PUT`. Fehlertext der API als Meldung. Ist `outdated_workflows` nicht leer: Seitenpanel „Workflows aktualisieren“ mit „{n} eigene Workflows verwenden eine ältere Version dieses Moduls.“, Namensliste, „Später“ und „Alle aktualisieren“ (→ `update-workflows`); danach Meldung „{n} Workflows aktualisiert“ und je übersprungenem Workflow „{name}: {reason}“.
+- **Workflow-Editor:**
+  - Palette aus `GET /macros`; Knoten und Seitenpanel einer Instanz nutzen `module.hull`; neue Instanz mit `macro_version` = `hull.version`.
+  - `update_available`: Hinweis am Knoten (Titel „Neue Version verfügbar“) und im Seitenpanel beim Bearbeiten „Neue Version verfügbar (v{latest_version})“ mit „Aktualisieren“: Hülle aus `GET /macros`, Einstellungen gleicher Schlüssel bleiben, `macro_version` neu; entfallene Einstellungen → Meldung „Entfallene Einstellungen: {schlüssel, …}“. Wirksam erst mit dem normalen Speichern.
+  - `can_edit`: Schaltfläche „Im Builder öffnen“ im Seitenpanel → `/modules/{type_id}`; bei ungespeicherten Änderungen dieselbe Rückfrage wie beim Verlassen.
+
+## 4.8 Abnahme
+
+- Bestehende Workflows laufen nach der Migration unverändert weiter; Assets bleiben an ihrer Position, Watchfolder übernehmen bereits bekannte Dateien nicht erneut.
+- Ein Modul aus „Kopieren“ → „Umbenennen“ verhält sich im Workflow wie dieselben zwei Standardmodule: gleiche Wege, Jobs, Versuche, Logs und Stopp-Verhalten; der Workflow zeigt es als ein Modul mit summierten Zählern.
+- Eine neue Modulversion ändert keinen Workflow, bis sie übernommen wird; der Update-Hinweis erscheint in jedem Workflow mit älterer Version.
+- Bausteine erscheinen nur im Builder, Module nur in der Workflow-Palette.

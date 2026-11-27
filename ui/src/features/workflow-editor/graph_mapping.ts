@@ -1,5 +1,5 @@
 import type { Connection, Edge } from '@xyflow/react'
-import type { GraphInput, ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
+import type { GraphInput, MacroSummary, ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
 import type { ModuleFlowNode } from './editor_types'
 
 export function apply_lock(node: ModuleFlowNode): ModuleFlowNode {
@@ -33,10 +33,26 @@ export function lock_edges(edges: Edge[], locked_module_ids: Set<string>): Edge[
   })
 }
 
-export function to_nodes(graph: WorkflowGraph, module_types: ModuleType[]): ModuleFlowNode[] {
-  return graph.modules.flatMap(module => {
-    const module_type = module_types.find(type => type.id === module.type_id)
-    return module_type ? [create_node(module, module_type)] : []
+export function to_nodes(graph: WorkflowGraph, module_types: MacroSummary[]): ModuleFlowNode[] {
+  return graph.modules.map(module => {
+    const macro = module_types.find(type => type.id === module.type_id)
+    const hull = module.hull ?? macro
+    const resolved_module = {
+      ...module,
+      ...(hull ? { hull } : {}),
+      can_edit: module.can_edit ?? macro?.can_edit,
+    }
+    const module_type: ModuleType = hull ?? {
+      id: module.type_id,
+      name: module.name,
+      category: '',
+      icon: 'workflow',
+      description: 'Modulhülle nicht verfügbar',
+      has_input: true,
+      outputs: [],
+      settings: [],
+    }
+    return create_node(resolved_module, module_type)
   })
 }
 
@@ -70,6 +86,7 @@ export function to_graph_input(base_version: number, nodes: ModuleFlowNode[], ed
         position: node.position,
         settings: module.settings,
         locked: module.locked,
+        macro_version: module.macro_version ?? null,
       }
     }),
     connections: edges.map(edge => ({
@@ -90,7 +107,12 @@ export function to_edges(graph: WorkflowGraph): Edge[] {
   }, running.has(connection.target_module_id)))
 }
 
-export function new_module(module_type: ModuleType, position: { x: number; y: number }, index: number): WorkflowModule {
+export function remove_edges_with_missing_outputs(module_id: string, outputs: ModuleType['outputs'], edges: Edge[]): Edge[] {
+  const output_ids = new Set(outputs.map(output => output.id))
+  return edges.filter(edge => edge.source !== module_id || output_ids.has(edge.sourceHandle ?? ''))
+}
+
+export function new_module(module_type: MacroSummary, position: { x: number; y: number }, index: number): WorkflowModule {
   return {
     id: `new-${Date.now()}-${index}`,
     type_id: module_type.id,
@@ -100,5 +122,8 @@ export function new_module(module_type: ModuleType, position: { x: number; y: nu
     settings: Object.fromEntries(module_type.settings.flatMap(spec => (spec.default === undefined ? [] : [[spec.key, spec.default]]))),
     counters: { waiting: 0, running: 0, done: 0, failed: 0, discovered: 0 },
     locked: false,
+    macro_version: module_type.version,
+    can_edit: module_type.can_edit,
+    hull: module_type,
   }
 }

@@ -12,6 +12,7 @@ export const nav_groups: { title: string; items: NavItem[] }[] = [
     items: [
       { path: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
       { path: '/workflows', label: 'Workflows', icon: 'workflow' },
+      { path: '/modules', label: 'Module', icon: 'blocks' },
       { path: '/assets', label: 'Assets', icon: 'files' },
       { path: '/reports', label: 'Reports', icon: 'report' },
     ],

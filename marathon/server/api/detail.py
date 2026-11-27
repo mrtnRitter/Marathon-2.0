@@ -23,7 +23,7 @@ def get_workflow_graph(
     """Return the current workflow graph or a not-found response."""
     with engine.connect() as connection:
         require_workflow_access(connection, user, workflow_id, "view")
-        graph = get_graph(connection, workflow_id)
+        graph = get_graph(connection, workflow_id, user)
     if graph is None:
         raise HTTPException(status_code=404, detail="Workflow nicht gefunden")
     return graph

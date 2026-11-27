@@ -9,6 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from marathon.modules import load_catalog
 from marathon.server.db.catalog_writes import sync_module_types
+from marathon.server.db.macro_writes import ensure_standard_macros
 from marathon.server.db.workflow_writes import create_workflow, save_graph
 from marathon.server.engine.flow import (
     asset_file_path,
@@ -44,6 +45,7 @@ def _connection(source: str, output: str, target: str) -> dict:
 def _workflow(db_engine, modules: list[dict], connections: list[dict] | None = None) -> str:
     with db_engine.begin() as connection:
         sync_module_types(connection, load_catalog())
+        ensure_standard_macros(connection)
         workflow_id = create_workflow(connection, "Flow test", "")
         save_graph(connection, workflow_id, 1, modules, connections or [])
     return workflow_id
@@ -124,9 +126,9 @@ def test_load_graph_excludes_data_outputs(db_engine):
         graph = load_graph(connection, workflow_id)
 
     assert graph is not None
-    assert graph.modules["priority"].outputs == ()
-    assert graph.modules["copy"].outputs == ("success", "error")
-    assert ("priority", "list") not in graph.routes
+    assert graph.modules["priority.main"].outputs == ()
+    assert graph.modules["copy.main"].outputs == ("success", "error")
+    assert ("priority.main", "list") not in graph.routes
 
 
 def test_load_graph_missing_workflow_returns_none(db_engine):
@@ -148,17 +150,17 @@ def test_route_asset_to_target(db_engine):
         [_module("watch", "watchfolder"), _module("copy", "copy_file")],
         [_connection("watch", "success", "copy")],
     )
-    _asset(db_engine, workflow_id, current_module_id="watch", attempts=2)
+    _asset(db_engine, workflow_id, current_module_id="watch.main", attempts=2)
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
-        route_asset(connection, "asset-1", graph, "watch", "success")
+        route_asset(connection, "asset-1", graph, "watch.main", "success")
 
     asset = _asset_row(db_engine)
     assert (asset["current_module_id"], asset["status"], asset["step_status"]) == (
-        "copy", "in_progress", "waiting"
+        "copy.main", "in_progress", "waiting"
     )
     assert (asset["from_module_id"], asset["from_output_id"], asset["attempts"]) == (
-        "watch", "success", 0
+        "watch.main", "success", 0
     )
 
 
@@ -168,42 +170,42 @@ def test_route_asset_keep_attempts(db_engine):
         [_module("watch", "watchfolder"), _module("copy", "copy_file")],
         [_connection("watch", "success", "copy")],
     )
-    _asset(db_engine, workflow_id, current_module_id="watch", attempts=2)
+    _asset(db_engine, workflow_id, current_module_id="watch.main", attempts=2)
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
-        route_asset(connection, "asset-1", graph, "watch", "success", keep_attempts=True)
+        route_asset(connection, "asset-1", graph, "watch.main", "success", keep_attempts=True)
     assert _asset_row(db_engine)["attempts"] == 2
 
 
 def test_route_asset_end_success(db_engine):
     workflow_id = _workflow(db_engine, [_module("copy", "copy_file", "Kopieren")])
-    _asset(db_engine, workflow_id, current_module_id="copy", step_status="running")
+    _asset(db_engine, workflow_id, current_module_id="copy.main", step_status="running")
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
-        route_asset(connection, "asset-1", graph, "copy", "success")
+        route_asset(connection, "asset-1", graph, "copy.main", "success")
     asset = _asset_row(db_engine)
     assert (asset["status"], asset["step_status"], asset["current_module_id"]) == (
-        "done", None, "copy"
+        "done", None, "copy.main"
     )
     assert _history(db_engine) == [{"kind": "success", "text": "Workflow abgeschlossen"}]
 
 
 def test_route_asset_end_error(db_engine):
     workflow_id = _workflow(db_engine, [_module("copy", "copy_file", "Kopieren")])
-    _asset(db_engine, workflow_id, current_module_id="copy")
+    _asset(db_engine, workflow_id, current_module_id="copy.main")
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
-        route_asset(connection, "asset-1", graph, "copy", "error")
+        route_asset(connection, "asset-1", graph, "copy.main", "error")
     assert _asset_row(db_engine)["status"] == "failed"
     assert _history(db_engine) == [{"kind": "error", "text": "Fehlgeschlagen an „Kopieren“"}]
 
 
 def test_route_asset_missing_module(db_engine):
     workflow_id = _workflow(db_engine, [_module("copy", "copy_file", "Kopieren")])
-    _asset(db_engine, workflow_id, current_module_id="copy")
+    _asset(db_engine, workflow_id, current_module_id="copy.main")
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
-        route_asset(connection, "asset-1", graph, "removed", "success")
+        route_asset(connection, "asset-1", graph, "removed.main", "success")
     assert _asset_row(db_engine)["status"] == "failed"
     assert _history(db_engine) == [{"kind": "error", "text": "Modul nicht mehr im Workflow"}]
     assert _logs(db_engine, workflow_id)[0]["text"] == "Modul nicht mehr im Workflow"
@@ -219,9 +221,9 @@ def test_return_asset_same_module_keeps_attempts(db_engine):
         db_engine,
         workflow_id,
         status="in_progress",
-        current_module_id="copy",
+        current_module_id="copy.main",
         step_status="running",
-        from_module_id="watch",
+        from_module_id="watch.main",
         from_output_id="success",
         attempts=2,
         wait_until=datetime.now(timezone.utc),
@@ -231,7 +233,7 @@ def test_return_asset_same_module_keeps_attempts(db_engine):
         return_asset(connection, "asset-1", graph)
     asset = _asset_row(db_engine)
     assert (asset["current_module_id"], asset["step_status"], asset["attempts"]) == (
-        "copy", "waiting", 2
+        "copy.main", "waiting", 2
     )
     assert asset["wait_until"] is None
 
@@ -246,8 +248,8 @@ def test_return_asset_rerouted_after_graph_change(db_engine):
         db_engine,
         workflow_id,
         status="in_progress",
-        current_module_id="copy",
-        from_module_id="watch",
+        current_module_id="copy.main",
+        from_module_id="watch.main",
         from_output_id="success",
         attempts=2,
     )
@@ -262,7 +264,7 @@ def test_return_asset_rerouted_after_graph_change(db_engine):
         graph = load_graph(connection, workflow_id)
         return_asset(connection, "asset-1", graph)
     asset = _asset_row(db_engine)
-    assert (asset["current_module_id"], asset["attempts"]) == ("move", 0)
+    assert (asset["current_module_id"], asset["attempts"]) == ("move.main", 0)
 
 
 def test_return_asset_without_from_module(db_engine):
@@ -271,7 +273,7 @@ def test_return_asset_without_from_module(db_engine):
         db_engine,
         workflow_id,
         status="in_progress",
-        current_module_id="copy",
+        current_module_id="copy.main",
         attempts=2,
     )
     _asset(
@@ -279,7 +281,7 @@ def test_return_asset_without_from_module(db_engine):
         workflow_id,
         "asset-missing-module",
         status="in_progress",
-        current_module_id="removed",
+        current_module_id="removed.main",
     )
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
@@ -287,7 +289,7 @@ def test_return_asset_without_from_module(db_engine):
         return_asset(connection, "asset-missing-module", graph)
     asset = _asset_row(db_engine)
     assert (asset["current_module_id"], asset["step_status"], asset["attempts"]) == (
-        "copy", "waiting", 2
+        "copy.main", "waiting", 2
     )
     assert _asset_row(db_engine, "asset-missing-module")["status"] == "failed"
 
@@ -298,15 +300,15 @@ def test_enter_asset_from_watchfolder(db_engine):
         [_module("watch", "watchfolder"), _module("copy", "copy_file")],
         [_connection("watch", "success", "copy")],
     )
-    _asset(db_engine, workflow_id, current_module_id="watch")
+    _asset(db_engine, workflow_id, current_module_id="watch.main")
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
         enter_asset(connection, "asset-1", graph)
     asset = _asset_row(db_engine)
     assert (asset["current_module_id"], asset["status"], asset["step_status"]) == (
-        "copy", "in_progress", "waiting"
+        "copy.main", "in_progress", "waiting"
     )
-    assert asset["from_module_id"] == "watch"
+    assert asset["from_module_id"] == "watch.main"
 
 
 def test_enter_null_single_source(db_engine):
@@ -319,18 +321,18 @@ def test_enter_null_single_source(db_engine):
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
         enter_asset(connection, "asset-1", graph)
-    assert _asset_row(db_engine)["current_module_id"] == "copy"
+    assert _asset_row(db_engine)["current_module_id"] == "copy.main"
 
 
 def test_enter_null_without_source_single_start(db_engine):
     workflow_id = _workflow(db_engine, [_module("copy", "copy_file")])
-    _asset(db_engine, workflow_id, from_module_id="stale", from_output_id="success")
+    _asset(db_engine, workflow_id, from_module_id="stale.main", from_output_id="success")
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
         enter_asset(connection, "asset-1", graph)
     asset = _asset_row(db_engine)
     assert (asset["current_module_id"], asset["step_status"], asset["from_module_id"]) == (
-        "copy", "waiting", None
+        "copy.main", "waiting", None
     )
 
 
@@ -353,7 +355,7 @@ def test_enter_ambiguous_start(db_engine, modules):
 
 def test_enter_module_missing(db_engine):
     workflow_id = _workflow(db_engine, [_module("copy", "copy_file")])
-    _asset(db_engine, workflow_id, current_module_id="removed")
+    _asset(db_engine, workflow_id, current_module_id="removed.main")
     with db_engine.begin() as connection:
         graph = load_graph(connection, workflow_id)
         enter_asset(connection, "asset-1", graph)
@@ -372,12 +374,12 @@ def test_enter_ignores_data_connection(db_engine):
         graph = load_graph(connection, workflow_id)
         enter_asset(connection, "asset-1", graph)
     asset = _asset_row(db_engine)
-    assert (asset["current_module_id"], asset["step_status"]) == ("copy", "waiting")
+    assert (asset["current_module_id"], asset["step_status"]) == ("copy.main", "waiting")
 
 
 def test_fail_asset_writes_history_and_log(db_engine):
     workflow_id = _workflow(db_engine, [_module("copy", "copy_file")])
-    _asset(db_engine, workflow_id, current_module_id="copy", step_status="running")
+    _asset(db_engine, workflow_id, current_module_id="copy.main", step_status="running")
     with db_engine.begin() as connection:
         fail_asset(connection, "asset-1", "Fehler aufgetreten")
     asset = _asset_row(db_engine)
@@ -385,7 +387,7 @@ def test_fail_asset_writes_history_and_log(db_engine):
     assert _history(db_engine) == [{"kind": "error", "text": "Fehler aufgetreten"}]
     assert _logs(db_engine, workflow_id) == [{
         "workflow_id": workflow_id,
-        "module_id": "copy",
+        "module_id": "copy.main",
         "job_id": None,
         "level": "error",
         "text": "Fehler aufgetreten",
@@ -395,7 +397,7 @@ def test_fail_asset_writes_history_and_log(db_engine):
 
 def test_fail_asset_log_records_asset_id(db_engine):
     workflow_id = _workflow(db_engine, [_module("copy", "copy_file")])
-    _asset(db_engine, workflow_id, "logged-failure", status="in_progress", current_module_id="copy", step_status="waiting")
+    _asset(db_engine, workflow_id, "logged-failure", status="in_progress", current_module_id="copy.main", step_status="waiting")
     with db_engine.begin() as connection:
         fail_asset(connection, "logged-failure", "Testfehler")
     with db_engine.connect() as connection:

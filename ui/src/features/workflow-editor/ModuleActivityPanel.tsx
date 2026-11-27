@@ -33,7 +33,7 @@ const asset_columns: Column<Asset>[] = [
 ]
 
 /** Module view in monitor mode: jobs, affected assets, involved workers and logs. */
-export function ModuleActivityPanel({ workflow_id, data, on_close }: { workflow_id: string; data: ModuleNodeData; on_close: () => void }) {
+export function ModuleActivityPanel({ workflow_id, data, on_close, on_builder_open }: { workflow_id: string; data: ModuleNodeData; on_close: () => void; on_builder_open: () => void }) {
   const navigate = useNavigate()
   const [tab, set_tab] = useState('jobs')
   const connected = use_server_connected()
@@ -45,7 +45,8 @@ export function ModuleActivityPanel({ workflow_id, data, on_close }: { workflow_
     { key: 'client_version', label: 'Version' },
   ], [connected])
   return (
-    <SlidePanel open title={data.module.name} icon={data.module_type.icon} on_close={on_close} width={760} click_through body_class_name="module-activity-panel-body">
+    <SlidePanel open title={data.module.name} icon={data.module_type.icon} on_close={on_close} width={760} click_through body_class_name="module-activity-panel-body"
+      actions={data.module.can_edit ? [{ label: 'Im Builder öffnen', icon: 'blocks', on_click: on_builder_open }] : []}>
       <Tabs active={tab} on_change={set_tab} items={[
         { id: 'jobs', label: 'Jobs', icon: 'activity', count: activity?.jobs.length },
         { id: 'assets', label: 'Assets', icon: 'files', count: activity?.assets.length },

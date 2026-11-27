@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from marathon.modules import load_catalog
 from marathon.server.db.catalog_writes import sync_module_types
+from marathon.server.db.macro_writes import ensure_standard_macros
 from marathon.server.db.workflow_writes import create_workflow, save_graph
 from marathon.server.scheduler import run_schedule_tick
 from marathon.server.watcher import run_watch_tick
@@ -36,6 +37,7 @@ def test_failed_watch_scan_completes_scheduled_run_and_returns_to_waiting(db_eng
 
     with db_engine.begin() as connection:
         sync_module_types(connection, load_catalog())
+        ensure_standard_macros(connection)
         workflow_id = create_workflow(connection, f"Schedule pause {uuid4().hex[:8]}", "")
         save_graph(connection, workflow_id, 1, [module], [])
         connection.execute(
@@ -62,7 +64,7 @@ def test_failed_watch_scan_completes_scheduled_run_and_returns_to_waiting(db_eng
     assert scan["stale"] == 0
     with db_engine.connect() as connection:
         watch = connection.execute(
-            text("SELECT last_scan_at, last_error FROM watch_modules WHERE workflow_id = :id AND module_id = 'watch-1'"),
+            text("SELECT last_scan_at, last_error FROM watch_modules WHERE workflow_id = :id AND module_id = 'watch-1.main'"),
             {"id": workflow_id},
         ).mappings().one()
         assert watch["last_scan_at"] is not None
@@ -104,6 +106,7 @@ def test_scheduled_run_waits_for_stable_watchfolder_asset_and_completion(db_engi
 
     with db_engine.begin() as connection:
         sync_module_types(connection, load_catalog())
+        ensure_standard_macros(connection)
         workflow_id = create_workflow(connection, f"Stable schedule {uuid4().hex[:8]}", "")
         save_graph(connection, workflow_id, 1, [module], [])
         connection.execute(
@@ -130,7 +133,7 @@ def test_scheduled_run_waits_for_stable_watchfolder_asset_and_completion(db_engi
         watched_file = connection.execute(
             text(
                 "SELECT stable_since, asset_id FROM watch_files "
-                "WHERE workflow_id = :workflow_id AND module_id = 'watch-stable'"
+                "WHERE workflow_id = :workflow_id AND module_id = 'watch-stable.main'"
             ),
             {"workflow_id": workflow_id},
         ).mappings().one()

@@ -17,6 +17,7 @@ from marathon.common.availability import default_availability
 from marathon.modules import load_catalog
 from marathon.server.config import EngineConfig
 from marathon.server.db.catalog_writes import sync_module_types
+from marathon.server.db.macro_writes import ensure_standard_macros
 from marathon.server.db.workflow_writes import create_workflow, save_graph
 from marathon.server.engine.flow import load_graph
 from marathon.server.engine.jobs import create_batch_job, create_job, start_job
@@ -44,6 +45,7 @@ def api_client(db_engine, tmp_path):
     """Provide a token-protected app backed by the test database."""
     with db_engine.begin() as connection:
         sync_module_types(connection, load_catalog())
+        ensure_standard_macros(connection)
     static_dir = tmp_path / "static"
     static_dir.mkdir()
     (static_dir / "index.html").write_text("<html></html>", encoding="utf-8")
@@ -101,7 +103,7 @@ def _job(db_engine, worker_id="worker-1", *, status="assigned", asset_id=None):
     statement = text(
         "INSERT INTO assets (id, workflow_id, name, status, current_module_id, step_status, metadata, "
         "list_position, attempts, created_at, updated_at) VALUES (:id, :workflow_id, :name, 'in_progress', "
-        "'copy', 'waiting', :metadata, 1, 0, :created_at, :updated_at)"
+        "'copy.main', 'waiting', :metadata, 1, 0, :created_at, :updated_at)"
     ).bindparams(bindparam("metadata", type_=JSONB))
     with db_engine.begin() as connection:
         connection.execute(statement, {
@@ -124,7 +126,7 @@ def _batch_job(db_engine, worker_id="worker-1", *, status="running"):
     statement = text(
         "INSERT INTO assets (id, workflow_id, name, status, current_module_id, step_status, metadata, "
         "list_position, attempts, created_at, updated_at) VALUES (:id, :workflow_id, :name, 'in_progress', "
-        "'copy', 'waiting', :metadata, :list_position, 0, :created_at, :updated_at)"
+        "'copy.main', 'waiting', :metadata, :list_position, 0, :created_at, :updated_at)"
     ).bindparams(bindparam("metadata", type_=JSONB))
     with db_engine.begin() as connection:
         for index, asset_id in enumerate(asset_ids, start=1):
@@ -440,7 +442,7 @@ def test_progress_endpoint(api_client, db_engine):
     with db_engine.connect() as connection:
         log = connection.execute(text("SELECT job_id, module_id, level, text FROM log_lines WHERE job_id = :id AND text = :text"),
                                  {"id": job_id, "text": "working"}).mappings().one()
-    assert dict(log) == {"job_id": job_id, "module_id": "copy", "level": "info", "text": "working"}
+    assert dict(log) == {"job_id": job_id, "module_id": "copy.main", "level": "info", "text": "working"}
 
     with db_engine.begin() as connection:
         connection.execute(text("UPDATE jobs SET status = 'cancelling' WHERE id = :id"), {"id": job_id})

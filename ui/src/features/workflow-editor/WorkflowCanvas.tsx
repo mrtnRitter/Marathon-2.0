@@ -4,19 +4,21 @@ import {
   type Connection, type ConnectionLineComponentProps, type Edge, type EdgeProps, type FinalConnectionState, type IsValidConnection, type NodeMouseHandler, type OnBeforeDelete,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
+import { useNavigate } from 'react-router-dom'
 import { Button } from '../../components/Toolbar'
 import { SlidePanel } from '../../components/SlidePanel'
 import { Icon } from '../../components/Icon'
 import { notify } from '../../components/Toast'
-import { get_graph_impact, get_module_types, get_workflow_graph, save_workflow_graph } from '../../data/api'
+import { get_graph_impact, get_macros, get_workflow_graph, save_workflow_graph } from '../../data/api'
 import { create_reload_gate, subscribe_live } from '../../data/live'
-import type { GraphImpact, GraphInput, ModuleType, WorkflowGraph, WorkflowModule } from '../../data/types'
+import type { GraphImpact, GraphInput, MacroSummary, WorkflowGraph, WorkflowModule } from '../../data/types'
 import { has_setting_errors } from '../../lib/module_settings'
 import { impact_lines } from '../../lib/graph_impact'
+import { dropped_message, upgrade_module } from '../../lib/macro_upgrade'
 import { merge_counters } from './live_counters'
 import { use_data } from '../../data/use_data'
 import { EditorActionsContext, EditorModeContext, drag_mime, type EditorMode, type ModuleFlowNode, type ModuleNodeData } from './editor_types'
-import { apply_lock, create_edge, create_node, locked_ids, lock_edges, lock_targets, new_module, to_edges, to_graph_input, to_nodes, view_nodes } from './graph_mapping'
+import { apply_lock, create_edge, create_node, locked_ids, lock_edges, lock_targets, new_module, remove_edges_with_missing_outputs, to_edges, to_graph_input, to_nodes, view_nodes } from './graph_mapping'
 import { is_valid_connection as check_valid_connection, reconnectable_edge_ids } from './connections'
 import { ModuleActivityPanel } from './ModuleActivityPanel'
 import { ModuleNode } from './ModuleNode'
@@ -76,7 +78,7 @@ const minimap_color = (node: ModuleFlowNode) =>
 export function WorkflowCanvas({ workflow_id, initial_mode, can_edit, on_saved }: { workflow_id: string; initial_mode?: EditorMode; can_edit: boolean; on_saved?: () => void }) {
   const [mode, set_mode] = useState<EditorMode>(can_edit ? initial_mode ?? 'monitor' : 'monitor')
   useEffect(() => { if (!can_edit) set_mode('monitor') }, [can_edit])
-  const { data, reload } = use_data(() => Promise.all([get_workflow_graph(workflow_id), get_module_types()]), [workflow_id])
+  const { data, reload } = use_data(() => Promise.all([get_workflow_graph(workflow_id), get_macros()]), [workflow_id])
   if (!data) return <div className="loading">Lade Workflow</div>
   const [graph, module_types] = data
   if (!graph) return <div className="loading">Kein Graph für diesen Workflow</div>
@@ -87,7 +89,8 @@ export function WorkflowCanvas({ workflow_id, initial_mode, can_edit, on_saved }
   )
 }
 
-function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved, on_stale }: { graph: WorkflowGraph; module_types: ModuleType[]; mode: EditorMode; can_edit: boolean; on_mode_change: (mode: EditorMode) => void; on_saved: () => void; on_stale: () => void }) {
+function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved, on_stale }: { graph: WorkflowGraph; module_types: MacroSummary[]; mode: EditorMode; can_edit: boolean; on_mode_change: (mode: EditorMode) => void; on_saved: () => void; on_stale: () => void }) {
+  const navigate = useNavigate()
   const [settings_width, set_settings_width] = useState(read_settings_width)
   useEffect(() => {
     try { localStorage.setItem(settings_width_key, String(settings_width)) } catch {}
@@ -108,6 +111,11 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
   const selection_rect = useStore(state => state.userSelectionRect)
   const transform = useStore(state => state.transform)
   const editing = can_edit && mode === 'edit'
+  const open_builder = (module: WorkflowModule) => {
+    if (!module.can_edit) return
+    if (dirty && !window.confirm('Ungespeicherte Änderungen verwerfen?')) return
+    navigate(`/modules/${encodeURIComponent(module.type_id)}`)
+  }
 
   useEffect(() => {
     if (mode !== 'monitor') return
@@ -312,6 +320,19 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
     set_dirty(true)
   }
 
+  const apply_upgrade = (module: WorkflowModule) => {
+    const hull = module_types.find(item => item.id === module.type_id)
+    if (!hull) return
+    const result = upgrade_module(module, hull)
+    set_nodes(current => current.map(node => node.id === module.id
+      ? { ...node, data: { ...node.data, module: result.module, module_type: hull } }
+      : node))
+    set_edges(current => remove_edges_with_missing_outputs(module.id, hull.outputs, current))
+    set_dirty(true)
+    const message = dropped_message(result.dropped)
+    if (message) notify(message)
+  }
+
   const on_node_click: NodeMouseHandler<ModuleFlowNode> = (_, node) => {
     if (!editing) set_activity_node(node.data)
     else if (node.data.module.locked) set_inspected_id(node.id)
@@ -404,10 +425,10 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
               </ReactFlow>
             </div>
             {editing && selected_nodes.length === 1 && (
-              <ModuleSettingsPanel key={selected_nodes[0].id} data={selected_nodes[0].data} on_change={apply_settings} width={settings_width} on_width_change={width => set_settings_width(clamp_settings_width(width))} />
+              <ModuleSettingsPanel key={selected_nodes[0].id} data={selected_nodes[0].data} on_change={apply_settings} on_upgrade={() => apply_upgrade(selected_nodes[0].data.module)} on_builder_open={() => open_builder(selected_nodes[0].data.module)} width={settings_width} on_width_change={width => set_settings_width(clamp_settings_width(width))} />
             )}
             {editing && selected_nodes.length === 0 && inspected_node && (
-              <ModuleSettingsPanel key={inspected_node.id} data={inspected_node.data} on_change={apply_settings} width={settings_width} on_width_change={width => set_settings_width(clamp_settings_width(width))} read_only />
+              <ModuleSettingsPanel key={inspected_node.id} data={inspected_node.data} on_change={apply_settings} on_builder_open={() => open_builder(inspected_node.data.module)} width={settings_width} on_width_change={width => set_settings_width(clamp_settings_width(width))} read_only />
             )}
           </div>
         </div>
@@ -418,7 +439,7 @@ function Editor({ graph, module_types, mode, can_edit, on_mode_change, on_saved,
           ]}>
           {impact && impact_lines(impact).map((line, index) => <p key={index}>{line}</p>)}
         </SlidePanel>
-        {activity_node && <ModuleActivityPanel key={activity_node.module.id} workflow_id={graph.workflow_id} data={activity_node} on_close={() => set_activity_node(null)} />}
+        {activity_node && <ModuleActivityPanel key={activity_node.module.id} workflow_id={graph.workflow_id} data={activity_node} on_close={() => set_activity_node(null)} on_builder_open={() => open_builder(activity_node.module)} />}
       </EditorModeContext.Provider>
     </EditorActionsContext.Provider>
   )

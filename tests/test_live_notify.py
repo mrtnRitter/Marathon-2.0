@@ -116,4 +116,4 @@ def test_downgrade_removes_triggers(db_engine):
         assert trigger_count == 0
         assert function_exists is False
 
-    assert upgrade_database(db_engine) == "0011"
+    assert upgrade_database(db_engine) == "0012"
